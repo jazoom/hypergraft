@@ -1,0 +1,27 @@
+{
+    "version": "1",
+    "mediaType": "text/vnd.hypergraft.patches+html",
+    "request": {
+        "header": "Graft-Request",
+        "kinds": ["navigation", "patch"],
+        "acceptHeader": "Accept"
+    },
+    "retryAfterRequiredForStatus": 429,
+    "trustedTypesPolicyName": "hypergraft",
+    "patchStatuses": [200, 401, 409, 422, 429],
+    "navigationStatus": 200,
+    "operations": ["children"],
+    "limits": {
+        "responseBytes": 1048576,
+        "patchCount": 16,
+        "insertedNodes": 10000,
+        "nestingDepth": 64
+    },
+    "id": {
+        "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$",
+        "maximumBytes": 128,
+        "asciiOnly": true
+    },
+    "representativePatch": "<graft-patch-set version=\"1\" title=\"Fixture &amp; title\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+    "representativeNavigation": "<graft-patch-set version=\"1\" navigate=\"/items?fixture=one&amp;other=two\"></graft-patch-set>"
+}

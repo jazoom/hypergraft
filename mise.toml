@@ -1,0 +1,39 @@
+[tools]
+rust = "1.96.0"
+node = "22"
+pnpm = "11.9.0"
+
+[tasks.format]
+alias = "f"
+description = "Format Rust and TypeScript files"
+run = [
+  "pnpm prettier --write --cache --log-level warn .",
+  "cargo fmt --all",
+]
+
+[tasks.check]
+description = "Check the Hypergraft Rust and TypeScript project"
+run = [
+  "pnpm check",
+  "cargo clippy --all-targets --all-features -- --deny warnings",
+]
+
+[tasks.test]
+description = "Run the Hypergraft test suite"
+run = [
+  "pnpm test",
+  "pnpm test:browser",
+  "cargo test --all-features --quiet",
+]
+
+[tasks."test:browser"]
+description = "Run the focused Hypergraft Chromium contract suite"
+run = "pnpm test:browser"
+
+[tasks.clean]
+alias = "c"
+description = "Format and check the Hypergraft project"
+run = [
+  "mise run format",
+  "mise run check",
+]

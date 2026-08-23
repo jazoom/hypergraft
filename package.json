@@ -1,0 +1,57 @@
+{
+    "name": "hypergraft",
+    "version": "0.0.1",
+    "private": true,
+    "license": "MIT OR Apache-2.0",
+    "description": "Bounded HTML-over-HTTP protocol and browser runtime for progressively enhanced server-rendered applications",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/jazoom/hypergraft.git"
+    },
+    "homepage": "https://github.com/jazoom/hypergraft#readme",
+    "bugs": {
+        "url": "https://github.com/jazoom/hypergraft/issues"
+    },
+    "packageManager": "pnpm@11.9.0",
+    "engines": {
+        "node": ">=22.12.0"
+    },
+    "files": [
+        "browser/diagnostics.ts",
+        "browser/events.ts",
+        "browser/feedback.ts",
+        "browser/index.ts",
+        "browser/islands.ts",
+        "browser/morph.ts",
+        "browser/patches.ts",
+        "browser/requests.ts",
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "README.md",
+        "protocol-v1.json"
+    ],
+    "sideEffects": false,
+    "type": "module",
+    "exports": {
+        "./browser": "./browser/index.ts",
+        "./browser/islands": "./browser/islands.ts"
+    },
+    "scripts": {
+        "test": "vitest run --config vitest.config.ts",
+        "test:browser": "vitest run --config vitest.browser.config.ts",
+        "check": "tsgo --noEmit --project tsconfig.json",
+        "format": "prettier --write --cache --log-level warn ."
+    },
+    "devDependencies": {
+        "@typescript/native-preview": "7.0.0-dev.20260628.1",
+        "@vitest/browser-playwright": "^4.1.10",
+        "happy-dom": "^20.11.2",
+        "playwright": "^1.62.1",
+        "prettier": "^3.9.1",
+        "prettier-plugin-organize-imports": "^4.3.0",
+        "vitest": "^4.1.10"
+    },
+    "dependencies": {
+        "morphlex": "^1.4.0"
+    }
+}
