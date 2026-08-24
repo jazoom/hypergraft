@@ -14,6 +14,14 @@ export {
 } from "./diagnostics";
 export { bindTransportFeedback, type BoundTransportFeedback } from "./feedback";
 export {
+    observeIslands,
+    type IslandErrorReporter,
+    type IslandInitialiser,
+    type IslandInstance,
+    type IslandMountContext,
+    type IslandReconcileContext,
+} from "./islands";
+export {
     GRAFT_TRANSFER,
     ID_PATTERN_SOURCE,
     MAX_INSERTED_NODES,

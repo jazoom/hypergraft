@@ -18,8 +18,13 @@ export interface IslandInstance {
     destroy(): void;
 }
 
+export interface IslandMountContext {
+    readonly signal: AbortSignal;
+}
+
 export type IslandInitialiser = (
     root: HTMLElement,
+    context: IslandMountContext,
 ) => IslandInstance | (() => void) | void;
 export type IslandErrorReporter = (
     name: string,
@@ -42,13 +47,18 @@ export function observeIslands(
 ): () => void {
     const instances = new Map<
         HTMLElement,
-        { name: string; instance: IslandInstance }
+        {
+            name: string;
+            controller: AbortController;
+            instance: IslandInstance;
+        }
     >();
     const reportedUnknown = new WeakMap<HTMLElement, string>();
     const destroyRoot = (root: HTMLElement, fallbackName: string) => {
         const mounted = instances.get(root);
         instances.delete(root);
         if (!mounted) return;
+        mounted.controller.abort();
         try {
             mounted.instance.destroy();
         } catch (error) {
@@ -68,12 +78,17 @@ export function observeIslands(
             }
             return;
         }
+        const controller = new AbortController();
         try {
             instances.set(element, {
                 name,
-                instance: normaliseInstance(initialise(element)),
+                controller,
+                instance: normaliseInstance(
+                    initialise(element, { signal: controller.signal }),
+                ),
             });
         } catch (error) {
+            controller.abort();
             report(name, "mount", error);
         }
     };
@@ -162,12 +177,7 @@ export function observeIslands(
         removeEventListener(REQUEST_SETTLED_EVENT, settled);
         removeEventListener(LOCATION_CHANGE_EVENT, location);
         removeEventListener(PROGRESS_EVENT, progress);
-        for (const [root, mounted] of instances)
-            try {
-                mounted.instance.destroy();
-            } catch (error) {
-                report(mounted.name, "destroy", error);
-            }
-        instances.clear();
+        for (const [root, mounted] of [...instances])
+            destroyRoot(root, mounted.name);
     };
 }

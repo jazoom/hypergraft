@@ -9,6 +9,7 @@ import {
     emitRequestSettled,
     type RequestSettledDetail,
 } from "./events";
+import { observeIslands, type IslandInitialiser } from "./islands";
 import {
     apply,
     MAX_RESPONSE_BYTES,
@@ -51,6 +52,7 @@ type Runtime = {
     navigationPending: boolean;
     queuedHistoryUrl: URL | undefined;
     detachListeners: () => void;
+    stopIslands: () => void;
 };
 
 export interface TransportFeedback {
@@ -62,6 +64,7 @@ export interface TransportFeedback {
 export interface HypergraftOptions {
     validateContent?: ValidateContent;
     feedback?: TransportFeedback;
+    islands?: Record<string, IslandInitialiser>;
 }
 
 function pruneFailedSafeForms(runtime: Runtime): boolean {
@@ -975,6 +978,8 @@ function handleLiveEvent(runtime: Runtime, event: Event) {
 
 function disposeRuntime(runtime: Runtime, replacement: boolean) {
     if (runtime.disposed) return;
+    runtime.stopIslands();
+    runtime.stopIslands = () => undefined;
     // Intentional teardown clears feedback synchronously; later responses
     // must not call options owned by the disposed runtime.
     clearAllSafeErrors(runtime);
@@ -1005,6 +1010,7 @@ function createRuntime(options: HypergraftOptions): Runtime {
         navigationPending: false,
         queuedHistoryUrl: undefined,
         detachListeners: () => undefined,
+        stopIslands: () => undefined,
     };
     history.replaceState({ ...(history.state ?? {}), hypergraft: true }, "");
     const onClick = (event: MouseEvent) => {
@@ -1078,6 +1084,7 @@ export function startHypergraft(options: HypergraftOptions = {}) {
     if (activeRuntime) disposeRuntime(activeRuntime, true);
     const runtime = createRuntime(options);
     activeRuntime = runtime;
+    if (options.islands) runtime.stopIslands = observeIslands(options.islands);
     return () => {
         if (activeRuntime === runtime) activeRuntime = undefined;
         disposeRuntime(runtime, false);

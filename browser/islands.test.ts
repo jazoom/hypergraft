@@ -5,8 +5,9 @@ import { DIAGNOSTIC_EVENT, type DiagnosticDetail } from "./diagnostics";
 import { LOCATION_CHANGE_EVENT, REQUEST_SETTLED_EVENT } from "./events";
 import {
     observeIslands,
-    type IslandReconcileContext,
     type IslandInstance,
+    type IslandMountContext,
+    type IslandReconcileContext,
 } from "./islands";
 
 beforeEach(() => document.body.replaceChildren());
@@ -86,19 +87,35 @@ test("scans applied targets before reconciling retained instances and carries li
     stop();
 });
 
-test("preserves moved roots and destroys disconnected roots", async () => {
+test("preserves moved roots and aborts disconnected roots", async () => {
     document.body.innerHTML = `<div id="one"><div data-island="item"></div></div><div id="two"></div>`;
-    const destroy = vi.fn();
-    const mount = vi.fn(() => ({ destroy }));
+    const clicks = vi.fn();
+    let lifetime: AbortSignal | undefined;
+    const abortedAtDestroy: boolean[] = [];
+    const destroy = vi.fn(() =>
+        abortedAtDestroy.push(lifetime?.aborted ?? false),
+    );
+    const mount = vi.fn((root: HTMLElement, context: IslandMountContext) => {
+        lifetime = context.signal;
+        root.addEventListener("click", clicks, { signal: context.signal });
+        return { destroy };
+    });
     const stop = observeIslands({ item: mount });
     const root = document.querySelector<HTMLElement>("[data-island]")!;
+    root.click();
     document.querySelector("#two")!.append(root);
     await mutations();
     expect(mount).toHaveBeenCalledOnce();
+    expect(clicks).toHaveBeenCalledOnce();
+    expect(lifetime?.aborted).toBe(false);
     expect(destroy).not.toHaveBeenCalled();
     root.remove();
     await mutations();
+    root.click();
+    expect(lifetime?.aborted).toBe(true);
+    expect(clicks).toHaveBeenCalledOnce();
     expect(destroy).toHaveBeenCalledOnce();
+    expect(abortedAtDestroy).toEqual([true]);
     stop();
 });
 
@@ -210,9 +227,11 @@ test("isolates mount, reconcile, and destroy failures", () => {
     const goodReconcile = vi.fn();
     const goodDestroy = vi.fn();
     const report = vi.fn();
+    let failedLifetime: AbortSignal | undefined;
     const stop = observeIslands(
         {
-            "bad-mount": () => {
+            "bad-mount": (_root, context) => {
+                failedLifetime = context.signal;
                 throw new Error("mount");
             },
             bad: () => ({
@@ -229,6 +248,7 @@ test("isolates mount, reconcile, and destroy failures", () => {
     );
     settle("uncertain-unsafe-result");
     stop();
+    expect(failedLifetime?.aborted).toBe(true);
     expect(goodReconcile).toHaveBeenCalledOnce();
     expect(goodDestroy).toHaveBeenCalledOnce();
     expect(report.mock.calls.map((call) => call[1])).toEqual([

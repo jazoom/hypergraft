@@ -1551,6 +1551,29 @@ test("a replaced runtime reloads when the old unsafe command returns", async () 
     expect(document.getElementById("result")).toBeNull();
 });
 
+test("runtime startup owns registered island lifetimes", () => {
+    cleanup?.();
+    cleanup = undefined;
+    document.body.innerHTML = `<div data-island="example"></div>`;
+    const destroy = vi.fn();
+    let lifetime: AbortSignal | undefined;
+
+    cleanup = startHypergraft({
+        islands: {
+            example: (_root, context) => {
+                lifetime = context.signal;
+                return { destroy };
+            },
+        },
+    });
+
+    expect(lifetime?.aborted).toBe(false);
+    cleanup();
+    cleanup = undefined;
+    expect(lifetime?.aborted).toBe(true);
+    expect(destroy).toHaveBeenCalledOnce();
+});
+
 test("runtime replacement clears existing safe-failure feedback", async () => {
     cleanup?.();
     const safeFailure = vi.fn();

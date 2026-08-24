@@ -69,7 +69,7 @@ Safe failures are tracked by source form, not by a request lane: a successful re
 
 ## Islands
 
-`observeIslands` scans host-authored `data-island` roots and does not add binding attributes. An initialiser can return an `IslandInstance`, a cleanup callback, or `void`; the latter two are normalised internally. A simple binding can therefore return cleanup directly: `root => { root.addEventListener("click", handler); return () => root.removeEventListener("click", handler); }`. Mount, reconciliation and destruction failures are isolated per island. Connected roots mount once. Applied patches scan their targets before reconciliation. Location changes scan the document before reconciliation. A retained node that gains `data-island` through morph is therefore mounted. Moved roots are preserved and disconnected roots are cleaned up.
+`observeIslands` scans host-authored `data-island` roots and does not add binding attributes. An initialiser receives its root and an `IslandMountContext` with one lifetime `AbortSignal`. Hypergraft aborts the signal before destruction after removal, a name change or runtime teardown. Event listeners can use the signal and return `void`: `root.addEventListener("click", handler, { signal: context.signal })`. Other initialisers can return an `IslandInstance`, a cleanup callback or `void`. Mount, reconciliation and destruction failures are isolated per island. Connected roots mount once. Applied patches scan their targets before reconciliation. Location changes scan the document before reconciliation. A retained node that gains `data-island` through morph mounts after the patch. Moved roots keep their instances. Disconnected roots are cleaned up.
 
 An instance that needs lifecycle facts implements `reconcile(context)`. The context is a discriminated union:
 
@@ -295,7 +295,6 @@ import {
     listenForDiagnostics,
     startHypergraft,
 } from "hypergraft/browser";
-import { observeIslands } from "hypergraft/browser/islands";
 
 const stopDiagnostics = import.meta.env.DEV
     ? listenForDiagnostics((detail) =>
@@ -303,12 +302,13 @@ const stopDiagnostics = import.meta.env.DEV
       )
     : () => {};
 const bound = bindTransportFeedback(document.body);
-const stopTransport = startHypergraft({ feedback: bound.feedback });
-const stopIslands = observeIslands({});
+const stopRuntime = startHypergraft({
+    feedback: bound.feedback,
+    islands: {},
+});
 
 export function stopHostIntegration(): void {
-    stopIslands();
-    stopTransport();
+    stopRuntime();
     bound.destroy();
     stopDiagnostics();
 }
