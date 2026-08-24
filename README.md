@@ -40,7 +40,7 @@ Applied navigation focuses the first patched target when that target is programm
 
 A streamed form request emits `hypergraft:progress` after each applied progress frame and sets `data-graft-progress` on the form until pending state is restored. It emits `hypergraft:requestsettled` only after the final frame, a clean end of body, and after pending and submitter state is final. A complete form request emits `hypergraft:requestsettled` only after its pending and submitter state is final. Its `RequestSettledDetail` contains the originating form, effective request URL, patch kind and one bounded outcome:
 
-- A safe applied patch applies the whole preflighted batch and updates that form's failure state, reconciles history and emits its location fact, restores pending state, then emits `applied-patch` with an accepted status and authoritative target identifiers.
+- A safe applied patch applies the whole preflighted batch and updates that form's failure state. A submitted GET form reconciles history and emits its location fact. A host-requested refresh leaves history unchanged. Both restore pending state, then emit `applied-patch` with an accepted status and authoritative target identifiers.
 - A safe failure emits its diagnostic, records the failed source and requests safe feedback, restores pending state, then emits `safe-failure`.
 - A superseded or aborted safe request emits neither a settlement nor a diagnostic. A valid navigation envelope uses `location.assign` and emits no settlement because the document is leaving.
 - A known unsafe patch applies its batch, returns the unsafe lane to idle, restores pending state, emits `applied-patch`, then starts any queued history navigation.
@@ -164,6 +164,46 @@ A live GET form can submit on `input` or `change` without a click. Mark the cont
     <button id="item-search" type="submit">Search</button>
 </form>
 ```
+
+### Host-requested GET refresh
+
+`requestGraftRefresh(form)` asks the active runtime to refresh one server-rendered projection from a real GET form. The form keeps its native submit fallback.
+
+The form must meet these requirements:
+
+- The form belongs to the current document and is connected.
+- The form has `data-graft`.
+- Its effective method is GET with `application/x-www-form-urlencoded` encoding.
+- Its action is same-origin and has no fragment.
+
+The runtime ignores other forms and calls without an active runtime. The request uses the form's current successful controls without a submitter.
+
+The refresh uses the version 1 patch request, pending state, preflight, feedback, diagnostics, settlement events and island reconciliation. It does not change browser history or emit `hypergraft:locationchange`.
+
+The runtime applies these queue rules:
+
+- Repeated signals for one queued form produce one refresh.
+- A signal during an active refresh retains one later refresh.
+- A navigation or unsafe command retains a cancelled active refresh as one queued refresh.
+- A completed navigation or known unsafe patch releases connected queued forms.
+- An unsafe uncertain result, a navigation hand-off or a navigation failure discards blocked refreshes.
+- A safe refresh failure settles once and causes no automatic retry.
+- Form disconnection or runtime teardown discards queued work.
+
+```html
+<form id="messages-refresh" method="get" action="/messages" data-graft>
+    <button type="submit">Refresh messages</button>
+</form>
+```
+
+```ts
+import { requestGraftRefresh } from "hypergraft/browser";
+
+const form = document.querySelector<HTMLFormElement>("#messages-refresh")!;
+requestGraftRefresh(form);
+```
+
+The host owns the trigger and every product policy around it.
 
 ### Command rejection and negotiated success redirect
 

@@ -24,11 +24,13 @@ import {
 } from "./patches";
 import { readStreamFrames } from "./stream";
 
+type SafeFormSource = "submission" | "refresh";
 type Lane = {
     controller?: AbortController;
     sequence: number;
     error: boolean;
     cancelPending?: () => void;
+    active?: { form: HTMLFormElement; source: SafeFormSource };
 };
 type UnsafeState =
     | { kind: "idle" }
@@ -51,6 +53,7 @@ type Runtime = {
     composing: boolean;
     navigationPending: boolean;
     queuedHistoryUrl: URL | undefined;
+    queuedRefreshForms: Set<HTMLFormElement>;
     detachListeners: () => void;
     stopIslands: () => void;
 };
@@ -150,6 +153,27 @@ function getFormUrl(form: HTMLFormElement, submitter?: HTMLElement | null) {
         parameters.append(name, typeof value === "string" ? value : value.name);
     url.search = parameters.toString();
     return url;
+}
+function isRefreshForm(form: HTMLFormElement): boolean {
+    if (
+        !(form instanceof HTMLFormElement) ||
+        form.ownerDocument !== document ||
+        !form.isConnected ||
+        !form.hasAttribute("data-graft")
+    )
+        return false;
+    const values = effectiveFormValues(form);
+    if (
+        values.method !== "get" ||
+        values.encoding !== "application/x-www-form-urlencoded"
+    )
+        return false;
+    try {
+        const url = new URL(values.action, document.baseURI);
+        return sameOrigin(url) && !url.hash;
+    } catch {
+        return false;
+    }
 }
 function preparePost(form: HTMLFormElement, submitter?: HTMLElement | null) {
     const values = effectiveFormValues(form, submitter);
@@ -501,12 +525,39 @@ async function safeRequest(
     };
 }
 
-function cancelActiveSafeForms(runtime: Runtime) {
+function queueRefresh(runtime: Runtime, form: HTMLFormElement): void {
+    if (runtime.disposed || !isRefreshForm(form)) return;
+    if (documentUnsafe.kind === "uncertain") return;
+    runtime.queuedRefreshForms.add(form);
+}
+
+function drainQueuedRefreshes(runtime: Runtime): void {
+    if (
+        runtime.disposed ||
+        runtime.navigationPending ||
+        documentUnsafe.kind !== "idle"
+    )
+        return;
+    for (const form of [...runtime.queuedRefreshForms]) {
+        if (!isRefreshForm(form)) {
+            runtime.queuedRefreshForms.delete(form);
+            continue;
+        }
+        if (runtime.formLanes.get(form)?.active) continue;
+        runtime.queuedRefreshForms.delete(form);
+        void submitSafe(runtime, form, undefined, "refresh");
+    }
+}
+
+function cancelActiveSafeForms(runtime: Runtime, retainRefreshes = false) {
     for (const lane of runtime.activeSafeFormLanes) {
+        if (retainRefreshes && lane.active?.source === "refresh")
+            queueRefresh(runtime, lane.active.form);
         ++lane.sequence;
         lane.controller?.abort();
         lane.cancelPending?.();
         lane.cancelPending = undefined;
+        lane.active = undefined;
     }
     runtime.activeSafeFormLanes.clear();
 }
@@ -529,11 +580,12 @@ async function navigate(
     )
         return;
     runtime.navigationPending = true;
-    cancelActiveSafeForms(runtime);
+    cancelActiveSafeForms(runtime, true);
     const sequence = ++runtime.navigationLane.sequence;
     runtime.navigationLane.controller?.abort();
     runtime.navigationLane.controller = new AbortController();
     const responseUrl: { current?: string } = {};
+    let refreshDisposition: "retain" | "drain" | "discard" = "retain";
     try {
         const result = await safeRequest(
             runtime,
@@ -545,10 +597,14 @@ async function navigate(
         );
         if (
             runtime.disposed ||
-            result.kind !== "applied" ||
+            result.kind === "stale" ||
             sequence !== runtime.navigationLane.sequence
         )
             return;
+        if (result.kind === "handed-off") {
+            refreshDisposition = "discard";
+            return;
+        }
         if (mode === "push")
             history.pushState({ hypergraft: true }, "", result.url);
         emitLocationChange({
@@ -572,6 +628,7 @@ async function navigate(
             }
         }
         window.scrollTo(0, 0);
+        refreshDisposition = "drain";
     } catch (error) {
         if (
             errorName(error) === "AbortError" ||
@@ -587,11 +644,17 @@ async function navigate(
             element,
             targetId: diagnosticTargetId(error),
         });
+        refreshDisposition = "discard";
         if (mode === "push") location.assign(url.href);
         else location.reload();
     } finally {
-        if (sequence === runtime.navigationLane.sequence)
+        if (sequence === runtime.navigationLane.sequence) {
             runtime.navigationPending = false;
+            if (refreshDisposition === "discard")
+                runtime.queuedRefreshForms.clear();
+            else if (refreshDisposition === "drain")
+                drainQueuedRefreshes(runtime);
+        }
     }
 }
 
@@ -635,14 +698,17 @@ async function submitSafe(
     runtime: Runtime,
     form: HTMLFormElement,
     submitter?: HTMLElement | null,
+    source: SafeFormSource = "submission",
 ) {
-    if (
-        runtime.disposed ||
-        documentUnsafe.kind !== "idle" ||
-        runtime.navigationPending ||
-        !form.isConnected
-    )
+    if (runtime.disposed || !form.isConnected) return;
+    if (source === "refresh" && !isRefreshForm(form)) {
+        runtime.queuedRefreshForms.delete(form);
         return;
+    }
+    if (documentUnsafe.kind !== "idle" || runtime.navigationPending) {
+        if (source === "refresh") queueRefresh(runtime, form);
+        return;
+    }
     const url = getFormUrl(form, submitter);
     const button = submitterControl(submitter);
     const lane = runtime.formLanes.get(form) ?? { sequence: 0, error: false };
@@ -655,6 +721,7 @@ async function submitSafe(
     lane.cancelPending?.();
     lane.cancelPending = undefined;
     lane.controller = new AbortController();
+    lane.active = { form, source };
     runtime.activeSafeFormLanes.add(lane);
     const restorePending = pendingState(form, button);
     lane.cancelPending = restorePending;
@@ -665,6 +732,7 @@ async function submitSafe(
     // records only the outcome and the status of a received unparseable
     // response. Superseded requests and navigation hand-offs emit nothing.
     let settlement: Settlement | undefined;
+    let drainRefreshes = false;
     try {
         const result = await safeRequest(
             runtime,
@@ -678,11 +746,16 @@ async function submitSafe(
         if (result.kind === "applied") {
             settlement = result.settlement;
             responseUrl.current = result.url;
-            history.replaceState({ hypergraft: true }, "", result.url);
-            emitLocationChange({
-                url: location.href,
-                cause: "get-form-replacement",
-            });
+            if (source === "submission") {
+                history.replaceState({ hypergraft: true }, "", result.url);
+                emitLocationChange({
+                    url: location.href,
+                    cause: "get-form-replacement",
+                });
+            }
+            drainRefreshes = true;
+        } else if (result.kind === "handed-off") {
+            runtime.queuedRefreshForms.clear();
         }
     } catch (error) {
         if (
@@ -704,6 +777,7 @@ async function submitSafe(
                 status === undefined
                     ? { outcome: "safe-failure" }
                     : { outcome: "safe-failure", status };
+            drainRefreshes = true;
         }
     } finally {
         // An older request for this form must not clear the replacement's
@@ -711,6 +785,7 @@ async function submitSafe(
         if (!runtime.disposed && sequence === lane.sequence) {
             runtime.activeSafeFormLanes.delete(lane);
             lane.cancelPending = undefined;
+            lane.active = undefined;
             if (settlement) {
                 // Pending state is final before lifecycle observers reconcile
                 // retained roots, so restore the form and submitter first.
@@ -722,6 +797,7 @@ async function submitSafe(
                     ...settlement,
                 });
             }
+            if (drainRefreshes) drainQueuedRefreshes(runtime);
         }
     }
 }
@@ -849,7 +925,7 @@ async function submitUnsafe(
         runtime.navigationPending
     )
         return;
-    cancelActiveSafeForms(runtime);
+    cancelActiveSafeForms(runtime, true);
     documentUnsafe = { kind: "pending", form };
     const restorePending = pendingState(form, prepared.submitter);
     const outcome = await unsafeRequest(runtime, form, prepared);
@@ -863,10 +939,12 @@ async function submitUnsafe(
         return;
     }
     if (outcome.kind === "handed-off") {
+        runtime.queuedRefreshForms.clear();
         restorePending();
         return;
     }
     if (outcome.kind === "uncertain") {
+        runtime.queuedRefreshForms.clear();
         documentUnsafe = { kind: "uncertain", form };
         form.setAttribute("data-graft-uncertain", "");
         // Mark uncertainty before restoring pending state, then request host
@@ -898,6 +976,8 @@ async function submitUnsafe(
         const historyUrl = runtime.queuedHistoryUrl;
         runtime.queuedHistoryUrl = undefined;
         void navigate(runtime, historyUrl, "pop");
+    } else if (outcome.kind === "applied") {
+        drainQueuedRefreshes(runtime);
     }
 }
 
@@ -990,6 +1070,7 @@ function disposeRuntime(runtime: Runtime, replacement: boolean) {
     runtime.navigationLane.controller?.abort();
     runtime.navigationPending = false;
     runtime.queuedHistoryUrl = undefined;
+    runtime.queuedRefreshForms.clear();
     cancelActiveSafeForms(runtime);
     runtime.options = {};
     // A replacement inherits the document-level unsafe guard. A final stop
@@ -1009,6 +1090,7 @@ function createRuntime(options: HypergraftOptions): Runtime {
         composing: false,
         navigationPending: false,
         queuedHistoryUrl: undefined,
+        queuedRefreshForms: new Set(),
         detachListeners: () => undefined,
         stopIslands: () => undefined,
     };
@@ -1078,6 +1160,13 @@ function createRuntime(options: HypergraftOptions): Runtime {
         removeEventListener("popstate", onPopState);
     };
     return runtime;
+}
+
+export function requestGraftRefresh(form: HTMLFormElement): void {
+    const runtime = activeRuntime;
+    if (!runtime || !isRefreshForm(form)) return;
+    queueRefresh(runtime, form);
+    drainQueuedRefreshes(runtime);
 }
 
 export function startHypergraft(options: HypergraftOptions = {}) {
