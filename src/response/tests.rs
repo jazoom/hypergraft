@@ -4,6 +4,7 @@ use axum::{
     body::to_bytes,
     http::{StatusCode, header},
 };
+use futures_util::stream;
 use serde_json::Value;
 
 #[test]
@@ -148,11 +149,26 @@ async fn matches_the_shared_version_one_fixture() {
         serde_json::json!([200, 401, 409, 422, 429])
     );
     assert_eq!(fixture["navigationStatus"], 200);
-    assert_eq!(fixture["operations"], serde_json::json!(["children"]));
+    assert_eq!(
+        fixture["operations"],
+        serde_json::json!(["children", "append"])
+    );
+    assert_eq!(fixture["transfer"]["header"], GRAFT_TRANSFER);
+    assert_eq!(
+        fixture["transfer"]["kinds"],
+        serde_json::json!(["complete", "stream"])
+    );
+    assert_eq!(fixture["phases"], serde_json::json!(["progress", "final"]));
+    assert_eq!(
+        fixture["streamStatuses"],
+        serde_json::json!([200, 401, 409, 422])
+    );
     assert_eq!(fixture["limits"]["responseBytes"], 1024 * 1024);
     assert_eq!(fixture["limits"]["patchCount"], MAX_PATCHES);
     assert_eq!(fixture["limits"]["insertedNodes"], 10_000);
     assert_eq!(fixture["limits"]["nestingDepth"], 64);
+    assert_eq!(fixture["limits"]["streamFrames"], MAX_STREAM_FRAMES);
+    assert_eq!(fixture["limits"]["streamBytes"], MAX_STREAM_BYTES);
     assert_eq!(fixture["id"]["pattern"], "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$");
     assert_eq!(fixture["id"]["maximumBytes"], 128);
 
@@ -175,6 +191,19 @@ async fn matches_the_shared_version_one_fixture() {
         )
         .await,
         fixture["representativeNavigation"]
+    );
+
+    let progress = PatchSet::new()
+        .with_append(
+            DomId::new("fixture-target").unwrap(),
+            &Content { value: "Ready" },
+        )
+        .unwrap()
+        .encode_progress()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(progress.into_bytes()).unwrap(),
+        fixture["representativeStreamFrame"]
     );
 }
 
@@ -212,4 +241,68 @@ fn navigation_construction_rejects_an_oversized_escaped_envelope() {
     assert!(expanding.len() < MAX_RESPONSE_BYTES);
     assert!(escaped_navigation_len(&expanding) > MAX_RESPONSE_BYTES);
     assert!(Navigation::new(expanding).is_err());
+}
+
+#[test]
+fn stream_final_rejects_throttled_status() {
+    let error = PatchSet::new()
+        .with_children(DomId::new("main").unwrap(), &Content { value: "x" })
+        .unwrap()
+        .encode_final(PatchStatus::TooManyRequests(
+            RetryAfter::seconds(1).unwrap(),
+        ))
+        .unwrap_err();
+    assert_eq!(error.kind(), PatchBuildErrorKind::InvalidStatus);
+}
+
+#[tokio::test]
+async fn stream_response_emits_one_final_frame_after_progress() {
+    let progress = PatchSet::new()
+        .with_append(DomId::new("main").unwrap(), &Content { value: "one" })
+        .unwrap()
+        .encode_progress()
+        .unwrap();
+    let final_frame = PatchSet::new()
+        .with_append(DomId::new("main").unwrap(), &Content { value: "two" })
+        .unwrap()
+        .encode_final(PatchStatus::Ok)
+        .unwrap();
+    let expected = [progress.bytes.as_slice(), final_frame.bytes.as_slice()].concat();
+    let response = crate::outcome::stream_response(stream::iter([progress, final_frame]));
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[GRAFT_TRANSFER], "stream");
+    assert_eq!(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .as_ref(),
+        expected
+    );
+}
+
+#[tokio::test]
+async fn stream_response_rejects_an_incomplete_or_overlong_frame_sequence() {
+    let progress = || {
+        PatchSet::new()
+            .with_append(DomId::new("main").unwrap(), &Content { value: "x" })
+            .unwrap()
+            .encode_progress()
+            .unwrap()
+    };
+    let incomplete = crate::outcome::stream_response(stream::iter([progress()]));
+    assert!(to_bytes(incomplete.into_body(), usize::MAX).await.is_err());
+
+    let frames = (0..=MAX_STREAM_FRAMES)
+        .map(|_| progress())
+        .collect::<Vec<_>>();
+    let overlong = crate::outcome::stream_response(stream::iter(frames));
+    assert!(to_bytes(overlong.into_body(), usize::MAX).await.is_err());
+
+    let final_frame = PatchSet::new()
+        .with_append(DomId::new("main").unwrap(), &Content { value: "done" })
+        .unwrap()
+        .encode_final(PatchStatus::Ok)
+        .unwrap();
+    let after_final = crate::outcome::stream_response(stream::iter([final_frame, progress()]));
+    assert!(to_bytes(after_final.into_body(), usize::MAX).await.is_err());
 }

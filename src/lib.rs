@@ -7,8 +7,8 @@ mod response;
 
 pub use request::{CommandGraft, GRAFT_REQUEST, GraftMetadataError, GraftRequest, PageGraft};
 pub use response::{
-    DomId, InvalidDomId, InvalidNavigation, Navigation, PatchBuildError, PatchBuildErrorKind,
-    PatchSet, PatchStatus, RetryAfter,
+    DomId, GRAFT_TRANSFER, InvalidDomId, InvalidNavigation, Navigation, PatchBuildError,
+    PatchBuildErrorKind, PatchSet, PatchStatus, RetryAfter, StreamFrame,
 };
 
 use axum::{
@@ -23,6 +23,8 @@ pub const MAX_PATCHES: usize = 16;
 pub const MAX_INSERTED_NODES: usize = 10_000;
 pub const MAX_NESTING_DEPTH: usize = 64;
 pub const MAX_DOM_ID_BYTES: usize = 128;
+pub const MAX_STREAM_FRAMES: usize = 256;
+pub const MAX_STREAM_BYTES: usize = 16 * 1024 * 1024;
 pub const VARY_VALUE: &str = "Graft-Request, Accept";
 
 /// Merge protocol variance into `Vary` without duplicates.

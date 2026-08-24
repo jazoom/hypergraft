@@ -5,6 +5,7 @@ import {
 } from "./diagnostics";
 import {
     emitLocationChange,
+    emitProgress,
     emitRequestSettled,
     type RequestSettledDetail,
 } from "./events";
@@ -14,9 +15,13 @@ import {
     MEDIA_TYPE,
     PATCH_STATUSES,
     preflight,
+    preflightFrame,
+    transferKind,
+    type PreparedBatch,
     type PreparedResponse,
     type ValidateContent,
 } from "./patches";
+import { readStreamFrames } from "./stream";
 
 type Lane = {
     controller?: AbortController;
@@ -235,6 +240,110 @@ export async function readBoundedResponse(response: Response): Promise<string> {
     }
 }
 
+type ConsumeOutcome =
+    | { kind: "navigation"; destination: string }
+    | { kind: "applied"; settlement: AppliedSettlement }
+    | { kind: "stale" };
+
+async function consumeEnhanced(
+    runtime: Runtime,
+    response: Response,
+    isStale: () => boolean,
+    onProgress?: (batch: PreparedBatch, frame: number) => void,
+): Promise<ConsumeOutcome> {
+    let transfer: "complete" | "stream";
+    try {
+        transfer = transferKind(response);
+    } catch (error) {
+        throw tagStatus(error, response.status);
+    }
+    if (transfer === "complete") {
+        const text = await readBoundedResponse(response);
+        if (isStale()) return { kind: "stale" };
+        let prepared: PreparedResponse;
+        try {
+            prepared = preflight(
+                response,
+                text,
+                document,
+                runtime.options.validateContent,
+            );
+        } catch (error) {
+            throw tagStatus(error, response.status);
+        }
+        if (isStale()) return { kind: "stale" };
+        if (prepared.kind === "navigation")
+            return { kind: "navigation", destination: prepared.destination };
+        try {
+            apply(prepared.batch);
+        } catch (error) {
+            throw tagStatus(
+                new HypergraftError("apply-failure", errorMessage(error)),
+                response.status,
+            );
+        }
+        return {
+            kind: "applied",
+            settlement: {
+                outcome: "applied-patch",
+                status: acceptedStatus(response.status) ?? 200,
+                targetIds: prepared.batch.patches.map(
+                    (patch) => patch.targetId,
+                ),
+            },
+        };
+    }
+    if (response.status !== 200)
+        throw tagStatus(
+            new HypergraftError("protocol", "status"),
+            response.status,
+        );
+    if (response.headers.get("content-type") !== MEDIA_TYPE)
+        throw tagStatus(
+            new HypergraftError("protocol", "media type"),
+            response.status,
+        );
+    let sawFinal = false;
+    let settlement: AppliedSettlement | undefined;
+    let frame = 0;
+    try {
+        for await (const text of readStreamFrames(response)) {
+            if (isStale()) return { kind: "stale" };
+            if (sawFinal)
+                throw new HypergraftError("protocol", "data after final frame");
+            const prepared = preflightFrame(
+                text,
+                document,
+                runtime.options.validateContent,
+            );
+            try {
+                apply(prepared.batch);
+            } catch (error) {
+                throw new HypergraftError("apply-failure", errorMessage(error));
+            }
+            frame += 1;
+            if (prepared.phase === "progress") {
+                onProgress?.(prepared.batch, frame);
+                continue;
+            }
+            sawFinal = true;
+            settlement = {
+                outcome: "applied-patch",
+                status: prepared.status,
+                targetIds: prepared.batch.patches.map(
+                    (patch) => patch.targetId,
+                ),
+            };
+        }
+    } catch (error) {
+        throw error;
+    }
+    if (isStale()) return { kind: "stale" };
+    if (!sawFinal || !settlement)
+        throw new HypergraftError("protocol", "incomplete stream");
+    return { kind: "applied", settlement };
+}
+
 // Safe GET requests settle into exactly one of three states: a complete
 // preflighted batch was applied, the request was superseded or aborted
 // before it could settle, or a same-origin redirect or navigation envelope
@@ -357,37 +466,27 @@ async function safeRequest(
         window.location.assign(destination.href);
         return { kind: "handed-off" };
     }
-    let text: string;
-    try {
-        text = await readBoundedResponse(response);
-    } catch (error) {
-        throw tagStatus(error, response.status);
-    }
-    if (runtime.disposed || lane.sequence !== sequence)
-        return { kind: "stale" };
-    let prepared: PreparedResponse;
-    try {
-        prepared = preflight(
-            response,
-            text,
-            document,
-            runtime.options.validateContent,
-        );
-    } catch (error) {
-        throw tagStatus(error, response.status);
-    }
-    if (runtime.disposed) return { kind: "stale" };
-    if (prepared.kind === "navigation") {
-        window.location.assign(prepared.destination);
+    const consumed = await consumeEnhanced(
+        runtime,
+        response,
+        () => runtime.disposed || lane.sequence !== sequence,
+        failedForm
+            ? (batch, frame) => {
+                  failedForm.setAttribute("data-graft-progress", "");
+                  emitProgress({
+                      requestKind: "patch",
+                      form: failedForm,
+                      url: response.url || url.href,
+                      frame,
+                      targetIds: batch.patches.map((patch) => patch.targetId),
+                  });
+              }
+            : undefined,
+    );
+    if (consumed.kind === "stale") return { kind: "stale" };
+    if (consumed.kind === "navigation") {
+        window.location.assign(consumed.destination);
         return { kind: "handed-off" };
-    }
-    try {
-        apply(prepared.batch);
-    } catch (error) {
-        throw tagStatus(
-            new HypergraftError("apply-failure", errorMessage(error)),
-            response.status,
-        );
     }
     if (failedForm) clearError(runtime, lane, failedForm);
     else if (pruneFailedSafeForms(runtime))
@@ -395,11 +494,7 @@ async function safeRequest(
     return {
         kind: "applied",
         url: response.url || url.href,
-        settlement: {
-            outcome: "applied-patch",
-            status: acceptedStatus(response.status) ?? 200,
-            targetIds: prepared.batch.patches.map((patch) => patch.targetId),
-        },
+        settlement: consumed.settlement,
     };
 }
 
@@ -522,6 +617,7 @@ function pendingState(
             ? form.removeAttribute("aria-busy")
             : form.setAttribute("aria-busy", oldBusy);
         if (!hadPending) form.removeAttribute("data-graft-pending");
+        form.removeAttribute("data-graft-progress");
         if (!submitter?.isConnected) return;
         submitter.disabled = oldDisabled ?? false;
         oldAriaDisabled === null
@@ -653,6 +749,7 @@ function uncertainSettlement(status?: AcceptedStatus): FailedSettlement {
 
 async function unsafeRequest(
     runtime: Runtime,
+    form: HTMLFormElement,
     request: {
         url: URL;
         body: URLSearchParams;
@@ -695,53 +792,43 @@ async function unsafeRequest(
         (response.status >= 300 && response.status < 400)
     )
         return failure(new HypergraftError("redirect", "Unusable redirect"));
-    let text: string;
+    let consumed: ConsumeOutcome;
     try {
-        text = await readBoundedResponse(response);
-    } catch (error) {
-        return failure(tagStatus(error, response.status));
-    }
-    let result: PreparedResponse;
-    try {
-        result = preflight(
+        consumed = await consumeEnhanced(
+            runtime,
             response,
-            text,
-            document,
-            runtime.options.validateContent,
+            () => runtime.disposed,
+            (batch, frame) => {
+                form.setAttribute("data-graft-progress", "");
+                emitProgress({
+                    requestKind: "patch",
+                    form,
+                    url: responseUrl,
+                    frame,
+                    targetIds: batch.patches.map((patch) => patch.targetId),
+                });
+            },
         );
     } catch (error) {
-        return failure(tagStatus(error, response.status));
+        return failure(error);
     }
-    if (runtime.disposed) {
+    if (consumed.kind === "stale") {
         return {
             kind: "uncertain",
-            settlement: uncertainSettlement(acceptedStatus(response.status)),
+            settlement: uncertainSettlement(),
             url: responseUrl,
             reason: "transport",
         };
     }
-    if (result.kind === "navigation") {
-        window.location.assign(result.destination);
+    if (consumed.kind === "navigation") {
+        window.location.assign(consumed.destination);
         return { kind: "handed-off" };
     }
-    const settlement: AppliedSettlement = {
-        outcome: "applied-patch",
-        status: acceptedStatus(response.status) ?? 200,
-        targetIds: result.batch.patches.map((patch) => patch.targetId),
+    return {
+        kind: "applied",
+        settlement: consumed.settlement,
+        url: responseUrl,
     };
-    try {
-        apply(result.batch);
-    } catch (error) {
-        // Preflight succeeded but the batch failed to land: the settlement
-        // must not claim authoritative target identifiers for it.
-        return failure(
-            tagStatus(
-                new HypergraftError("apply-failure", errorMessage(error)),
-                response.status,
-            ),
-        );
-    }
-    return { kind: "applied", settlement, url: responseUrl };
 }
 
 async function submitUnsafe(
@@ -762,7 +849,7 @@ async function submitUnsafe(
     cancelActiveSafeForms(runtime);
     documentUnsafe = { kind: "pending", form };
     const restorePending = pendingState(form, prepared.submitter);
-    const outcome = await unsafeRequest(runtime, prepared);
+    const outcome = await unsafeRequest(runtime, form, prepared);
     if (runtime.disposed) {
         restorePending();
         // The command may have reached the server, but a disposed runtime

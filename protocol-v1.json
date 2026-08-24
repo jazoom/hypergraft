@@ -6,16 +6,25 @@
         "kinds": ["navigation", "patch"],
         "acceptHeader": "Accept"
     },
+    "transfer": {
+        "header": "Graft-Transfer",
+        "kinds": ["complete", "stream"],
+        "default": "complete"
+    },
     "retryAfterRequiredForStatus": 429,
     "trustedTypesPolicyName": "hypergraft",
     "patchStatuses": [200, 401, 409, 422, 429],
+    "streamStatuses": [200, 401, 409, 422],
     "navigationStatus": 200,
-    "operations": ["children"],
+    "operations": ["children", "append"],
+    "phases": ["progress", "final"],
     "limits": {
         "responseBytes": 1048576,
         "patchCount": 16,
         "insertedNodes": 10000,
-        "nestingDepth": 64
+        "nestingDepth": 64,
+        "streamFrames": 256,
+        "streamBytes": 16777216
     },
     "id": {
         "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$",
@@ -23,5 +32,6 @@
         "asciiOnly": true
     },
     "representativePatch": "<graft-patch-set version=\"1\" title=\"Fixture &amp; title\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
-    "representativeNavigation": "<graft-patch-set version=\"1\" navigate=\"/items?fixture=one&amp;other=two\"></graft-patch-set>"
+    "representativeNavigation": "<graft-patch-set version=\"1\" navigate=\"/items?fixture=one&amp;other=two\"></graft-patch-set>",
+    "representativeStreamFrame": "167\n<graft-patch-set version=\"1\" phase=\"progress\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>"
 }

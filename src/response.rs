@@ -8,6 +8,8 @@ use axum::{
 
 use crate::{MAX_PATCHES, MAX_RESPONSE_BYTES, MEDIA_TYPE, VERSION, merge_vary};
 
+pub const GRAFT_TRANSFER: &str = "Graft-Transfer";
+
 /// Stable classification of a failed patch build.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PatchBuildErrorKind {
@@ -16,6 +18,7 @@ pub enum PatchBuildErrorKind {
     PatchLimit,
     EmptyBatch,
     InvalidTarget,
+    InvalidStatus,
     ResponseLimit,
 }
 
@@ -27,6 +30,7 @@ pub enum PatchBuildError {
     PatchLimit,
     EmptyBatch,
     InvalidTarget,
+    InvalidStatus,
     ResponseLimit,
 }
 
@@ -38,6 +42,7 @@ impl PatchBuildError {
             Self::PatchLimit => PatchBuildErrorKind::PatchLimit,
             Self::EmptyBatch => PatchBuildErrorKind::EmptyBatch,
             Self::InvalidTarget => PatchBuildErrorKind::InvalidTarget,
+            Self::InvalidStatus => PatchBuildErrorKind::InvalidStatus,
             Self::ResponseLimit => PatchBuildErrorKind::ResponseLimit,
         }
     }
@@ -51,6 +56,7 @@ impl std::fmt::Display for PatchBuildError {
             PatchBuildErrorKind::PatchLimit => "patch limit exceeded",
             PatchBuildErrorKind::EmptyBatch => "empty patch batch",
             PatchBuildErrorKind::InvalidTarget => "invalid patch target",
+            PatchBuildErrorKind::InvalidStatus => "stream cannot carry that status",
             PatchBuildErrorKind::ResponseLimit => "response byte limit exceeded",
         })
     }
@@ -150,11 +156,47 @@ impl RetryAfter {
     }
 }
 
+/// A validated length-prefixed envelope for a bounded stream response.
+#[derive(Debug)]
+pub struct StreamFrame {
+    bytes: Vec<u8>,
+    final_frame: bool,
+}
+
+impl StreamFrame {
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    pub(crate) fn byte_len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    pub(crate) fn is_final(&self) -> bool {
+        self.final_frame
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PatchOperation {
+    Children,
+    Append,
+}
+
+impl PatchOperation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Children => "children",
+            Self::Append => "append",
+        }
+    }
+}
+
 /// A version 1 patch batch. It cannot contain navigation metadata.
 #[derive(Default)]
 pub struct PatchSet {
     title: Option<String>,
-    patches: Vec<(DomId, String)>,
+    patches: Vec<(DomId, PatchOperation, String)>,
 }
 
 impl PatchSet {
@@ -175,11 +217,7 @@ impl PatchSet {
         target: impl AsRef<str>,
         template: &T,
     ) -> Result<(), PatchBuildError> {
-        let target = DomId::new(target.as_ref()).map_err(|_| PatchBuildError::InvalidTarget)?;
-        self.validate_new_target(&target)?;
-        let html = template.render().map_err(PatchBuildError::Rendering)?;
-        self.patches.push((target, html));
-        Ok(())
+        self.push(target, PatchOperation::Children, template)
     }
 
     pub fn with_children<T: Template>(
@@ -191,38 +229,52 @@ impl PatchSet {
         Ok(self)
     }
 
+    pub fn append<T: Template>(
+        &mut self,
+        target: impl AsRef<str>,
+        template: &T,
+    ) -> Result<(), PatchBuildError> {
+        self.push(target, PatchOperation::Append, template)
+    }
+
+    pub fn with_append<T: Template>(
+        mut self,
+        target: impl AsRef<str>,
+        template: &T,
+    ) -> Result<Self, PatchBuildError> {
+        self.append(target, template)?;
+        Ok(self)
+    }
+
+    fn push<T: Template>(
+        &mut self,
+        target: impl AsRef<str>,
+        operation: PatchOperation,
+        template: &T,
+    ) -> Result<(), PatchBuildError> {
+        let target = DomId::new(target.as_ref()).map_err(|_| PatchBuildError::InvalidTarget)?;
+        self.validate_new_target(&target)?;
+        let html = template.render().map_err(PatchBuildError::Rendering)?;
+        self.patches.push((target, operation, html));
+        Ok(())
+    }
+
     fn validate_new_target(&self, target: &DomId) -> Result<(), PatchBuildError> {
         if self.patches.len() >= MAX_PATCHES {
             return Err(PatchBuildError::PatchLimit);
         }
-        if self.patches.iter().any(|(existing, _)| existing == target) {
+        if self
+            .patches
+            .iter()
+            .any(|(existing, _, _)| existing == target)
+        {
             return Err(PatchBuildError::DuplicateTarget);
         }
         Ok(())
     }
 
     pub fn respond(self, status: PatchStatus) -> Result<Response, PatchBuildError> {
-        if self.patches.is_empty() {
-            return Err(PatchBuildError::EmptyBatch);
-        }
-        let mut html = format!("<graft-patch-set version=\"{VERSION}\"");
-        if let Some(title) = self.title {
-            html.push_str(" title=\"");
-            escape_attribute(&title, &mut html);
-            html.push('"');
-        }
-        html.push('>');
-        for (target, content) in self.patches {
-            html.push_str("<graft-patch operation=\"children\" target=\"");
-            escape_attribute(&target.0, &mut html);
-            html.push_str("\"><template>");
-            html.push_str(&content);
-            html.push_str("</template></graft-patch>");
-        }
-        html.push_str("</graft-patch-set>");
-        if html.len() > MAX_RESPONSE_BYTES {
-            return Err(PatchBuildError::ResponseLimit);
-        }
+        let html = self.render_envelope(None, None)?;
         let retry_after = match status {
             PatchStatus::TooManyRequests(value) => Some(value),
             _ => None,
@@ -232,6 +284,79 @@ impl PatchSet {
             value.apply(response.headers_mut());
         }
         Ok(response)
+    }
+
+    /// Length-prefixed progress frame for a `Graft-Transfer: stream` body.
+    pub fn encode_progress(self) -> Result<StreamFrame, PatchBuildError> {
+        self.encode_frame(Some("progress"), None)
+    }
+
+    /// Length-prefixed final frame. Stream settlement cannot carry 429.
+    pub fn encode_final(self, status: PatchStatus) -> Result<StreamFrame, PatchBuildError> {
+        let code = match status {
+            PatchStatus::Ok => 200u16,
+            PatchStatus::Unauthorized => 401,
+            PatchStatus::Conflict => 409,
+            PatchStatus::UnprocessableEntity => 422,
+            PatchStatus::TooManyRequests(_) => return Err(PatchBuildError::InvalidStatus),
+        };
+        self.encode_frame(Some("final"), Some(code))
+    }
+
+    fn encode_frame(
+        self,
+        phase: Option<&'static str>,
+        status: Option<u16>,
+    ) -> Result<StreamFrame, PatchBuildError> {
+        let html = self.render_envelope(phase, status)?;
+        let mut bytes = html.len().to_string().into_bytes();
+        bytes.push(b'\n');
+        bytes.extend_from_slice(html.as_bytes());
+        Ok(StreamFrame {
+            bytes,
+            final_frame: phase == Some("final"),
+        })
+    }
+
+    fn render_envelope(
+        self,
+        phase: Option<&str>,
+        status: Option<u16>,
+    ) -> Result<String, PatchBuildError> {
+        if self.patches.is_empty() {
+            return Err(PatchBuildError::EmptyBatch);
+        }
+        let mut html = format!("<graft-patch-set version=\"{VERSION}\"");
+        if let Some(title) = self.title {
+            html.push_str(" title=\"");
+            escape_attribute(&title, &mut html);
+            html.push('"');
+        }
+        if let Some(phase) = phase {
+            html.push_str(" phase=\"");
+            html.push_str(phase);
+            html.push('"');
+        }
+        if let Some(status) = status {
+            html.push_str(" status=\"");
+            html.push_str(&status.to_string());
+            html.push('"');
+        }
+        html.push('>');
+        for (target, operation, content) in self.patches {
+            html.push_str("<graft-patch operation=\"");
+            html.push_str(operation.as_str());
+            html.push_str("\" target=\"");
+            escape_attribute(&target.0, &mut html);
+            html.push_str("\"><template>");
+            html.push_str(&content);
+            html.push_str("</template></graft-patch>");
+        }
+        html.push_str("</graft-patch-set>");
+        if html.len() > MAX_RESPONSE_BYTES {
+            return Err(PatchBuildError::ResponseLimit);
+        }
+        Ok(html)
     }
 }
 

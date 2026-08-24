@@ -6,7 +6,6 @@ Hypergraft is a bounded HTML-over-HTTP protocol and browser runtime. Version 1 o
 
 ## Notes to agent
 
-- You are possibly running inside a [jai](https://jai.scs.stanford.edu/) strict-mode sandbox. Use paths relative to the project root where possible.
 - You may run `mise` commands. At the end of your work you MUST run `mise run clean`. If there are errors or warnings you MUST fix them, then run `mise run clean` again.
 - Do not broaden protocol version 1 without an explicit plan. Treat `protocol-v1.json` as the canonical protocol fixture before you change request, response or browser behaviour.
 - Keep native HTML fallbacks. The server stays authoritative.

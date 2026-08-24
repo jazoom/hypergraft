@@ -12,21 +12,21 @@ A proposed feature belongs in Hypergraft when it is reusable across hosts, prese
 
 Enhanced requests send exactly one `Graft-Request: navigation|patch` and exactly one `Accept: text/vnd.hypergraft.patches+html`. Missing, incomplete, duplicated or unknown metadata is rejected. Ordinary requests receive documents.
 
-Responses use `text/vnd.hypergraft.patches+html`, `Cache-Control: no-store`, and token-aware `Vary: Graft-Request, Accept`. A patch envelope contains 1–16 unique `children` patches and may carry a title. Accepted patch statuses are 200, 401, 409, 422 and typed 429 responses carrying a positive `Retry-After`. Navigation is a validated local, fragment-free destination and status 200. [`protocol-v1.json`](protocol-v1.json) is the canonical conformance fixture.
+Responses use `text/vnd.hypergraft.patches+html`, `Cache-Control: no-store`, and token-aware `Vary: Graft-Request, Accept`. A complete patch envelope contains 1–16 unique `children` or `append` patches and may carry a title. Accepted complete patch statuses are 200, 401, 409, 422 and typed 429 responses carrying a positive `Retry-After`. Navigation is a validated local, fragment-free destination and status 200. [`protocol-v1.json`](protocol-v1.json) is the canonical conformance fixture.
 
-Both server construction and browser streaming enforce the 1 MiB response limit. Browser preflight additionally validates live targets, final identifier uniqueness, 10,000 inserted nodes and depth 64 before any mutation; Rust does not check those live-document properties.
+A host can send `Graft-Transfer: stream` with HTTP 200 and a length-prefixed sequence of complete envelopes. Each frame is at most 1 MiB. A stream can contain at most 256 frames and 16 MiB in total. A progress frame has `phase="progress"` and applies without settling the request. The last frame has `phase="final"` and can carry `status="200|401|409|422"`. The request settles only after that final frame and a clean end of body. A stream cannot navigate, cannot carry 429, and an incomplete stream is a protocol failure.
 
-Version 1 is finished and narrow. Full-document projection, multipart enhancement and current-link helpers are possible future candidates, not protocol features. It also has no selector language, response effects, polling, prefetching or new history policy.
+Both server construction and browser reading enforce the 1 MiB envelope limit. Browser preflight additionally validates live targets, final identifier uniqueness, 10,000 inserted nodes and depth 64 before any mutation; Rust does not check those live-document properties.
 
 ## Rust host boundary
 
 Mount `hypergraft::middleware::classify` around browser routes, outside Origin enforcement, session resolution, authorisation and handlers, but inside tracing and outer security headers. It classifies metadata once, inserts `GraftRequest`, rejects invalid metadata before downstream work and merges `Vary` after downstream completion. Static assets and a stateless fallback must stay outside this layer.
 
-Handlers must extract the narrowest accepted representation: `PageGraft` for a document-or-navigation page and `CommandGraft` for a document-or-patch command. Build bounded responses with `PatchSet`, checked string targets, Askama templates, `PatchStatus` and `RetryAfter`. `outcome::page_patch` builds a titled single-target page patch. `outcome::children_patch` builds one retained-target patch at any accepted status from an Askama template. `outcome::redirect` explicitly negotiates a native 303 or navigation envelope after validating the destination. Hosts retain document rendering and map `PatchBuildError` to their own secret-safe errors.
+Handlers must extract the narrowest accepted representation: `PageGraft` for a document-or-navigation page and `CommandGraft` for a document-or-patch command. Build bounded responses with `PatchSet`, checked string targets, Askama templates, `PatchStatus` and `RetryAfter`. `outcome::page_patch` builds a titled single-target page patch. `outcome::children_patch` builds one retained-target patch at any accepted status from an Askama template. `PatchSet::append` adds nodes to a retained target. `PatchSet::encode_progress` and `encode_final` build length-prefixed stream frames. `outcome::stream_response` validates frame and byte limits, requires one final frame, and wraps the frame stream as `Graft-Transfer: stream`. `outcome::redirect` explicitly negotiates a native 303 or navigation envelope after validating the destination. Hosts retain document rendering and map `PatchBuildError` to their own secret-safe errors.
 
 ## Browser lifecycle, feedback and diagnostics
 
-The browser entry point is side-effect free. `startHypergraft` creates one runtime instance and enhances only marked same-origin links and supported forms. Its returned stop function tears that instance down. A later `startHypergraft` call disposes the previous instance rather than poking module globals. `children` retains its target and morphs already parsed, preflighted nodes with server-authoritative attributes and form properties. Compatible keyed descendants may be retained or moved within one target; no identity guarantee crosses targets. A retained node, a disconnection or a mutation record is never evidence that transport completed.
+The browser entry point is side-effect free. `startHypergraft` creates one runtime instance and enhances only marked same-origin links and supported forms. Its returned stop function tears that instance down. A later `startHypergraft` call disposes the previous instance rather than poking module globals. `children` retains its target and morphs already parsed, preflighted nodes with server-authoritative attributes and form properties. `append` retains its target and adds preflighted nodes as last children. Compatible keyed descendants may be retained or moved within one target; no identity guarantee crosses targets. A retained node, a disconnection or a mutation record is never evidence that transport completed.
 
 Safe work is cancellable. Teardown invalidates and aborts in-flight safe navigation and form requests, clears every live-form timer, restores pending state and clears safe-failure feedback. A disposed safe response must not patch, emit lifecycle events or call old feedback options.
 
@@ -34,7 +34,7 @@ An in-flight or uncertain unsafe command is not cancellable as though it never h
 
 Applied navigation focuses the first patched target when that target is programmatically focusable, then scrolls the window to `(0, 0)`. Version 1 does not restore history scroll positions: after a children patch the previous offset belongs to different content.
 
-A form request emits `hypergraft:requestsettled` only after its pending and submitter state is final. Its `RequestSettledDetail` contains the originating form, effective request URL, patch kind and one bounded outcome:
+A streamed form request emits `hypergraft:progress` after each applied progress frame and sets `data-graft-progress` on the form until pending state is restored. It emits `hypergraft:requestsettled` only after the final frame, a clean end of body, and after pending and submitter state is final. A complete form request emits `hypergraft:requestsettled` only after its pending and submitter state is final. Its `RequestSettledDetail` contains the originating form, effective request URL, patch kind and one bounded outcome:
 
 - A safe applied patch applies the whole preflighted batch and updates that form's failure state, reconciles history and emits its location fact, restores pending state, then emits `applied-patch` with an accepted status and authoritative target identifiers.
 - A safe failure emits its diagnostic, records the failed source and requests safe feedback, restores pending state, then emits `safe-failure`.
@@ -195,6 +195,33 @@ async fn save_settings(
     Ok(outcome::redirect(graft, "/settings")?)
 }
 ```
+
+### Streamed command with progress frames
+
+A long command can send `Graft-Transfer: stream` instead. Each frame is one length-prefixed envelope. Progress frames apply while the form stays pending. The last frame settles the request.
+
+```rust
+use futures_util::Stream;
+use hypergraft::{outcome, PatchSet, PatchStatus, StreamFrame};
+
+fn progress_frame(line: &LogLine) -> Result<StreamFrame, hypergraft::PatchBuildError> {
+    PatchSet::new().with_append("log", line)?.encode_progress()
+}
+
+fn final_frame(line: &LogLine) -> Result<StreamFrame, hypergraft::PatchBuildError> {
+    PatchSet::new()
+        .with_append("log", line)?
+        .encode_final(PatchStatus::Ok)
+}
+
+fn stream_log(
+    frames: impl Stream<Item = StreamFrame> + Send + 'static,
+) -> axum::response::Response {
+    outcome::stream_response(frames)
+}
+```
+
+Native document fallback waits for the finished page. Do not stream a document response.
 
 ### Transient island proposing through a real form
 

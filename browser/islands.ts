@@ -1,8 +1,10 @@
 import { emitDiagnostic } from "./diagnostics";
 import {
     LOCATION_CHANGE_EVENT,
+    PROGRESS_EVENT,
     REQUEST_SETTLED_EVENT,
     type LocationChangeDetail,
+    type ProgressDetail,
     type RequestSettledDetail,
 } from "./events";
 
@@ -145,12 +147,21 @@ export function observeIslands(
             detail: (event as CustomEvent<LocationChangeDetail>).detail,
         });
     };
+    const progress = (event: Event) => {
+        const detail = (event as CustomEvent<ProgressDetail>).detail;
+        for (const id of detail.targetIds) {
+            const target = document.getElementById(id);
+            if (target) scan(target);
+        }
+    };
     addEventListener(REQUEST_SETTLED_EVENT, settled);
     addEventListener(LOCATION_CHANGE_EVENT, location);
+    addEventListener(PROGRESS_EVENT, progress);
     return () => {
         observer.disconnect();
         removeEventListener(REQUEST_SETTLED_EVENT, settled);
         removeEventListener(LOCATION_CHANGE_EVENT, location);
+        removeEventListener(PROGRESS_EVENT, progress);
         for (const [root, mounted] of instances)
             try {
                 mounted.instance.destroy();

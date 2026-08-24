@@ -3,17 +3,23 @@ import { beforeEach, expect, test } from "vitest";
 import fixture from "../protocol-v1.json";
 import {
     apply,
+    GRAFT_TRANSFER,
     ID_PATTERN_SOURCE,
     MAX_INSERTED_NODES,
     MAX_NESTING_DEPTH,
     MAX_PATCHES,
     MAX_RESPONSE_BYTES,
+    MAX_STREAM_BYTES,
+    MAX_STREAM_FRAMES,
     MEDIA_TYPE,
     NAVIGATION_STATUS,
     OPERATIONS,
     PATCH_STATUSES,
+    PHASES,
     preflight,
+    preflightFrame,
     PROTOCOL_VERSION,
+    STREAM_STATUSES,
 } from "./patches";
 
 function response(body: string, status = 200, type = MEDIA_TYPE) {
@@ -34,11 +40,16 @@ test("matches the shared version one fixture", () => {
     expect(PATCH_STATUSES).toEqual(fixture.patchStatuses);
     expect(NAVIGATION_STATUS).toBe(fixture.navigationStatus);
     expect(OPERATIONS).toEqual(fixture.operations);
+    expect(PHASES).toEqual(fixture.phases);
+    expect(STREAM_STATUSES).toEqual(fixture.streamStatuses);
+    expect(GRAFT_TRANSFER).toBe(fixture.transfer.header);
     expect({
         responseBytes: MAX_RESPONSE_BYTES,
         patchCount: MAX_PATCHES,
         insertedNodes: MAX_INSERTED_NODES,
         nestingDepth: MAX_NESTING_DEPTH,
+        streamFrames: MAX_STREAM_FRAMES,
+        streamBytes: MAX_STREAM_BYTES,
     }).toEqual(fixture.limits);
     expect(ID_PATTERN_SOURCE).toBe(fixture.id.pattern);
     expect(new RegExp(ID_PATTERN_SOURCE).test("A:b.c_1")).toBe(true);
@@ -324,4 +335,54 @@ test("a rejected navigation changes no browser state", () => {
     expect(document.title).toBe(before.title);
     expect(location.href).toBe(before.href);
     expect(history.length).toBe(before.historyLength);
+});
+
+test("appends preflighted nodes without replacing existing children", () => {
+    const text =
+        '<graft-patch-set version="1"><graft-patch operation="append" target="patient-results"><template><p id="new">New</p></template></graft-patch></graft-patch-set>';
+    const prepared = preflight(response(text)[0], text);
+    if (prepared.kind === "patches") apply(prepared.batch);
+    expect(document.getElementById("old")?.textContent).toBe("Old");
+    expect(document.getElementById("new")?.textContent).toBe("New");
+});
+
+test("rejects an append that duplicates a surviving descendant ID", () => {
+    const text =
+        '<graft-patch-set version="1"><graft-patch operation="append" target="patient-results"><template><p id="old">Duplicate</p></template></graft-patch></graft-patch-set>';
+    expect(() => preflight(response(text)[0], text)).toThrow(
+        "final ID collision",
+    );
+});
+
+test("preflights a representative stream frame", () => {
+    const framed = fixture.representativeStreamFrame;
+    const newline = framed.indexOf("\n");
+    const length = Number(framed.slice(0, newline));
+    const envelope = framed.slice(newline + 1);
+    expect(new TextEncoder().encode(envelope).length).toBe(length);
+    document.body.innerHTML = '<main id="fixture-target"></main>';
+    const prepared = preflightFrame(envelope);
+    expect(prepared.phase).toBe("progress");
+    apply(prepared.batch);
+    expect(document.querySelector("#fixture-target")?.textContent).toBe(
+        "Ready",
+    );
+});
+
+test("rejects a stream frame without a phase", () => {
+    const text =
+        '<graft-patch-set version="1"><graft-patch operation="children" target="patient-results"><template>x</template></graft-patch></graft-patch-set>';
+    expect(() => preflightFrame(text)).toThrow("phase");
+});
+
+test("rejects a progress frame that carries a status", () => {
+    const text =
+        '<graft-patch-set version="1" phase="progress" status="200"><graft-patch operation="children" target="patient-results"><template>x</template></graft-patch></graft-patch-set>';
+    expect(() => preflightFrame(text)).toThrow();
+});
+
+test("rejects a non-canonical final status", () => {
+    const text =
+        '<graft-patch-set version="1" phase="final" status="0200"><graft-patch operation="children" target="patient-results"><template>x</template></graft-patch></graft-patch-set>';
+    expect(() => preflightFrame(text)).toThrow("status");
 });

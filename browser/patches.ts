@@ -1,18 +1,26 @@
 import { HypergraftError } from "./diagnostics";
-import { morphChildren } from "./morph";
+import { appendChildren, morphChildren } from "./morph";
 
 export const PROTOCOL_VERSION = "1";
 export const MEDIA_TYPE = "text/vnd.hypergraft.patches+html";
+export const GRAFT_TRANSFER = "Graft-Transfer";
 export const MAX_RESPONSE_BYTES = 1024 * 1024;
 export const MAX_PATCHES = 16;
 export const MAX_INSERTED_NODES = 10000;
 export const MAX_NESTING_DEPTH = 64;
+export const MAX_STREAM_FRAMES = 256;
+export const MAX_STREAM_BYTES = 16 * 1024 * 1024;
 export const ID_PATTERN_SOURCE = "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$";
 const ID_PATTERN = new RegExp(ID_PATTERN_SOURCE);
 export const PATCH_STATUSES = [200, 401, 409, 422, 429] as const;
+export const STREAM_STATUSES = [200, 401, 409, 422] as const;
 export type AcceptedPatchStatus = (typeof PATCH_STATUSES)[number];
+export type StreamStatus = (typeof STREAM_STATUSES)[number];
 export const NAVIGATION_STATUS = 200;
-export const OPERATIONS = ["children"] as const;
+export const OPERATIONS = ["children", "append"] as const;
+export type PatchOperation = (typeof OPERATIONS)[number];
+export const PHASES = ["progress", "final"] as const;
+export type PatchPhase = (typeof PHASES)[number];
 
 type TrustedPolicy = { createHTML(value: string): unknown };
 const trustedTypes = (
@@ -34,14 +42,25 @@ const policy = trustedTypes?.createPolicy(TRUSTED_TYPES_POLICY_NAME, {
 
 export type ValidateContent = (fragment: DocumentFragment) => void;
 
+export type PreparedPatch = {
+    target: HTMLElement;
+    targetId: string;
+    operation: PatchOperation;
+    nodes: Node[];
+};
+
 export type PreparedBatch = {
     title?: string;
-    patches: Array<{ target: HTMLElement; targetId: string; nodes: Node[] }>;
+    patches: PreparedPatch[];
 };
 
 export type PreparedResponse =
     | { kind: "patches"; batch: PreparedBatch }
     | { kind: "navigation"; destination: string };
+
+export type PreparedFrame =
+    | { phase: "progress"; batch: PreparedBatch }
+    | { phase: "final"; status: StreamStatus; batch: PreparedBatch };
 
 function fail(
     reason: HypergraftError["reason"],
@@ -139,12 +158,20 @@ function navigationDestination(value: string): string {
     return destination.href;
 }
 
+export function transferKind(response: Response): "complete" | "stream" {
+    const value = response.headers.get(GRAFT_TRANSFER);
+    if (value === null || value === "complete") return "complete";
+    if (value === "stream") return "stream";
+    fail("protocol", "transfer");
+}
+
 export function preflight(
     response: Response,
     text: string,
     liveDocument: Document = document,
     validateContent?: ValidateContent,
 ): PreparedResponse {
+    if (transferKind(response) !== "complete") fail("protocol", "transfer");
     if (!(PATCH_STATUSES as readonly number[]).includes(response.status))
         fail("protocol", "status");
     if (
@@ -154,6 +181,47 @@ export function preflight(
         fail("protocol", "retry-after");
     if (response.headers.get("content-type") !== MEDIA_TYPE)
         fail("protocol", "media type");
+    const prepared = parseEnvelope(
+        text,
+        liveDocument,
+        validateContent,
+        "complete",
+    );
+    if (prepared.kind === "navigation" && response.status !== NAVIGATION_STATUS)
+        fail("protocol", "navigation envelope");
+    return prepared;
+}
+
+export function preflightFrame(
+    text: string,
+    liveDocument: Document = document,
+    validateContent?: ValidateContent,
+): PreparedFrame {
+    const prepared = parseEnvelope(
+        text,
+        liveDocument,
+        validateContent,
+        "stream",
+    );
+    if (prepared.kind === "navigation") fail("protocol", "stream navigation");
+    const phase = prepared.phase;
+    if (phase === "progress") {
+        if (prepared.status !== undefined) fail("protocol", "progress status");
+        return { phase, batch: prepared.batch };
+    }
+    return {
+        phase: "final",
+        status: prepared.status ?? 200,
+        batch: prepared.batch,
+    };
+}
+
+function parseEnvelope(
+    text: string,
+    liveDocument: Document,
+    validateContent: ValidateContent | undefined,
+    mode: "complete" | "stream",
+): PreparedResponse & { phase?: PatchPhase; status?: StreamStatus } {
     if (new TextEncoder().encode(text).length > MAX_RESPONSE_BYTES)
         fail("byte-limit", "size bound exceeded");
     const parser = new DOMParser();
@@ -177,12 +245,16 @@ export function preflight(
         fail("protocol", "top-level grammar");
     const set = parsed.body.firstElementChild!;
     if (set.localName !== "graft-patch-set") fail("protocol", "envelope");
-    attributes(set, new Set(["version", "title", "navigate"]));
+    attributes(
+        set,
+        mode === "stream"
+            ? new Set(["version", "title", "phase", "status"])
+            : new Set(["version", "title", "navigate"]),
+    );
     if (set.getAttribute("version") !== PROTOCOL_VERSION)
         fail("protocol", "version");
     if (set.hasAttribute("navigate")) {
-        if (response.status !== NAVIGATION_STATUS || set.hasAttribute("title"))
-            fail("protocol", "navigation envelope");
+        if (set.hasAttribute("title")) fail("protocol", "navigation envelope");
         for (const node of set.childNodes)
             if (node.nodeType !== Node.TEXT_NODE || node.textContent?.trim())
                 fail("protocol", "navigation child");
@@ -190,6 +262,25 @@ export function preflight(
             kind: "navigation",
             destination: navigationDestination(set.getAttribute("navigate")!),
         };
+    }
+    let phase: PatchPhase | undefined;
+    let status: StreamStatus | undefined;
+    if (mode === "stream") {
+        const rawPhase = set.getAttribute("phase");
+        if (!(PHASES as readonly string[]).includes(rawPhase ?? ""))
+            fail("protocol", "phase");
+        phase = rawPhase as PatchPhase;
+        if (set.hasAttribute("status")) {
+            if (phase !== "final") fail("protocol", "progress status");
+            const rawStatus = set.getAttribute("status")!;
+            if (
+                !(STREAM_STATUSES as readonly number[]).some(
+                    (accepted) => String(accepted) === rawStatus,
+                )
+            )
+                fail("protocol", "status");
+            status = Number(rawStatus) as StreamStatus;
+        }
     }
     const patchElements = whitespaceChildren(set, "graft-patch");
     if (!patchElements.length || patchElements.length > MAX_PATCHES)
@@ -200,7 +291,8 @@ export function preflight(
     let nodeCount = 0;
     for (const patch of patchElements) {
         attributes(patch, new Set(["operation", "target"]));
-        if (patch.getAttribute("operation") !== OPERATIONS[0])
+        const operation = patch.getAttribute("operation") ?? "";
+        if (!(OPERATIONS as readonly string[]).includes(operation))
             fail("protocol", "operation");
         const id = patch.getAttribute("target") ?? "";
         if (!ID_PATTERN.test(id)) fail("target-content", "target");
@@ -233,13 +325,21 @@ export function preflight(
                 fail("target-content", "duplicate inserted ID", id);
             insertionIds.add(insertedId);
         }
-        patches.push({ target, targetId: id, nodes: [...clone.childNodes] });
+        patches.push({
+            target,
+            targetId: id,
+            operation: operation as PatchOperation,
+            nodes: [...clone.childNodes],
+        });
     }
     const survivingIds = new Set<string>();
     for (const element of liveDocument.querySelectorAll("[id]")) {
         if (
             patches.some(
-                (p) => p.target.contains(element) && p.target !== element,
+                (p) =>
+                    p.operation === "children" &&
+                    p.target.contains(element) &&
+                    p.target !== element,
             )
         )
             continue;
@@ -259,6 +359,8 @@ export function preflight(
                 : undefined,
             patches,
         },
+        phase,
+        status,
     };
 }
 
@@ -268,7 +370,11 @@ export function apply(batch: PreparedBatch) {
     const focusId = active?.id;
     const start = active?.selectionStart;
     const end = active?.selectionEnd;
-    for (const patch of batch.patches) morphChildren(patch.target, patch.nodes);
+    for (const patch of batch.patches) {
+        if (patch.operation === "append")
+            appendChildren(patch.target, patch.nodes);
+        else morphChildren(patch.target, patch.nodes);
+    }
     if (batch.title !== undefined) document.title = batch.title;
     if (focusId) {
         const finalControl = document.getElementById(focusId) as

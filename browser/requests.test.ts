@@ -1586,3 +1586,64 @@ test("restart while an unsafe command is already uncertain does not unlock", asy
     await flush();
     expect(fetch).toHaveBeenCalledOnce();
 });
+
+function frameEnvelope(envelope: string): string {
+    return `${new TextEncoder().encode(envelope).length}\n${envelope}`;
+}
+
+function streamReply(envelopes: string[]) {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream({
+        start(controller) {
+            for (const envelope of envelopes)
+                controller.enqueue(encoder.encode(frameEnvelope(envelope)));
+            controller.close();
+        },
+    });
+    return new Response(body, {
+        status: 200,
+        headers: {
+            "content-type": MEDIA_TYPE,
+            "graft-transfer": "stream",
+        },
+    });
+}
+
+test("an unsafe stream applies progress then settles on the final frame", async () => {
+    const progress: number[] = [];
+    addEventListener("hypergraft:progress", (event) => {
+        progress.push((event as CustomEvent).detail.frame);
+    });
+    const details = collectSettled();
+    vi.mocked(fetch).mockResolvedValue(
+        streamReply([
+            '<graft-patch-set version="1" phase="progress"><graft-patch operation="children" target="theme-card"><template><p id="partial">Partial</p></template></graft-patch></graft-patch-set>',
+            '<graft-patch-set version="1" phase="final"><graft-patch operation="children" target="theme-card"><template><p id="result">Done</p></template></graft-patch></graft-patch-set>',
+        ]),
+    );
+    const element = form();
+    submit(element);
+    await flush();
+    expect(document.getElementById("result")?.textContent).toBe("Done");
+    expect(element.hasAttribute("data-graft-pending")).toBe(false);
+    expect(element.hasAttribute("data-graft-progress")).toBe(false);
+    expect(progress).toEqual([1]);
+    expect(details).toHaveLength(1);
+    expect(details[0]?.outcome).toBe("applied-patch");
+});
+
+test("an incomplete unsafe stream stays uncertain", async () => {
+    const details = collectSettled();
+    vi.mocked(fetch).mockResolvedValue(
+        streamReply([
+            '<graft-patch-set version="1" phase="progress"><graft-patch operation="children" target="theme-card"><template><p id="partial">Partial</p></template></graft-patch></graft-patch-set>',
+        ]),
+    );
+    const element = form();
+    submit(element);
+    await flush();
+    expect(document.getElementById("partial")?.textContent).toBe("Partial");
+    expect(element.hasAttribute("data-graft-uncertain")).toBe(true);
+    expect(details[0]?.outcome).toBe("uncertain-unsafe-result");
+    expect(details[0]).not.toHaveProperty("status");
+});

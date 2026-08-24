@@ -22,7 +22,9 @@ include = [
 
 [dependencies]
 askama = "0.16.0"
+async-stream = "0.3.6"
 axum = "0.8.9"
+futures-util = "0.3.34"
 
 [dev-dependencies]
 serde_json = "1.0.151"

@@ -2,6 +2,7 @@ import type { AcceptedPatchStatus } from "./patches";
 
 export const LOCATION_CHANGE_EVENT = "hypergraft:locationchange";
 export const REQUEST_SETTLED_EVENT = "hypergraft:requestsettled";
+export const PROGRESS_EVENT = "hypergraft:progress";
 
 export type LocationChangeDetail = {
     url: string;
@@ -34,11 +35,22 @@ export type RequestSettledDetail = RequestSettledCommon &
           }
     );
 
+export type ProgressDetail = {
+    requestKind: "patch";
+    form: HTMLFormElement;
+    url: string;
+    frame: number;
+    targetIds: readonly string[];
+};
+
 export function emitLocationChange(detail: LocationChangeDetail): void {
     dispatchEvent(new CustomEvent(LOCATION_CHANGE_EVENT, { detail }));
 }
 export function emitRequestSettled(detail: RequestSettledDetail): void {
     dispatchEvent(new CustomEvent(REQUEST_SETTLED_EVENT, { detail }));
+}
+export function emitProgress(detail: ProgressDetail): void {
+    dispatchEvent(new CustomEvent(PROGRESS_EVENT, { detail }));
 }
 export function listenForRequestSettled(
     listener: (detail: RequestSettledDetail) => void,
@@ -55,4 +67,12 @@ export function listenForLocationChanges(
         listener((event as CustomEvent<LocationChangeDetail>).detail);
     addEventListener(LOCATION_CHANGE_EVENT, handler);
     return () => removeEventListener(LOCATION_CHANGE_EVENT, handler);
+}
+export function listenForProgress(
+    listener: (detail: ProgressDetail) => void,
+): () => void {
+    const handler = (event: Event) =>
+        listener((event as CustomEvent<ProgressDetail>).detail);
+    addEventListener(PROGRESS_EVENT, handler);
+    return () => removeEventListener(PROGRESS_EVENT, handler);
 }
