@@ -8,7 +8,8 @@ mod response;
 pub use request::{CommandGraft, GRAFT_REQUEST, GraftMetadataError, GraftRequest, PageGraft};
 pub use response::{
     DomId, GRAFT_TRANSFER, InvalidDomId, InvalidNavigation, Navigation, PatchBuildError,
-    PatchBuildErrorKind, PatchSet, PatchStatus, RetryAfter, StreamFrame,
+    PatchBuildErrorKind, PatchSet, PatchStatus, RetryAfter, StreamBudget, StreamCapacityError,
+    StreamFrame,
 };
 
 use axum::{

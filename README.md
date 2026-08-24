@@ -24,6 +24,10 @@ Mount `hypergraft::middleware::classify` around browser routes, outside Origin e
 
 Handlers must extract the narrowest accepted representation: `PageGraft` for a document-or-navigation page and `CommandGraft` for a document-or-patch command. Build bounded responses with `PatchSet`, checked string targets, Askama templates, `PatchStatus` and `RetryAfter`. `outcome::page_patch` builds a titled single-target page patch. `outcome::children_patch` builds one retained-target patch at any accepted status from an Askama template. `PatchSet::append` adds nodes to a retained target. `PatchSet::encode_progress` and `encode_final` build length-prefixed stream frames. `outcome::stream_response` validates frame and byte limits, requires one final frame, and wraps the frame stream as `Graft-Transfer: stream`. `outcome::redirect` explicitly negotiates a native 303 or navigation envelope after validating the destination. Hosts retain document rendering and map `PatchBuildError` to their own secret-safe errors.
 
+A native document response uses `PatchStatus::status_code` for the same outcome.
+
+`StreamBudget` counts progress frames and reserves one final envelope. Hosts suppress progress when it returns a capacity error. `outcome::stream_response` remains the final check.
+
 ## Browser lifecycle, feedback and diagnostics
 
 The browser entry point is side-effect free. `startHypergraft` creates one runtime instance and enhances only marked same-origin links and supported forms. Its returned stop function tears that instance down. A later `startHypergraft` call disposes the previous instance rather than poking module globals. `children` retains its target and morphs already parsed, preflighted nodes with server-authoritative attributes and form properties. `append` retains its target and adds preflighted nodes as last children. Compatible keyed descendants may be retained or moved within one target; no identity guarantee crosses targets. A retained node, a disconnection or a mutation record is never evidence that transport completed.
@@ -200,12 +204,21 @@ async fn save_settings(
 
 A long command can send `Graft-Transfer: stream` instead. Each frame is one length-prefixed envelope. Progress frames apply while the form stays pending. The last frame settles the request.
 
+`StreamBudget` counts each progress frame against the protocol limits. It reserves one final frame and one maximum final envelope. A typed capacity error reports exhaustion. The host can then suppress later progress frames. The host still sends one final frame. `outcome::stream_response` still enforces the stream limits.
+
 ```rust
 use futures_util::Stream;
-use hypergraft::{outcome, PatchSet, PatchStatus, StreamFrame};
+use hypergraft::{outcome, PatchSet, PatchStatus, StreamBudget, StreamFrame};
 
-fn progress_frame(line: &LogLine) -> Result<StreamFrame, hypergraft::PatchBuildError> {
-    PatchSet::new().with_append("log", line)?.encode_progress()
+fn progress_frame(
+    budget: &mut StreamBudget,
+    line: &LogLine,
+) -> Result<Option<StreamFrame>, hypergraft::PatchBuildError> {
+    let frame = PatchSet::new().with_append("log", line)?.encode_progress()?;
+    if budget.try_progress(&frame).is_err() {
+        return Ok(None);
+    }
+    Ok(Some(frame))
 }
 
 fn final_frame(line: &LogLine) -> Result<StreamFrame, hypergraft::PatchBuildError> {

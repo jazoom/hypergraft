@@ -306,3 +306,108 @@ async fn stream_response_rejects_an_incomplete_or_overlong_frame_sequence() {
     let after_final = crate::outcome::stream_response(stream::iter([final_frame, progress()]));
     assert!(to_bytes(after_final.into_body(), usize::MAX).await.is_err());
 }
+
+fn protocol_limits() -> (usize, usize, usize) {
+    let fixture: Value = serde_json::from_str(include_str!("../../protocol-v1.json")).unwrap();
+    (
+        fixture["limits"]["streamFrames"].as_u64().unwrap() as usize,
+        fixture["limits"]["streamBytes"].as_u64().unwrap() as usize,
+        fixture["limits"]["responseBytes"].as_u64().unwrap() as usize,
+    )
+}
+
+fn small_progress_frame() -> StreamFrame {
+    PatchSet::new()
+        .with_append(DomId::new("main").unwrap(), &Content { value: "x" })
+        .unwrap()
+        .encode_progress()
+        .unwrap()
+}
+
+#[test]
+fn stream_budget_rejects_a_final_frame() {
+    let final_frame = PatchSet::new()
+        .with_append(DomId::new("main").unwrap(), &Content { value: "done" })
+        .unwrap()
+        .encode_final(PatchStatus::Ok)
+        .unwrap();
+    let mut budget = StreamBudget::new();
+
+    assert_eq!(
+        budget.try_progress(&final_frame),
+        Err(StreamCapacityError::FinalFrame)
+    );
+    assert_eq!(budget, StreamBudget::new());
+}
+
+#[tokio::test]
+async fn stream_budget_reserves_one_final_frame() {
+    let (max_frames, _, _) = protocol_limits();
+    assert_eq!(max_frames, MAX_STREAM_FRAMES);
+
+    let mut budget = StreamBudget::new();
+    let mut frames = Vec::with_capacity(max_frames);
+    for _ in 0..max_frames - 1 {
+        let frame = small_progress_frame();
+        assert_eq!(budget.try_progress(&frame), Ok(()));
+        frames.push(frame);
+    }
+
+    let overflow = small_progress_frame();
+    let before = budget;
+    assert_eq!(
+        budget.try_progress(&overflow),
+        Err(StreamCapacityError::FrameLimit)
+    );
+    assert_eq!(budget, before);
+
+    frames.push(
+        PatchSet::new()
+            .with_append(DomId::new("main").unwrap(), &Content { value: "done" })
+            .unwrap()
+            .encode_final(PatchStatus::Ok)
+            .unwrap(),
+    );
+    let response = crate::outcome::stream_response(stream::iter(frames));
+    assert!(to_bytes(response.into_body(), usize::MAX).await.is_ok());
+}
+
+#[test]
+fn stream_budget_reserves_bytes_for_one_maximum_final_envelope() {
+    let (_, max_bytes, max_envelope) = protocol_limits();
+    assert_eq!(max_bytes, MAX_STREAM_BYTES);
+    assert_eq!(max_envelope, MAX_RESPONSE_BYTES);
+
+    let reserved = max_envelope.to_string().len() + 1 + max_envelope;
+    let ceiling = max_bytes - reserved;
+    let mut budget = StreamBudget::new();
+
+    {
+        let too_big = StreamFrame {
+            bytes: vec![0; ceiling + 1],
+            final_frame: false,
+        };
+        assert_eq!(
+            budget.try_progress(&too_big),
+            Err(StreamCapacityError::ByteLimit)
+        );
+        assert_eq!(budget, StreamBudget::new());
+    }
+
+    let fill = StreamFrame {
+        bytes: vec![0; ceiling],
+        final_frame: false,
+    };
+    assert_eq!(budget.try_progress(&fill), Ok(()));
+
+    let extra = StreamFrame {
+        bytes: vec![0; 1],
+        final_frame: false,
+    };
+    let before = budget;
+    assert_eq!(
+        budget.try_progress(&extra),
+        Err(StreamCapacityError::ByteLimit)
+    );
+    assert_eq!(budget, before);
+}

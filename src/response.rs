@@ -6,7 +6,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use crate::{MAX_PATCHES, MAX_RESPONSE_BYTES, MEDIA_TYPE, VERSION, merge_vary};
+use crate::{
+    MAX_PATCHES, MAX_RESPONSE_BYTES, MAX_STREAM_BYTES, MAX_STREAM_FRAMES, MEDIA_TYPE, VERSION,
+    merge_vary,
+};
 
 pub const GRAFT_TRANSFER: &str = "Graft-Transfer";
 
@@ -118,7 +121,11 @@ pub enum PatchStatus {
 }
 
 impl PatchStatus {
-    fn status_code(self) -> StatusCode {
+    /// HTTP status for this patch outcome.
+    ///
+    /// A native document response uses this status.
+    /// The document then matches the Hypergraft patch for the same result.
+    pub fn status_code(self) -> StatusCode {
         match self {
             Self::Ok => StatusCode::OK,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -176,6 +183,86 @@ impl StreamFrame {
         self.final_frame
     }
 }
+
+const fn decimal_digit_count(mut value: usize) -> usize {
+    let mut digits = 1;
+    while value >= 10 {
+        value /= 10;
+        digits += 1;
+    }
+    digits
+}
+
+const RESERVED_FINAL_FRAMES: usize = 1;
+// A maximum final envelope on the wire is "{len}\n{envelope}".
+const RESERVED_FINAL_FRAME_BYTES: usize =
+    decimal_digit_count(MAX_RESPONSE_BYTES) + 1 + MAX_RESPONSE_BYTES;
+
+/// Progress capacity for one version 1 stream.
+///
+/// Progress never consumes the last frame or the bytes for one maximum
+/// final envelope. That reservation lets the host send a settlement frame
+/// after progress capacity is exhausted.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StreamBudget {
+    frames_used: usize,
+    bytes_used: usize,
+}
+
+/// A frame that cannot consume progress capacity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StreamCapacityError {
+    FinalFrame,
+    FrameLimit,
+    ByteLimit,
+}
+
+impl StreamBudget {
+    pub const fn new() -> Self {
+        Self {
+            frames_used: 0,
+            bytes_used: 0,
+        }
+    }
+
+    /// Account for one progress frame if the reserved final frame still fits.
+    pub fn try_progress(&mut self, frame: &StreamFrame) -> Result<(), StreamCapacityError> {
+        if frame.is_final() {
+            return Err(StreamCapacityError::FinalFrame);
+        }
+        let next_frames = self
+            .frames_used
+            .checked_add(1)
+            .ok_or(StreamCapacityError::FrameLimit)?;
+        if next_frames.saturating_add(RESERVED_FINAL_FRAMES) > MAX_STREAM_FRAMES {
+            return Err(StreamCapacityError::FrameLimit);
+        }
+
+        let next_bytes = self
+            .bytes_used
+            .checked_add(frame.byte_len())
+            .ok_or(StreamCapacityError::ByteLimit)?;
+        if next_bytes.saturating_add(RESERVED_FINAL_FRAME_BYTES) > MAX_STREAM_BYTES {
+            return Err(StreamCapacityError::ByteLimit);
+        }
+
+        self.frames_used = next_frames;
+        self.bytes_used = next_bytes;
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for StreamCapacityError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::FinalFrame => "final frame cannot consume progress capacity",
+            Self::FrameLimit => "stream frame limit exceeded",
+            Self::ByteLimit => "stream byte limit exceeded",
+        })
+    }
+}
+
+impl std::error::Error for StreamCapacityError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PatchOperation {
@@ -293,14 +380,10 @@ impl PatchSet {
 
     /// Length-prefixed final frame. Stream settlement cannot carry 429.
     pub fn encode_final(self, status: PatchStatus) -> Result<StreamFrame, PatchBuildError> {
-        let code = match status {
-            PatchStatus::Ok => 200u16,
-            PatchStatus::Unauthorized => 401,
-            PatchStatus::Conflict => 409,
-            PatchStatus::UnprocessableEntity => 422,
-            PatchStatus::TooManyRequests(_) => return Err(PatchBuildError::InvalidStatus),
-        };
-        self.encode_frame(Some("final"), Some(code))
+        if matches!(status, PatchStatus::TooManyRequests(_)) {
+            return Err(PatchBuildError::InvalidStatus);
+        }
+        self.encode_frame(Some("final"), Some(status.status_code().as_u16()))
     }
 
     fn encode_frame(
