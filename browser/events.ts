@@ -6,7 +6,11 @@ export const PROGRESS_EVENT = "hypergraft:progress";
 
 export type LocationChangeDetail = {
     url: string;
-    cause: "link-navigation" | "get-form-replacement" | "history-traversal";
+    cause:
+        | "link-navigation"
+        | "get-form-replacement"
+        | "command-patch-replacement"
+        | "history-traversal";
 };
 
 type RequestSettledCommon = {

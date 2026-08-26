@@ -283,13 +283,18 @@ export async function readBoundedResponse(response: Response): Promise<string> {
 
 type ConsumeOutcome =
     | { kind: "navigation"; destination: string }
-    | { kind: "applied"; settlement: AppliedSettlement }
+    | {
+          kind: "applied";
+          settlement: AppliedSettlement;
+          replaceLocation?: string;
+      }
     | { kind: "stale" };
 
 async function consumeEnhanced(
     runtime: Runtime,
     response: Response,
     isStale: () => boolean,
+    allowLocationReplacement: boolean,
     onProgress?: (batch: PreparedBatch, frame: number) => void,
 ): Promise<ConsumeOutcome> {
     let transfer: "complete" | "stream";
@@ -315,6 +320,14 @@ async function consumeEnhanced(
         if (isStale()) return { kind: "stale" };
         if (prepared.kind === "navigation")
             return { kind: "navigation", destination: prepared.destination };
+        if (prepared.batch.replaceLocation && !allowLocationReplacement)
+            throw tagStatus(
+                new HypergraftError(
+                    "protocol",
+                    "Safe patch cannot replace the browser location",
+                ),
+                response.status,
+            );
         try {
             apply(prepared.batch);
         } catch (error) {
@@ -332,6 +345,7 @@ async function consumeEnhanced(
                     (patch) => patch.targetId,
                 ),
             },
+            replaceLocation: prepared.batch.replaceLocation,
         };
     }
     if (response.status !== 200)
@@ -511,6 +525,7 @@ async function safeRequest(
         runtime,
         response,
         () => runtime.disposed || lane.sequence !== sequence,
+        false,
         failedForm
             ? (batch, frame) => {
                   failedForm.setAttribute("data-graft-progress", "");
@@ -821,7 +836,12 @@ async function submitSafe(
 // authoritative was applied and the global lock remains, or a valid
 // navigation envelope handed the document over to full navigation.
 type UnsafeOutcome =
-    | { kind: "applied"; settlement: AppliedSettlement; url: string }
+    | {
+          kind: "applied";
+          settlement: AppliedSettlement;
+          url: string;
+          replaceLocation?: string;
+      }
     | {
           kind: "uncertain";
           settlement: FailedSettlement;
@@ -891,6 +911,7 @@ async function unsafeRequest(
             runtime,
             response,
             () => runtime.disposed,
+            true,
             (batch, frame) => {
                 form.setAttribute("data-graft-progress", "");
                 emitProgress({
@@ -921,6 +942,7 @@ async function unsafeRequest(
         kind: "applied",
         settlement: consumed.settlement,
         url: responseUrl,
+        replaceLocation: consumed.replaceLocation,
     };
 }
 
@@ -977,6 +999,17 @@ async function submitUnsafe(
         // Known patches release the global lane before pending state is
         // restored, as both facts must be final before settlement.
         documentUnsafe = { kind: "idle" };
+        if (outcome.replaceLocation && !runtime.queuedHistoryUrl) {
+            history.replaceState(
+                { ...(history.state ?? {}), hypergraft: true },
+                "",
+                outcome.replaceLocation,
+            );
+            emitLocationChange({
+                url: location.href,
+                cause: "command-patch-replacement",
+            });
+        }
         restorePending();
     }
     emitRequestSettled({

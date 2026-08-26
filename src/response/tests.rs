@@ -149,6 +149,16 @@ async fn matches_the_shared_version_one_fixture() {
         serde_json::json!([200, 401, 409, 422, 429])
     );
     assert_eq!(fixture["navigationStatus"], 200);
+    assert_eq!(fixture["locationReplacement"]["attribute"], "location");
+    assert_eq!(
+        fixture["locationReplacement"]["historyOperation"],
+        "replace"
+    );
+    assert_eq!(
+        fixture["locationReplacement"]["requestKind"],
+        "unsafe-patch"
+    );
+    assert_eq!(fixture["locationReplacement"]["transferKind"], "complete");
     assert_eq!(
         fixture["operations"],
         serde_json::json!(["children", "append"])
@@ -173,6 +183,9 @@ async fn matches_the_shared_version_one_fixture() {
     assert_eq!(fixture["id"]["maximumBytes"], 128);
 
     let mut patches = PatchSet::new().title("Fixture & title");
+    patches
+        .replace_location("/items?fixture=one&other=two")
+        .unwrap();
     patches
         .children(
             DomId::new("fixture-target").unwrap(),
@@ -241,6 +254,27 @@ fn navigation_construction_rejects_an_oversized_escaped_envelope() {
     assert!(expanding.len() < MAX_RESPONSE_BYTES);
     assert!(escaped_navigation_len(&expanding) > MAX_RESPONSE_BYTES);
     assert!(Navigation::new(expanding).is_err());
+}
+
+#[test]
+fn patch_location_rejects_invalid_destinations_and_streams() {
+    let mut invalid = PatchSet::new();
+    assert_eq!(
+        invalid
+            .replace_location("https://example.test/items")
+            .unwrap_err()
+            .kind(),
+        PatchBuildErrorKind::InvalidLocation
+    );
+
+    let error = PatchSet::new()
+        .with_children(DomId::new("main").unwrap(), &Content { value: "x" })
+        .unwrap()
+        .with_replace_location("/items")
+        .unwrap()
+        .encode_final(PatchStatus::Ok)
+        .unwrap_err();
+    assert_eq!(error.kind(), PatchBuildErrorKind::InvalidLocation);
 }
 
 #[test]

@@ -16,6 +16,12 @@
     "patchStatuses": [200, 401, 409, 422, 429],
     "streamStatuses": [200, 401, 409, 422],
     "navigationStatus": 200,
+    "locationReplacement": {
+        "attribute": "location",
+        "historyOperation": "replace",
+        "requestKind": "unsafe-patch",
+        "transferKind": "complete"
+    },
     "operations": ["children", "append"],
     "phases": ["progress", "final"],
     "limits": {
@@ -31,7 +37,7 @@
         "maximumBytes": 128,
         "asciiOnly": true
     },
-    "representativePatch": "<graft-patch-set version=\"1\" title=\"Fixture &amp; title\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+    "representativePatch": "<graft-patch-set version=\"1\" title=\"Fixture &amp; title\" location=\"/items?fixture=one&amp;other=two\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
     "representativeNavigation": "<graft-patch-set version=\"1\" navigate=\"/items?fixture=one&amp;other=two\"></graft-patch-set>",
     "representativeStreamFrame": "167\n<graft-patch-set version=\"1\" phase=\"progress\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>"
 }

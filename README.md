@@ -12,7 +12,7 @@ A proposed feature belongs in Hypergraft when it is reusable across hosts, prese
 
 Enhanced requests send exactly one `Graft-Request: navigation|patch` and exactly one `Accept: text/vnd.hypergraft.patches+html`. Missing, incomplete, duplicated or unknown metadata is rejected. Ordinary requests receive documents.
 
-Responses use `text/vnd.hypergraft.patches+html`, `Cache-Control: no-store`, and token-aware `Vary: Graft-Request, Accept`. A complete patch envelope contains 1–16 unique `children` or `append` patches and may carry a title. Accepted complete patch statuses are 200, 401, 409, 422 and typed 429 responses carrying a positive `Retry-After`. Navigation is a validated local, fragment-free destination and status 200. [`protocol-v1.json`](protocol-v1.json) is the canonical conformance fixture.
+Responses use `text/vnd.hypergraft.patches+html`, `Cache-Control: no-store`, and token-aware `Vary: Graft-Request, Accept`. A complete patch envelope contains 1–16 unique `children` or `append` patches and can carry a title. An unsafe command patch can also carry one validated local `location`. The browser replaces the current history entry after the complete patch applies. Safe requests reject this attribute before mutation. Streams cannot carry it. Accepted complete patch statuses are 200, 401, 409 and 422. Typed 429 responses carry a positive `Retry-After`. Navigation uses a validated local, fragment-free destination and status 200. [`protocol-v1.json`](protocol-v1.json) is the canonical conformance fixture.
 
 A host can send `Graft-Transfer: stream` with HTTP 200 and a length-prefixed sequence of complete envelopes. Each frame is at most 1 MiB. A stream can contain at most 256 frames and 16 MiB in total. A progress frame has `phase="progress"` and applies without settling the request. The last frame has `phase="final"` and can carry `status="200|401|409|422"`. The request settles only after that final frame and a clean end of body. A stream cannot navigate, cannot carry 429, and an incomplete stream is a protocol failure.
 
@@ -22,7 +22,7 @@ Both server construction and browser reading enforce the 1 MiB envelope limit. B
 
 Mount `hypergraft::middleware::classify` around browser routes, outside Origin enforcement, session resolution, authorisation and handlers, but inside tracing and outer security headers. It classifies metadata once, inserts `GraftRequest`, rejects invalid metadata before downstream work and merges `Vary` after downstream completion. Static assets and a stateless fallback must stay outside this layer.
 
-Handlers must extract the narrowest accepted representation: `PageGraft` for a document-or-navigation page and `CommandGraft` for a document-or-patch command. Build bounded responses with `PatchSet`, checked string targets, Askama templates, `PatchStatus` and `RetryAfter`. `outcome::page_patch` builds a titled single-target page patch. `outcome::children_patch` builds one retained-target patch at any accepted status from an Askama template. `PatchSet::append` adds nodes to a retained target. `PatchSet::encode_progress` and `encode_final` build length-prefixed stream frames. `outcome::stream_response` validates frame and byte limits, requires one final frame, and wraps the frame stream as `Graft-Transfer: stream`. `outcome::redirect` explicitly negotiates a native 303 or navigation envelope after validating the destination. Hosts retain document rendering and map `PatchBuildError` to their own secret-safe errors.
+Handlers must extract the narrowest accepted representation. Use `PageGraft` for a document-or-navigation page. Use `CommandGraft` for a document-or-patch command. Build bounded responses with `PatchSet`, checked string targets, Askama templates, `PatchStatus` and `RetryAfter`. `outcome::page_patch` builds a titled single-target page patch. `outcome::children_patch` builds one retained-target patch at any accepted status from an Askama template. `PatchSet::append` adds nodes to a retained target. `PatchSet::replace_location` adds a canonical location replacement to a complete command patch. `PatchSet::encode_progress` and `encode_final` reject location replacements. `outcome::stream_response` validates frame and byte limits. It requires one final frame and wraps the frame stream as `Graft-Transfer: stream`. `outcome::redirect` negotiates a native 303 or navigation envelope after destination validation. Hosts render documents and map `PatchBuildError` to their own secret-safe errors.
 
 A native document response uses `PatchStatus::status_code` for the same outcome.
 
@@ -43,7 +43,7 @@ A streamed form request emits `hypergraft:progress` after each applied progress 
 - A safe applied patch applies the whole preflighted batch and updates that form's failure state. A submitted GET form reconciles history and emits its location fact. A host-requested refresh leaves history unchanged. Both restore pending state, then emit `applied-patch` with an accepted status and authoritative target identifiers.
 - A safe failure emits its diagnostic, records the failed source and requests safe feedback, restores pending state, then emits `safe-failure`.
 - A superseded or aborted safe request emits neither a settlement nor a diagnostic. A valid navigation envelope uses `location.assign` and emits no settlement because the document is leaving.
-- A known unsafe patch applies its batch, returns the unsafe lane to idle, restores pending state, emits `applied-patch`, then starts any queued history navigation.
+- A known unsafe patch applies its batch and returns the unsafe lane to idle. If the batch carries `location`, the runtime replaces the current history entry and emits `hypergraft:locationchange`. A queued history traversal takes precedence and suppresses that replacement. The runtime then restores pending state, emits `applied-patch` and starts the queued history navigation.
 - An unsafe malformed, failed or post-preflight application result marks the form uncertain and keeps the global unsafe lock, restores pending state, emits its diagnostic and requests uncertainty feedback, then emits `uncertain-unsafe-result`. Queued navigation remains blocked.
 
 Failure statuses are included only when the received status is accepted by version 1; failures never claim targets. The URL is the received response URL when there was a response, otherwise the attempted URL. Settlements contain no HTML, values or thrown errors.
@@ -239,6 +239,26 @@ async fn save_settings(
     Ok(outcome::redirect(graft, "/settings")?)
 }
 ```
+
+### Command patch with a canonical location
+
+A command can update bounded targets and replace the current browser location. The native response uses a `303` redirect to the same canonical URL.
+
+```rust
+match graft {
+    CommandGraft::Document => Ok(outcome::redirect(graft, "/items/selected")?),
+    CommandGraft::Patch => {
+        let mut patches = PatchSet::new();
+        patches.children("item-results", &results)?;
+        patches.replace_location("/items/selected")?;
+        Ok(patches.respond(PatchStatus::Ok)?)
+    }
+}
+```
+
+The browser changes the location only after the complete patch applies. The fixed history operation is `replace`.
+
+The patch must update each refresh form that depends on the old location state. Hypergraft does not infer or copy host query parameters.
 
 ### Streamed command with progress frames
 

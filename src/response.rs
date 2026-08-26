@@ -22,6 +22,7 @@ pub enum PatchBuildErrorKind {
     EmptyBatch,
     InvalidTarget,
     InvalidStatus,
+    InvalidLocation,
     ResponseLimit,
 }
 
@@ -34,6 +35,7 @@ pub enum PatchBuildError {
     EmptyBatch,
     InvalidTarget,
     InvalidStatus,
+    InvalidLocation,
     ResponseLimit,
 }
 
@@ -46,6 +48,7 @@ impl PatchBuildError {
             Self::EmptyBatch => PatchBuildErrorKind::EmptyBatch,
             Self::InvalidTarget => PatchBuildErrorKind::InvalidTarget,
             Self::InvalidStatus => PatchBuildErrorKind::InvalidStatus,
+            Self::InvalidLocation => PatchBuildErrorKind::InvalidLocation,
             Self::ResponseLimit => PatchBuildErrorKind::ResponseLimit,
         }
     }
@@ -60,6 +63,7 @@ impl std::fmt::Display for PatchBuildError {
             PatchBuildErrorKind::EmptyBatch => "empty patch batch",
             PatchBuildErrorKind::InvalidTarget => "invalid patch target",
             PatchBuildErrorKind::InvalidStatus => "stream cannot carry that status",
+            PatchBuildErrorKind::InvalidLocation => "invalid patch location",
             PatchBuildErrorKind::ResponseLimit => "response byte limit exceeded",
         })
     }
@@ -279,10 +283,11 @@ impl PatchOperation {
     }
 }
 
-/// A version 1 patch batch. It cannot contain navigation metadata.
+/// A version 1 patch batch with an optional canonical location replacement.
 #[derive(Default)]
 pub struct PatchSet {
     title: Option<String>,
+    location: Option<String>,
     patches: Vec<(DomId, PatchOperation, String)>,
 }
 
@@ -290,6 +295,7 @@ impl PatchSet {
     pub fn new() -> Self {
         Self {
             title: None,
+            location: None,
             patches: Vec::new(),
         }
     }
@@ -297,6 +303,26 @@ impl PatchSet {
     pub fn title(mut self, value: impl Into<String>) -> Self {
         self.title = Some(value.into());
         self
+    }
+
+    /// Replace the browser location after this complete patch applies.
+    pub fn replace_location(
+        &mut self,
+        destination: impl Into<String>,
+    ) -> Result<(), PatchBuildError> {
+        let destination = destination.into();
+        validate_navigation(&destination).map_err(|_| PatchBuildError::InvalidLocation)?;
+        self.location = Some(destination);
+        Ok(())
+    }
+
+    /// Add a browser location replacement to this complete patch.
+    pub fn with_replace_location(
+        mut self,
+        destination: impl Into<String>,
+    ) -> Result<Self, PatchBuildError> {
+        self.replace_location(destination)?;
+        Ok(self)
     }
 
     pub fn children<T: Template>(
@@ -391,6 +417,9 @@ impl PatchSet {
         phase: Option<&'static str>,
         status: Option<u16>,
     ) -> Result<StreamFrame, PatchBuildError> {
+        if self.location.is_some() {
+            return Err(PatchBuildError::InvalidLocation);
+        }
         let html = self.render_envelope(phase, status)?;
         let mut bytes = html.len().to_string().into_bytes();
         bytes.push(b'\n');
@@ -413,6 +442,11 @@ impl PatchSet {
         if let Some(title) = self.title {
             html.push_str(" title=\"");
             escape_attribute(&title, &mut html);
+            html.push('"');
+        }
+        if let Some(location) = self.location {
+            html.push_str(" location=\"");
+            escape_attribute(&location, &mut html);
             html.push('"');
         }
         if let Some(phase) = phase {

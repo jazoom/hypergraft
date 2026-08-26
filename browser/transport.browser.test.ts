@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import type { LocationChangeDetail } from "./events";
 import { apply, MEDIA_TYPE, preflight } from "./patches";
 import { resetHypergraftForTests, startHypergraft } from "./requests";
 
@@ -10,12 +11,14 @@ function envelope(
     content: string,
     status = 200,
     title?: string,
+    location?: string,
 ) {
     const titleAttribute = title ? ` title="${title}"` : "";
+    const locationAttribute = location ? ` location="${location}"` : "";
     const headers: Record<string, string> = { "content-type": MEDIA_TYPE };
     if (status === 429) headers["retry-after"] = "60";
     return new Response(
-        `<graft-patch-set version="1"${titleAttribute}><graft-patch operation="children" target="${target}"><template>${content}</template></graft-patch></graft-patch-set>`,
+        `<graft-patch-set version="1"${titleAttribute}${locationAttribute}><graft-patch operation="children" target="${target}"><template>${content}</template></graft-patch></graft-patch-set>`,
         { status, headers },
     );
 }
@@ -112,7 +115,13 @@ test("back and forward restore authoritative history entries", async () => {
     expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
 });
 
-test("back waits for a pending POST and then restores its destination", async () => {
+test("back waits for a pending POST and suppresses its location replacement", async () => {
+    const locationCauses: LocationChangeDetail["cause"][] = [];
+    const listener = (event: Event) =>
+        locationCauses.push(
+            (event as CustomEvent<LocationChangeDetail>).detail.cause,
+        );
+    addEventListener("hypergraft:locationchange", listener);
     let resolveCommand!: (response: Response) => void;
     const fetchMock = vi
         .mocked(fetch)
@@ -140,7 +149,15 @@ test("back waits for a pending POST and then restores its destination", async ()
     );
     expect(fetchMock).toHaveBeenCalledOnce();
 
-    resolveCommand(envelope("command", '<p id="command-finished">Saved</p>'));
+    resolveCommand(
+        envelope(
+            "command",
+            '<p id="command-finished">Saved</p>',
+            200,
+            undefined,
+            "/command-result",
+        ),
+    );
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     await vi.waitFor(() =>
         expect(document.getElementById("history-after-command")).not.toBeNull(),
@@ -148,6 +165,8 @@ test("back waits for a pending POST and then restores its destination", async ()
     expect(new URL(String(fetchMock.mock.calls[1]![0])).pathname).toBe(
         "/command-history/one",
     );
+    expect(locationCauses).not.toContain("command-patch-replacement");
+    removeEventListener("hypergraft:locationchange", listener);
 });
 
 test("back during an uncertain POST leaves reload guidance at that destination", async () => {

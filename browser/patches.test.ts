@@ -39,6 +39,12 @@ test("matches the shared version one fixture", () => {
     expect(MEDIA_TYPE).toBe(fixture.mediaType);
     expect(PATCH_STATUSES).toEqual(fixture.patchStatuses);
     expect(NAVIGATION_STATUS).toBe(fixture.navigationStatus);
+    expect(fixture.locationReplacement).toEqual({
+        attribute: "location",
+        historyOperation: "replace",
+        requestKind: "unsafe-patch",
+        transferKind: "complete",
+    });
     expect(OPERATIONS).toEqual(fixture.operations);
     expect(PHASES).toEqual(fixture.phases);
     expect(STREAM_STATUSES).toEqual(fixture.streamStatuses);
@@ -56,9 +62,13 @@ test("matches the shared version one fixture", () => {
 
     document.body.innerHTML = '<main id="fixture-target"></main>';
     const patchReply = response(fixture.representativePatch)[0];
-    expect(preflight(patchReply, fixture.representativePatch).kind).toBe(
-        "patches",
-    );
+    expect(preflight(patchReply, fixture.representativePatch)).toMatchObject({
+        kind: "patches",
+        batch: {
+            replaceLocation:
+                "http://localhost:3000/items?fixture=one&other=two",
+        },
+    });
     const navigationReply = response(fixture.representativeNavigation)[0];
     expect(
         preflight(navigationReply, fixture.representativeNavigation),
@@ -300,7 +310,10 @@ test.each([
     '<graft-patch-set version="1"><graft-patch operation="children" target="main"><template><template><script>alert(1)</script></template></template></graft-patch></graft-patch-set>',
     '<graft-patch-set version="1"><graft-patch operation="children" target="patient-results"><template><p id="main">collision</p></template></graft-patch></graft-patch-set>',
     '<graft-patch-set version="1" navigate="/next" title="Next"></graft-patch-set>',
+    '<graft-patch-set version="1" navigate="/next" location="/other"></graft-patch-set>',
     '<graft-patch-set version="1" navigate="/next"><graft-patch operation="children" target="main"><template>x</template></graft-patch></graft-patch-set>',
+    '<graft-patch-set version="1" location="https://example.test/next"><graft-patch operation="children" target="main"><template>x</template></graft-patch></graft-patch-set>',
+    '<graft-patch-set version="1" location="/next#fragment"><graft-patch operation="children" target="main"><template>x</template></graft-patch></graft-patch-set>',
     '<graft-patch-set version="1"></graft-patch-set>',
     '<graft-patch-set version="1" navigate=""></graft-patch-set>',
     '<graft-patch-set version="1" navigate="https://example.test/next"></graft-patch-set>',

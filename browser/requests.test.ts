@@ -557,6 +557,54 @@ test("a cancelled native submit event is not enhanced", () => {
     expect(fetch).not.toHaveBeenCalled();
 });
 
+test("an applied command patch replaces the canonical location", async () => {
+    const locationChanges: Array<{ url: string; cause: string }> = [];
+    const onLocationChange = (event: Event) =>
+        locationChanges.push(
+            (event as CustomEvent<{ url: string; cause: string }>).detail,
+        );
+    addEventListener("hypergraft:locationchange", onLocationChange);
+    vi.mocked(fetch).mockResolvedValue(
+        new Response(
+            '<graft-patch-set version="1" location="/dashboard/account/preferences?theme=updated"><graft-patch operation="children" target="theme-card"><template><p id="result">Updated</p></template></graft-patch></graft-patch-set>',
+            { status: 200, headers: { "content-type": MEDIA_TYPE } },
+        ),
+    );
+
+    submit(form());
+    await flush();
+
+    expect(document.getElementById("result")?.textContent).toBe("Updated");
+    expect(location.pathname).toBe("/dashboard/account/preferences");
+    expect(location.search).toBe("?theme=updated");
+    expect(locationChanges).toEqual([
+        {
+            url: "http://localhost:3000/dashboard/account/preferences?theme=updated",
+            cause: "command-patch-replacement",
+        },
+    ]);
+    removeEventListener("hypergraft:locationchange", onLocationChange);
+});
+
+test("a safe patch cannot request a command location replacement", async () => {
+    const details = collectSettled();
+    vi.mocked(fetch).mockResolvedValue(
+        new Response(
+            '<graft-patch-set version="1" location="/messages?view=other"><graft-patch operation="children" target="theme-card"><template><p id="result">Wrong</p></template></graft-patch></graft-patch-set>',
+            { status: 200, headers: { "content-type": MEDIA_TYPE } },
+        ),
+    );
+    const element = refreshForm();
+    const originalUrl = location.href;
+
+    requestGraftRefresh(element);
+    await flush();
+
+    expect(document.getElementById("result")).toBeNull();
+    expect(location.href).toBe(originalUrl);
+    expect(details.at(-1)?.outcome).toBe("safe-failure");
+});
+
 test("a valid conflict clears pending and permits a corrected retry", async () => {
     const fetchMock = vi
         .mocked(fetch)

@@ -51,6 +51,7 @@ export type PreparedPatch = {
 
 export type PreparedBatch = {
     title?: string;
+    replaceLocation?: string;
     patches: PreparedPatch[];
 };
 
@@ -249,12 +250,13 @@ function parseEnvelope(
         set,
         mode === "stream"
             ? new Set(["version", "title", "phase", "status"])
-            : new Set(["version", "title", "navigate"]),
+            : new Set(["version", "title", "navigate", "location"]),
     );
     if (set.getAttribute("version") !== PROTOCOL_VERSION)
         fail("protocol", "version");
     if (set.hasAttribute("navigate")) {
-        if (set.hasAttribute("title")) fail("protocol", "navigation envelope");
+        if (set.hasAttribute("title") || set.hasAttribute("location"))
+            fail("protocol", "navigation envelope");
         for (const node of set.childNodes)
             if (node.nodeType !== Node.TEXT_NODE || node.textContent?.trim())
                 fail("protocol", "navigation child");
@@ -356,6 +358,9 @@ function parseEnvelope(
         batch: {
             title: set.hasAttribute("title")
                 ? set.getAttribute("title")!
+                : undefined,
+            replaceLocation: set.hasAttribute("location")
+                ? navigationDestination(set.getAttribute("location")!)
                 : undefined,
             patches,
         },
