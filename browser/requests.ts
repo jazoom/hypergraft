@@ -125,6 +125,19 @@ function submitterControl(submitter?: HTMLElement | null) {
         ? submitter
         : undefined;
 }
+// Named controls shadow HTMLFormElement IDL attributes. Read the prototype
+// getters so a field named "action" or "method" cannot replace the form URL.
+function formIdlString(
+    form: HTMLFormElement,
+    name: "action" | "method" | "enctype",
+): string {
+    const getter = Object.getOwnPropertyDescriptor(
+        HTMLFormElement.prototype,
+        name,
+    )?.get;
+    const value = getter?.call(form);
+    return typeof value === "string" ? value : "";
+}
 function effectiveFormValues(
     form: HTMLFormElement,
     submitter?: HTMLElement | null,
@@ -132,14 +145,15 @@ function effectiveFormValues(
     const button = submitterControl(submitter);
     return {
         button,
-        action: button?.getAttribute("formaction") || form.action,
+        action:
+            button?.getAttribute("formaction") || formIdlString(form, "action"),
         method: (
-            button?.getAttribute("formmethod") || form.method
+            button?.getAttribute("formmethod") || formIdlString(form, "method")
         ).toLowerCase(),
         encoding: (
             button?.getAttribute("formenctype") ||
             form.getAttribute("enctype") ||
-            form.enctype ||
+            formIdlString(form, "enctype") ||
             "application/x-www-form-urlencoded"
         ).toLowerCase(),
     };

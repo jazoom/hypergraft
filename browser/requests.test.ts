@@ -155,6 +155,24 @@ test("requestSubmit derives the native POST contract and uses the unsafe lane", 
     expect(location.search).toBe("?result=move-conflict");
 });
 
+test("a control named action does not replace the form URL", async () => {
+    const fetchMock = vi.mocked(fetch).mockResolvedValue(patch());
+    const element = form(
+        '<input name="action" value="start"><button type="submit">Start</button>',
+    );
+    element.action = "/sandbox";
+
+    submit(element);
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]![0])).toBe(
+        "http://localhost:3000/sandbox",
+    );
+    const body = fetchMock.mock.calls[0]![1]?.body as URLSearchParams;
+    expect(body.get("action")).toBe("start");
+});
+
 test("an unknown POST result settles uncertain after pending state is final", async () => {
     let resolveResponse!: (response: Response) => void;
     vi.mocked(fetch).mockReturnValue(
