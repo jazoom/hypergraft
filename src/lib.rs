@@ -5,7 +5,11 @@ pub mod outcome;
 mod request;
 mod response;
 
-pub use request::{CommandGraft, GRAFT_REQUEST, GraftMetadataError, GraftRequest, PageGraft};
+pub mod live;
+
+pub use request::{
+    CommandGraft, GRAFT_REQUEST, GraftMetadataError, GraftRequest, PageGraft, PatchGraft,
+};
 pub use response::{
     DomId, GRAFT_TRANSFER, InvalidDomId, InvalidNavigation, Navigation, PatchBuildError,
     PatchBuildErrorKind, PatchSet, PatchStatus, RetryAfter, StreamBudget, StreamCapacityError,
@@ -64,7 +68,7 @@ pub fn merge_vary(headers: &mut HeaderMap) {
     }
 }
 
-fn no_store_status_response(status: StatusCode, body: &'static str) -> Response {
+pub(crate) fn no_store_status_response(status: StatusCode, body: &'static str) -> Response {
     let mut response = (status, body).into_response();
     response
         .headers_mut()

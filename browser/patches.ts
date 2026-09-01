@@ -217,11 +217,21 @@ export function preflightFrame(
     };
 }
 
+export function preflightLive(
+    text: string,
+    liveDocument: Document = document,
+    validateContent?: ValidateContent,
+): PreparedBatch {
+    const prepared = parseEnvelope(text, liveDocument, validateContent, "live");
+    if (prepared.kind === "navigation") fail("protocol", "live navigation");
+    return prepared.batch;
+}
+
 function parseEnvelope(
     text: string,
     liveDocument: Document,
     validateContent: ValidateContent | undefined,
-    mode: "complete" | "stream",
+    mode: "complete" | "stream" | "live",
 ): PreparedResponse & { phase?: PatchPhase; status?: StreamStatus } {
     if (new TextEncoder().encode(text).length > MAX_RESPONSE_BYTES)
         fail("byte-limit", "size bound exceeded");
@@ -250,7 +260,9 @@ function parseEnvelope(
         set,
         mode === "stream"
             ? new Set(["version", "title", "phase", "status"])
-            : new Set(["version", "title", "navigate", "location"]),
+            : mode === "live"
+              ? new Set(["version"])
+              : new Set(["version", "title", "navigate", "location"]),
     );
     if (set.getAttribute("version") !== PROTOCOL_VERSION)
         fail("protocol", "version");

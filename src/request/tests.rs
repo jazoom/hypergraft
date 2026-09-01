@@ -80,6 +80,14 @@ async fn route_shape_extractors_accept_only_their_closed_representations() {
         .unwrap_err()
         .into_response();
     assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
+    async fn patch(value: GraftRequest) -> Result<PatchGraft, GraftMetadataError> {
+        let (mut parts, _) = Request::new(()).into_parts();
+        parts.extensions.insert(value);
+        PatchGraft::from_request_parts(&mut parts, &()).await
+    }
+    assert!(patch(GraftRequest::Patch).await.is_ok());
+    assert!(patch(GraftRequest::Document).await.is_err());
+    assert!(patch(GraftRequest::Navigation).await.is_err());
     assert_eq!(rejection.headers()[header::CACHE_CONTROL], "no-store");
     assert_eq!(rejection.headers()[header::VARY], "Graft-Request, Accept");
 }

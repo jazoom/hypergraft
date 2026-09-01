@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2024"
 rust-version = "1.96"
 license = "MIT OR Apache-2.0"
-description = "Bounded HTML-over-HTTP protocol with an Axum and Askama host"
+description = "Bounded HTML-over-HTTP and WebSocket protocol with an Axum and Askama host"
 readme = "README.md"
 repository = "https://github.com/jazoom/hypergraft"
 homepage = "https://github.com/jazoom/hypergraft"
@@ -23,10 +23,15 @@ include = [
 [dependencies]
 askama = "0.16.0"
 async-stream = "0.3.6"
-axum = "0.8.9"
+axum = { version = "0.8.9", features = ["ws"] }
 futures-util = "0.3.34"
+matchit = "0.8.4"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["macros", "rt", "sync", "time"] }
+tower = { version = "0.5.3", features = ["util"] }
 
 [dev-dependencies]
-serde_json = "1.0.151"
-tokio = { version = "1.53.1", features = ["macros", "rt"] }
+tokio = { version = "1.53.1", features = ["macros", "net", "rt", "test-util"] }
+tokio-tungstenite = "0.29.0"
 tower = { version = "0.5.3", features = ["util"] }

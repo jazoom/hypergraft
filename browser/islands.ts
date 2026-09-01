@@ -1,8 +1,10 @@
 import { emitDiagnostic } from "./diagnostics";
 import {
+    LIVE_PATCH_EVENT,
     LOCATION_CHANGE_EVENT,
     PROGRESS_EVENT,
     REQUEST_SETTLED_EVENT,
+    type AppliedLivePatchDetail,
     type LocationChangeDetail,
     type ProgressDetail,
     type RequestSettledDetail,
@@ -11,6 +13,7 @@ import {
 /** Authoritative lifecycle fact delivered after transport state is final. */
 export type IslandReconcileContext =
     | { cause: "patch"; detail: RequestSettledDetail }
+    | { cause: "live-patch"; detail: AppliedLivePatchDetail }
     | { cause: "location"; detail: LocationChangeDetail };
 
 export interface IslandInstance {
@@ -169,14 +172,24 @@ export function observeIslands(
             if (target) scan(target);
         }
     };
+    const livePatch = (event: Event) => {
+        const detail = (event as CustomEvent<AppliedLivePatchDetail>).detail;
+        for (const id of detail.targetIds) {
+            const target = document.getElementById(id);
+            if (target) scan(target);
+        }
+        reconcile({ cause: "live-patch", detail });
+    };
     addEventListener(REQUEST_SETTLED_EVENT, settled);
     addEventListener(LOCATION_CHANGE_EVENT, location);
     addEventListener(PROGRESS_EVENT, progress);
+    addEventListener(LIVE_PATCH_EVENT, livePatch);
     return () => {
         observer.disconnect();
         removeEventListener(REQUEST_SETTLED_EVENT, settled);
         removeEventListener(LOCATION_CHANGE_EVENT, location);
         removeEventListener(PROGRESS_EVENT, progress);
+        removeEventListener(LIVE_PATCH_EVENT, livePatch);
         for (const [root, mounted] of [...instances])
             destroyRoot(root, mounted.name);
     };

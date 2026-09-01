@@ -253,3 +253,58 @@ test("multi-target preflight restores focus by stable ID", () => {
     expect((document.activeElement as HTMLInputElement).selectionStart).toBe(2);
     expect(document.getElementById("other-result")).not.toBeNull();
 });
+
+test("one live socket applies several atomic projection patches", async () => {
+    class MockSocket extends EventTarget {
+        static instances: MockSocket[] = [];
+        static CONNECTING = 0;
+        static OPEN = 1;
+        static CLOSED = 3;
+        readyState = MockSocket.CONNECTING;
+        binaryType = "arraybuffer";
+        protocol = "hypergraft.v1";
+        extensions = "";
+        sent: string[] = [];
+        constructor(public url: string) {
+            super();
+            MockSocket.instances.push(this);
+            queueMicrotask(() => {
+                this.readyState = MockSocket.OPEN;
+                this.dispatchEvent(new Event("open"));
+            });
+        }
+        send(data: string) {
+            this.sent.push(data);
+        }
+        close() {
+            this.readyState = MockSocket.CLOSED;
+            this.dispatchEvent(new CloseEvent("close", { code: 1000 }));
+        }
+        receive(id: number, target: string, content: string) {
+            const envelopeText = `<graft-patch-set version="1"><graft-patch operation="children" target="${target}"><template>${content}</template></graft-patch></graft-patch-set>`;
+            const encoded = new TextEncoder().encode(envelopeText);
+            const buffer = new ArrayBuffer(4 + encoded.byteLength);
+            new DataView(buffer).setUint32(0, id);
+            new Uint8Array(buffer).set(encoded, 4);
+            this.dispatchEvent(new MessageEvent("message", { data: buffer }));
+        }
+    }
+    vi.stubGlobal("WebSocket", MockSocket);
+    document.body.innerHTML = `
+      <main id="main">
+        <form id="one" method="get" action="/one" data-graft data-graft-live><button>One</button></form>
+        <form id="two" method="get" action="/two" data-graft data-graft-live><button>Two</button></form>
+        <section id="first"></section>
+        <section id="second"></section>
+      </main>`;
+    cleanup?.();
+    cleanup = startHypergraft();
+    await vi.waitFor(() => expect(MockSocket.instances).toHaveLength(1));
+    const socket = MockSocket.instances[0]!;
+    await vi.waitFor(() => expect(socket.sent).toHaveLength(2));
+    socket.receive(1, "first", '<p id="one-ready">One</p>');
+    socket.receive(2, "second", '<p id="two-ready">Two</p>');
+    expect(document.getElementById("one-ready")).not.toBeNull();
+    expect(document.getElementById("two-ready")).not.toBeNull();
+    expect(MockSocket.instances).toHaveLength(1);
+});

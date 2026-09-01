@@ -23,6 +23,7 @@ pub enum PatchBuildErrorKind {
     InvalidTarget,
     InvalidStatus,
     InvalidLocation,
+    InvalidLiveEnvelope,
     ResponseLimit,
 }
 
@@ -36,6 +37,7 @@ pub enum PatchBuildError {
     InvalidTarget,
     InvalidStatus,
     InvalidLocation,
+    InvalidLiveEnvelope,
     ResponseLimit,
 }
 
@@ -49,6 +51,7 @@ impl PatchBuildError {
             Self::InvalidTarget => PatchBuildErrorKind::InvalidTarget,
             Self::InvalidStatus => PatchBuildErrorKind::InvalidStatus,
             Self::InvalidLocation => PatchBuildErrorKind::InvalidLocation,
+            Self::InvalidLiveEnvelope => PatchBuildErrorKind::InvalidLiveEnvelope,
             Self::ResponseLimit => PatchBuildErrorKind::ResponseLimit,
         }
     }
@@ -64,6 +67,9 @@ impl std::fmt::Display for PatchBuildError {
             PatchBuildErrorKind::InvalidTarget => "invalid patch target",
             PatchBuildErrorKind::InvalidStatus => "stream cannot carry that status",
             PatchBuildErrorKind::InvalidLocation => "invalid patch location",
+            PatchBuildErrorKind::InvalidLiveEnvelope => {
+                "live envelope cannot carry titles, locations, phases or statuses"
+            }
             PatchBuildErrorKind::ResponseLimit => "response byte limit exceeded",
         })
     }
@@ -399,6 +405,16 @@ impl PatchSet {
         Ok(response)
     }
 
+    /// Encode a live projection envelope.
+    ///
+    /// Live envelopes cannot carry titles, locations, navigation, phases or statuses.
+    pub fn encode_live(self) -> Result<String, PatchBuildError> {
+        if self.title.is_some() || self.location.is_some() {
+            return Err(PatchBuildError::InvalidLiveEnvelope);
+        }
+        self.render_envelope(None, None)
+    }
+
     /// Length-prefixed progress frame for a `Graft-Transfer: stream` body.
     pub fn encode_progress(self) -> Result<StreamFrame, PatchBuildError> {
         self.encode_frame(Some("progress"), None)
@@ -557,7 +573,7 @@ impl std::fmt::Display for InvalidNavigation {
 }
 impl std::error::Error for InvalidNavigation {}
 
-fn validate_navigation(destination: &str) -> Result<(), InvalidNavigation> {
+pub(crate) fn validate_navigation(destination: &str) -> Result<(), InvalidNavigation> {
     let bytes = destination.as_bytes();
     if bytes.first() != Some(&b'/')
         || bytes.get(1) == Some(&b'/')

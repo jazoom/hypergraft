@@ -159,6 +159,38 @@ impl TryFrom<GraftRequest> for CommandGraft {
     }
 }
 
+/// Representation accepted by a patch-only command route.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PatchGraft;
+
+impl From<PatchGraft> for GraftRequest {
+    fn from(_: PatchGraft) -> Self {
+        Self::Patch
+    }
+}
+
+impl TryFrom<GraftRequest> for PatchGraft {
+    type Error = GraftMetadataError;
+
+    fn try_from(value: GraftRequest) -> Result<Self, Self::Error> {
+        match value {
+            GraftRequest::Patch => Ok(Self),
+            GraftRequest::Document | GraftRequest::Navigation => Err(GraftMetadataError),
+        }
+    }
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for PatchGraft {
+    type Rejection = GraftMetadataError;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        match parts.extensions.get::<GraftRequest>().copied() {
+            Some(GraftRequest::Patch) => Ok(Self),
+            _ => Err(GraftMetadataError),
+        }
+    }
+}
+
 impl<S: Send + Sync> FromRequestParts<S> for CommandGraft {
     type Rejection = GraftMetadataError;
 

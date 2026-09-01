@@ -23,6 +23,11 @@ import {
     type ValidateContent,
 } from "./patches";
 import { readStreamFrames } from "./stream";
+import {
+    createLiveController,
+    DEFAULT_LIVE_ENDPOINT,
+    type LiveController,
+} from "./live";
 
 type SafeFormSource = "submission" | "refresh";
 type Lane = {
@@ -56,6 +61,7 @@ type Runtime = {
     queuedRefreshForms: Set<HTMLFormElement>;
     detachListeners: () => void;
     stopIslands: () => void;
+    live: LiveController;
 };
 
 export interface TransportFeedback {
@@ -68,6 +74,7 @@ export interface HypergraftOptions {
     validateContent?: ValidateContent;
     feedback?: TransportFeedback;
     islands?: Record<string, IslandInitialiser>;
+    liveEndpoint?: string;
 }
 
 function pruneFailedSafeForms(runtime: Runtime): boolean {
@@ -610,6 +617,7 @@ async function navigate(
         return;
     runtime.navigationPending = true;
     cancelActiveSafeForms(runtime, true);
+    runtime.live.suspend();
     const sequence = ++runtime.navigationLane.sequence;
     runtime.navigationLane.controller?.abort();
     runtime.navigationLane.controller = new AbortController();
@@ -657,6 +665,7 @@ async function navigate(
             }
         }
         window.scrollTo(0, 0);
+        runtime.live.resume();
         refreshDisposition = "drain";
     } catch (error) {
         if (
@@ -739,6 +748,8 @@ async function submitSafe(
         return;
     }
     const url = getFormUrl(form, submitter);
+    if (source === "submission" && form.hasAttribute("data-graft-live"))
+        runtime.live.retireForm(form);
     const button = submitterControl(submitter);
     const lane = runtime.formLanes.get(form) ?? { sequence: 0, error: false };
     runtime.formLanes.set(form, lane);
@@ -827,6 +838,7 @@ async function submitSafe(
                 });
             }
             if (drainRefreshes) drainQueuedRefreshes(runtime);
+            runtime.live.restoreForm(form);
         }
     }
 }
@@ -962,6 +974,7 @@ async function submitUnsafe(
     )
         return;
     cancelActiveSafeForms(runtime, true);
+    runtime.live.suspend();
     documentUnsafe = { kind: "pending", form };
     const restorePending = pendingState(form, prepared.submitter);
     const outcome = await unsafeRequest(runtime, form, prepared);
@@ -1024,6 +1037,7 @@ async function submitUnsafe(
         runtime.queuedHistoryUrl = undefined;
         void navigate(runtime, historyUrl, "pop");
     } else if (outcome.kind === "applied") {
+        runtime.live.resume();
         drainQueuedRefreshes(runtime);
     }
 }
@@ -1111,6 +1125,7 @@ function disposeRuntime(runtime: Runtime, replacement: boolean) {
     // must not call options owned by the disposed runtime.
     clearAllSafeErrors(runtime);
     runtime.disposed = true;
+    runtime.live.stop();
     runtime.detachListeners();
     clearLiveTimers(runtime);
     runtime.navigationLane.sequence += 1;
@@ -1140,7 +1155,20 @@ function createRuntime(options: HypergraftOptions): Runtime {
         queuedRefreshForms: new Set(),
         detachListeners: () => undefined,
         stopIslands: () => undefined,
+        live: {
+            reconcile() {},
+            retireForm() {},
+            restoreForm() {},
+            suspend() {},
+            resume() {},
+            stop() {},
+        },
     };
+    runtime.live = createLiveController({
+        endpoint: options.liveEndpoint ?? DEFAULT_LIVE_ENDPOINT,
+        disposed: () => runtime.disposed,
+        validateContent: options.validateContent,
+    });
     history.replaceState({ ...(history.state ?? {}), hypergraft: true }, "");
     const onClick = (event: MouseEvent) => {
         if (runtime.disposed || event.defaultPrevented) return;
@@ -1206,6 +1234,7 @@ function createRuntime(options: HypergraftOptions): Runtime {
         document.removeEventListener("compositionend", onCompositionEnd);
         removeEventListener("popstate", onPopState);
     };
+    runtime.live.reconcile();
     return runtime;
 }
 

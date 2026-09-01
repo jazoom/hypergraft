@@ -3,7 +3,7 @@
     "version": "0.0.1",
     "private": true,
     "license": "MIT OR Apache-2.0",
-    "description": "Bounded HTML-over-HTTP protocol and browser runtime for progressively enhanced server-rendered applications",
+    "description": "Bounded HTML-over-HTTP and WebSocket protocol with a JavaScript-required browser runtime for server-rendered applications",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/jazoom/hypergraft.git"
@@ -22,6 +22,7 @@
         "browser/feedback.ts",
         "browser/index.ts",
         "browser/islands.ts",
+        "browser/live.ts",
         "browser/morph.ts",
         "browser/patches.ts",
         "browser/requests.ts",
@@ -35,7 +36,8 @@
     "type": "module",
     "exports": {
         "./browser": "./browser/index.ts",
-        "./browser/islands": "./browser/islands.ts"
+        "./browser/islands": "./browser/islands.ts",
+        "./protocol-v1.json": "./protocol-v1.json"
     },
     "scripts": {
         "test": "vitest run --config vitest.config.ts",

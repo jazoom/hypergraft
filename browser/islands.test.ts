@@ -2,7 +2,11 @@
 
 import { beforeEach, expect, test, vi } from "vitest";
 import { DIAGNOSTIC_EVENT, type DiagnosticDetail } from "./diagnostics";
-import { LOCATION_CHANGE_EVENT, REQUEST_SETTLED_EVENT } from "./events";
+import {
+    LIVE_PATCH_EVENT,
+    LOCATION_CHANGE_EVENT,
+    REQUEST_SETTLED_EVENT,
+} from "./events";
 import {
     observeIslands,
     type IslandInstance,
@@ -84,6 +88,16 @@ test("scans applied targets before reconciling retained instances and carries li
     expect(contexts).toContainEqual({ cause: "patch", detail: uncertain });
     expect(contexts).toContainEqual({ cause: "location", detail: location });
     expect("targetIds" in contexts[2]).toBe(false);
+    const liveDetail = {
+        form: document.createElement("form"),
+        url: "https://example.test/live",
+        targetIds: ["target"],
+    };
+    dispatchEvent(new CustomEvent(LIVE_PATCH_EVENT, { detail: liveDetail }));
+    expect(contexts).toContainEqual({
+        cause: "live-patch",
+        detail: liveDetail,
+    });
     stop();
 });
 

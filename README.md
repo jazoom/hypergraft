@@ -1,12 +1,14 @@
 # Hypergraft
 
-An HTML-over-HTTP protocol, browser runtime and server library for progressively enhanced server-rendered applications using Rust with Axum and Askama. It's kinda like htmx but with a smaller API and tight integration with the Rust server. It plays well with a strict CSP.
+Hypergraft is an HTML-over-HTTP and WebSocket protocol for server-rendered applications. Its server library uses Rust with Axum and Askama. JavaScript is required. HTTP still serves each initial document, deep link, reload, canonical GET page and command. Real links and forms define navigation, queries and commands. Hypergraft resembles htmx, but it has a smaller API and live projections.
+
+Hypergraft integrates with the Rust server and supports a strict CSP.
 
 ## Design goals
 
-Hypergraft optimises for local reasoning. Pages remain ordinary server-rendered HTML with real links and forms. Enhancement uses a small, closed vocabulary. Client-owned state is limited to transport state and transient gestures that cannot be expressed by native HTML.
+Hypergraft optimises for local reasoning. Pages remain ordinary server-rendered HTML with real links and forms. Enhancement uses a small, closed vocabulary. The client owns transport state, one live socket and transient gestures that native HTML cannot express. Hypergraft does not provide native mutation behaviour without JavaScript.
 
-A proposed feature belongs in Hypergraft when it is reusable across hosts, preserves native behaviour, has a bounded declarative contract and removes more host concepts than it adds. Product presentation, domain policy, persistence and durable client state remain host-owned.
+A proposed feature belongs in Hypergraft when it is reusable across hosts, has a bounded declarative contract and removes more host concepts than it adds. Product presentation, domain policy, persistence and durable client state remain host-owned.
 
 ## Protocol version 1
 
@@ -18,11 +20,23 @@ A host can send `Graft-Transfer: stream` with HTTP 200 and a length-prefixed seq
 
 Both server construction and browser reading enforce the 1 MiB envelope limit. Browser preflight additionally validates live targets, final identifier uniqueness, 10,000 inserted nodes and depth 64 before any mutation; Rust does not check those live-document properties.
 
+A connected `form[data-graft][data-graft-live]` describes one GET projection. Each document opens one same-origin WebSocket with subprotocol `hypergraft.v1`. The default path is `/_hypergraft/live`. One socket permits at most 64 active subscriptions. Each local projection URL is at most 8 KiB. Each control message is at most 16 KiB.
+
+Client controls use bounded JSON. Server patches use binary frames with a 4-byte big-endian subscription header and one UTF-8 envelope. Live envelopes cannot carry titles, navigation, locations, phases or statuses. A five-minute lease permits 4,096 controls, 4,096 patch messages and 128 MiB of patch data. Hypergraft sends a ping every 15 seconds and requires a pong. The browser reconnects after lease expiry or a retryable close.
+
+Retry delays use bounded exponential backoff with jitter from 1 to 30 seconds. Protocol and terminal closes do not reconnect.
+
 ## Rust host boundary
 
 Mount `hypergraft::middleware::classify` around browser routes, outside Origin enforcement, session resolution, authorisation and handlers, but inside tracing and outer security headers. It classifies metadata once, inserts `GraftRequest`, rejects invalid metadata before downstream work and merges `Vary` after downstream completion. Static assets and a stateless fallback must stay outside this layer.
 
-Handlers must extract the narrowest accepted representation. Use `PageGraft` for a document-or-navigation page. Use `CommandGraft` for a document-or-patch command. Build bounded responses with `PatchSet`, checked string targets, Askama templates, `PatchStatus` and `RetryAfter`. `outcome::page_patch` builds a titled single-target page patch. `outcome::children_patch` builds one retained-target patch at any accepted status from an Askama template. `PatchSet::append` adds nodes to a retained target. `PatchSet::replace_location` adds a canonical location replacement to a complete command patch. `PatchSet::encode_progress` and `encode_final` reject location replacements. `outcome::stream_response` validates frame and byte limits. It requires one final frame and wraps the frame stream as `Graft-Transfer: stream`. `outcome::redirect` negotiates a native 303 or navigation envelope after destination validation. Hosts render documents and map `PatchBuildError` to their own secret-safe errors.
+Handlers must extract the narrowest accepted representation. Use `PageGraft` for a document-or-navigation page. Use `PatchGraft` for a patch-only command. `CommandGraft` remains for hosts that still render a document command result. Build bounded responses with `PatchSet`, checked string targets, Askama templates, `PatchStatus` and `RetryAfter`.
+
+`outcome::page_patch` builds a titled, single-target page patch. `outcome::children_patch` builds one retained-target patch from an Askama template. It accepts any patch status. `PatchSet::append` adds nodes to a retained target. `PatchSet::replace_location` adds a canonical location replacement to a complete command patch. `PatchSet::encode_live` rejects titles and locations.
+
+`PatchSet::encode_progress` and `encode_final` reject location replacements. `outcome::stream_response` validates frame and byte limits. It requires one final frame. It wraps the frame stream as `Graft-Transfer: stream`. `outcome::command_navigation` builds a validated navigation envelope for patch-only commands. `outcome::redirect` selects a native 303 response or a navigation envelope after destination validation.
+
+Hosts render documents and map `PatchBuildError` to their own secret-safe errors. Hosts compose a `LiveRouter` and supply one `LiveGuard`. They mount `live::service` at the configured endpoint. Hosts must not implement a socket loop, protocol codec, subscription map or reconnect policy.
 
 A native document response uses `PatchStatus::status_code` for the same outcome.
 
@@ -165,9 +179,49 @@ A live GET form can submit on `input` or `change` without a click. Mark the cont
 </form>
 ```
 
+### Live GET projection
+
+Mark a canonical GET form with `data-graft-live`. The runtime opens one socket for all such forms in the document. Filter changes remain ordinary safe submissions. Domain events then patch the projection without a second browser request.
+
+```html
+<form id="item-filter" method="get" action="/items" data-graft data-graft-live>
+    <label>Search <input name="q" type="search" /></label>
+    <button type="submit">Search</button>
+</form>
+<section id="item-results"><!-- server-rendered results --></section>
+```
+
+```rust
+use axum::extract::{Query, State};
+use hypergraft::live::{self, LiveGuard, LiveProjection, LiveReject, LiveRouter};
+
+async fn items_live(
+    State(state): State<AppState>,
+    Query(query): Query<ItemQuery>,
+) -> Result<LiveProjection<User>, LiveReject> {
+    let rx = state.items.subscribe();
+    Ok(LiveProjection::new(
+        live::broadcast_invalidations(rx),
+        move |user| {
+            let query = query.clone();
+            let state = state.clone();
+            async move { state.refresh_items(&user, &query).await }
+        },
+    ))
+}
+
+fn live_router() -> LiveRouter<AppState> {
+    LiveRouter::new().route("/items", items_live).unwrap()
+}
+```
+
+`LiveGuard::bind` receives the upgrade extensions once and returns an opaque connection value. `LiveGuard::revalidate` receives that value before every refresh and returns a fresh context. The connection value can own a socket admission permit.
+
+Mount `live::service(endpoint, config, live_router, guard)` at the configured path. Derive `connect-src` from `LiveEndpoint::csp_connect_src`. Pass `liveEndpoint` to `startHypergraft` only when the path is not `/_hypergraft/live`.
+
 ### Host-requested GET refresh
 
-`requestGraftRefresh(form)` asks the active runtime to refresh one server-rendered projection from a real GET form. The form keeps its native submit fallback.
+`requestGraftRefresh(form)` remains while hosts still refresh through HTTP. Prefer `data-graft-live` for current-truth projections.
 
 The form must meet these requirements:
 
@@ -365,6 +419,7 @@ const bound = bindTransportFeedback(document.body);
 const stopRuntime = startHypergraft({
     feedback: bound.feedback,
     islands: {},
+    liveEndpoint: "/_hypergraft/live",
 });
 
 export function stopHostIntegration(): void {

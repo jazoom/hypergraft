@@ -37,7 +37,82 @@
         "maximumBytes": 128,
         "asciiOnly": true
     },
+    "live": {
+        "subprotocol": "hypergraft.v1",
+        "defaultPath": "/_hypergraft/live",
+        "negotiateExtensions": false,
+        "control": {
+            "format": "json",
+            "frame": "text",
+            "versionField": "v",
+            "typeField": "type",
+            "types": ["subscribe", "unsubscribe", "terminal"],
+            "requiredFields": {
+                "subscribe": ["v", "type", "id", "url"],
+                "unsubscribe": ["v", "type", "id"],
+                "terminal": ["v", "type"]
+            },
+            "unknownFields": "reject",
+            "id": {
+                "format": "uint32",
+                "minimum": 1,
+                "reuseOnSocket": false
+            },
+            "url": {
+                "format": "local-get-path-and-query",
+                "fragment": false
+            }
+        },
+        "patch": {
+            "frame": "binary",
+            "headerBytes": 4,
+            "headerEndian": "big",
+            "idOffset": 0,
+            "envelopeOffset": 4,
+            "maxEnvelopeBytes": 1048576,
+            "allowedEnvelopeAttributes": ["version"]
+        },
+        "limits": {
+            "maxSubscriptions": 64,
+            "maxProjectionUrlBytes": 8192,
+            "maxControlMessageBytes": 16384,
+            "maxInboundControls": 4096,
+            "maxOutboundMessages": 4096,
+            "outboundMessagesIncludePings": true,
+            "maxOutboundBytes": 134217728,
+            "leaseSeconds": 300,
+            "heartbeatSeconds": 15
+        },
+        "heartbeat": {
+            "sender": "server",
+            "frame": "ping",
+            "pongRequired": true
+        },
+        "retry": {
+            "minDelaySeconds": 1,
+            "maxDelaySeconds": 30,
+            "jitter": true
+        },
+        "close": {
+            "retryable": 4000,
+            "terminal": 4001,
+            "protocol": 4002,
+            "leaseExpiry": 4003,
+            "resynchronisation": 4004
+        },
+        "closeCauses": {
+            "retryableFailure": "retryable",
+            "terminalGuardFailure": "terminal",
+            "invalidMessage": "protocol",
+            "leaseOrBudgetExhaustion": "leaseExpiry",
+            "authoritativeResynchronisation": "resynchronisation"
+        }
+    },
     "representativePatch": "<graft-patch-set version=\"1\" title=\"Fixture &amp; title\" location=\"/items?fixture=one&amp;other=two\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
     "representativeNavigation": "<graft-patch-set version=\"1\" navigate=\"/items?fixture=one&amp;other=two\"></graft-patch-set>",
-    "representativeStreamFrame": "167\n<graft-patch-set version=\"1\" phase=\"progress\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>"
+    "representativeStreamFrame": "167\n<graft-patch-set version=\"1\" phase=\"progress\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+    "representativeLivePatch": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+    "representativeSubscribe": "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":1,\"url\":\"/items?fixture=one\"}",
+    "representativeUnsubscribe": "{\"v\":\"1\",\"type\":\"unsubscribe\",\"id\":1}",
+    "representativeTerminal": "{\"v\":\"1\",\"type\":\"terminal\"}"
 }

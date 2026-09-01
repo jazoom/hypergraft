@@ -36,6 +36,14 @@ where
     Ok(response)
 }
 
+/// Build a validated command-navigation envelope.
+///
+/// Patch-only commands have no document representation, so this helper never
+/// branches on `GraftRequest`.
+pub fn command_navigation(destination: impl Into<String>) -> Result<Response, InvalidNavigation> {
+    Ok(Navigation::new(destination)?.respond())
+}
+
 /// Build a titled, single-target page-navigation patch.
 pub fn page_patch<T: Template>(
     title: impl Into<String>,

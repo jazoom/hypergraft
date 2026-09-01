@@ -18,6 +18,7 @@ import {
     PHASES,
     preflight,
     preflightFrame,
+    preflightLive,
     PROTOCOL_VERSION,
     STREAM_STATUSES,
 } from "./patches";
@@ -76,6 +77,14 @@ test("matches the shared version one fixture", () => {
         kind: "navigation",
         destination: expect.stringContaining("/items?fixture=one&other=two"),
     });
+    expect(
+        preflightLive(fixture.representativeLivePatch).patches[0],
+    ).toMatchObject({
+        targetId: "fixture-target",
+        operation: "children",
+    });
+    expect(() => preflightLive(fixture.representativePatch)).toThrow();
+    expect(() => preflightLive(fixture.representativeNavigation)).toThrow();
 });
 
 test("preflights and applies a children batch", () => {

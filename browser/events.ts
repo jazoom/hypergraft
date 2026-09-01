@@ -3,6 +3,7 @@ import type { AcceptedPatchStatus } from "./patches";
 export const LOCATION_CHANGE_EVENT = "hypergraft:locationchange";
 export const REQUEST_SETTLED_EVENT = "hypergraft:requestsettled";
 export const PROGRESS_EVENT = "hypergraft:progress";
+export const LIVE_PATCH_EVENT = "hypergraft:livepatch";
 
 export type LocationChangeDetail = {
     url: string;
@@ -38,6 +39,12 @@ export type RequestSettledDetail = RequestSettledCommon &
               status?: AcceptedPatchStatus;
           }
     );
+
+export type AppliedLivePatchDetail = {
+    form: HTMLFormElement;
+    url: string;
+    targetIds: readonly string[];
+};
 
 export type ProgressDetail = {
     requestKind: "patch";
@@ -79,4 +86,15 @@ export function listenForProgress(
         listener((event as CustomEvent<ProgressDetail>).detail);
     addEventListener(PROGRESS_EVENT, handler);
     return () => removeEventListener(PROGRESS_EVENT, handler);
+}
+export function emitLivePatch(detail: AppliedLivePatchDetail): void {
+    dispatchEvent(new CustomEvent(LIVE_PATCH_EVENT, { detail }));
+}
+export function listenForLivePatches(
+    listener: (detail: AppliedLivePatchDetail) => void,
+): () => void {
+    const handler = (event: Event) =>
+        listener((event as CustomEvent<AppliedLivePatchDetail>).detail);
+    addEventListener(LIVE_PATCH_EVENT, handler);
+    return () => removeEventListener(LIVE_PATCH_EVENT, handler);
 }

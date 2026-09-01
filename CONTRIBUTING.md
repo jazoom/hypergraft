@@ -6,8 +6,8 @@ Hypergraft is an unpublished source preview. Protocol version 1 remains narrow a
 
 - Read the design goals and protocol bounds in `README.md`.
 - Open an issue before any change to protocol behaviour.
-- Keep native HTML fallbacks.
-- Keep the server authoritative.
+- Keep real links, forms and canonical GET documents.
+- Keep the server authoritative. JavaScript is required for live projections and command patches.
 - Do not add another Rust host adapter without an accepted plan.
 
 ## Development setup
