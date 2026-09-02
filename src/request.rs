@@ -37,10 +37,6 @@ impl GraftRequest {
             Some(_) => Err(GraftMetadataError),
         }
     }
-
-    pub fn is_enhanced(self) -> bool {
-        !matches!(self, Self::Document)
-    }
 }
 
 fn singleton<'a>(
@@ -86,22 +82,9 @@ pub enum PageGraft {
     Navigation,
 }
 
-/// Representation accepted by a command route.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CommandGraft {
-    Document,
-    Patch,
-}
-
 impl PageGraft {
     pub const fn is_navigation(self) -> bool {
         matches!(self, Self::Navigation)
-    }
-}
-
-impl CommandGraft {
-    pub const fn is_patch(self) -> bool {
-        matches!(self, Self::Patch)
     }
 }
 
@@ -138,27 +121,6 @@ impl TryFrom<GraftRequest> for PageGraft {
     }
 }
 
-impl From<CommandGraft> for GraftRequest {
-    fn from(value: CommandGraft) -> Self {
-        match value {
-            CommandGraft::Document => Self::Document,
-            CommandGraft::Patch => Self::Patch,
-        }
-    }
-}
-
-impl TryFrom<GraftRequest> for CommandGraft {
-    type Error = GraftMetadataError;
-
-    fn try_from(value: GraftRequest) -> Result<Self, Self::Error> {
-        match value {
-            GraftRequest::Document => Ok(Self::Document),
-            GraftRequest::Patch => Ok(Self::Patch),
-            GraftRequest::Navigation => Err(GraftMetadataError),
-        }
-    }
-}
-
 /// Representation accepted by a patch-only command route.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PatchGraft;
@@ -186,18 +148,6 @@ impl<S: Send + Sync> FromRequestParts<S> for PatchGraft {
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         match parts.extensions.get::<GraftRequest>().copied() {
             Some(GraftRequest::Patch) => Ok(Self),
-            _ => Err(GraftMetadataError),
-        }
-    }
-}
-
-impl<S: Send + Sync> FromRequestParts<S> for CommandGraft {
-    type Rejection = GraftMetadataError;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        match parts.extensions.get::<GraftRequest>().copied() {
-            Some(GraftRequest::Document) => Ok(Self::Document),
-            Some(GraftRequest::Patch) => Ok(Self::Patch),
             _ => Err(GraftMetadataError),
         }
     }

@@ -6,10 +6,10 @@ use std::sync::{
 use axum::{
     Router,
     body::Body,
-    http::{Request, StatusCode, header},
+    http::{Method, Request, StatusCode, header},
     middleware,
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
 };
 use tower::ServiceExt;
 
@@ -43,6 +43,69 @@ async fn malformed_metadata_is_rejected_before_the_downstream_service() {
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn non_patch_posts_are_rejected_before_downstream_work() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let downstream_calls = calls.clone();
+    let app = Router::new()
+        .route(
+            "/",
+            post(move || {
+                let calls = downstream_calls.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    "reachable"
+                }
+            }),
+        )
+        .layer(middleware::from_fn(super::classify));
+
+    let native = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(native.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(native.headers()[header::CACHE_CONTROL], "no-store");
+
+    let navigation = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/")
+                .header("Graft-Request", "navigation")
+                .header(header::ACCEPT, crate::MEDIA_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(navigation.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+    let patch = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/")
+                .header("Graft-Request", "patch")
+                .header(header::ACCEPT, crate::MEDIA_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch.status(), StatusCode::OK);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

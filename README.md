@@ -28,13 +28,13 @@ Retry delays use bounded exponential backoff with jitter from 1 to 30 seconds. P
 
 ## Rust host boundary
 
-Mount `hypergraft::middleware::classify` around browser routes, outside Origin enforcement, session resolution, authorisation and handlers, but inside tracing and outer security headers. It classifies metadata once, inserts `GraftRequest`, rejects invalid metadata before downstream work and merges `Vary` after downstream completion. Static assets and a stateless fallback must stay outside this layer.
+Mount `hypergraft::middleware::classify` around browser routes, outside Origin enforcement, session resolution, authorisation and handlers, but inside tracing and outer security headers. It classifies metadata once, inserts `GraftRequest`, rejects invalid metadata before downstream work and merges `Vary` after downstream completion. It rejects non-patch POST requests before downstream work. Mount explicit non-Hypergraft POST boundaries outside this layer. Static assets and a stateless fallback must stay outside this layer.
 
-Handlers must extract the narrowest accepted representation. Use `PageGraft` for a document-or-navigation page. Use `PatchGraft` for a patch-only command. `CommandGraft` remains for hosts that still render a document command result. Build bounded responses with `PatchSet`, checked string targets, Askama templates, `PatchStatus` and `RetryAfter`.
+Handlers must extract the narrowest accepted representation. Use `PageGraft` for a document-or-navigation page. Use `PatchGraft` for a patch-only command. A native POST without patch metadata receives a no-store 400 before domain work. Build bounded responses with `PatchSet`, checked string targets, Askama templates, `PatchStatus` and `RetryAfter`.
 
 `outcome::page_patch` builds a titled, single-target page patch. `outcome::children_patch` builds one retained-target patch from an Askama template. It accepts any patch status. `PatchSet::append` adds nodes to a retained target. `PatchSet::replace_location` adds a canonical location replacement to a complete command patch. `PatchSet::encode_live` rejects titles and locations.
 
-`PatchSet::encode_progress` and `encode_final` reject location replacements. `outcome::stream_response` validates frame and byte limits. It requires one final frame. It wraps the frame stream as `Graft-Transfer: stream`. `outcome::command_navigation` builds a validated navigation envelope for patch-only commands. `outcome::redirect` selects a native 303 response or a navigation envelope after destination validation.
+`PatchSet::encode_progress` and `encode_final` reject location replacements. `outcome::stream_response` validates frame and byte limits. It requires one final frame. It wraps the frame stream as `Graft-Transfer: stream`. `outcome::command_navigation` builds a validated navigation envelope for patch-only commands. `outcome::page_redirect` selects a native 303 response or a navigation envelope after destination validation.
 
 Hosts render documents and map `PatchBuildError` to their own secret-safe errors. Hosts compose a `LiveRouter` and supply one `LiveGuard`. They mount `live::service` at the configured endpoint. Hosts must not implement a socket loop, protocol codec, subscription map or reconnect policy.
 
@@ -54,7 +54,7 @@ Applied navigation focuses the first patched target when that target is programm
 
 A streamed form request emits `hypergraft:progress` after each applied progress frame and sets `data-graft-progress` on the form until pending state is restored. It emits `hypergraft:requestsettled` only after the final frame, a clean end of body, and after pending and submitter state is final. A complete form request emits `hypergraft:requestsettled` only after its pending and submitter state is final. Its `RequestSettledDetail` contains the originating form, effective request URL, patch kind and one bounded outcome:
 
-- A safe applied patch applies the whole preflighted batch and updates that form's failure state. A submitted GET form reconciles history and emits its location fact. A host-requested refresh leaves history unchanged. Both restore pending state, then emit `applied-patch` with an accepted status and authoritative target identifiers.
+- A safe applied patch applies the whole preflighted batch and updates that form's failure state. A submitted GET form reconciles history and emits its location fact. The runtime then restores pending state and emits `applied-patch` with an accepted status and authoritative target identifiers.
 - A safe failure emits its diagnostic, records the failed source and requests safe feedback, restores pending state, then emits `safe-failure`.
 - A superseded or aborted safe request emits neither a settlement nor a diagnostic. A valid navigation envelope uses `location.assign` and emits no settlement because the document is leaving.
 - A known unsafe patch applies its batch and returns the unsafe lane to idle. If the batch carries `location`, the runtime replaces the current history entry and emits `hypergraft:locationchange`. A queued history traversal takes precedence and suppresses that replacement. The runtime then restores pending state, emits `applied-patch` and starts the queued history navigation.
@@ -79,7 +79,7 @@ Safe feedback may be dismissed without changing transport state. Uncertainty tak
 
 Safe failures are tracked by source form, not by a request lane: a successful retry clears only its form, one successful form cannot hide another form's failure, disconnected forms are pruned, and a successful page navigation clears page-local failures.
 
-`hypergraft:diagnostic` is a typed, secret-safe fact emitted before fallback or feedback. Its closed reasons cover transport, redirect, byte limit, UTF-8, protocol, target/content and patch-application failures, plus invalid live-form, unknown-island and feedback configuration. Request diagnostics are bounded to request classification, URL, originating element and, where already validated, target identifier; configuration diagnostics carry only their closed, relevant element or island-name facts. Diagnostics never expose response bodies, form values, server diagnostics or arbitrary exceptions. Hosts may listen in development; production logging and presentation remain host policy.
+`hypergraft:diagnostic` is a typed, secret-safe fact emitted before fallback or feedback. Its closed reasons cover transport, redirect, byte limit, UTF-8, protocol, target/content and patch-application failures, plus invalid live-form, invalid command-form, unknown-island and feedback configuration. Request diagnostics are bounded to request classification, URL, originating element and, where already validated, target identifier; configuration diagnostics carry only their closed, relevant element or island-name facts. Diagnostics never expose response bodies, form values, server diagnostics or arbitrary exceptions. Hosts may listen in development; production logging and presentation remain host policy.
 
 ## Islands
 
@@ -219,47 +219,7 @@ fn live_router() -> LiveRouter<AppState> {
 
 Mount `live::service(endpoint, config, live_router, guard)` at the configured path. Derive `connect-src` from `LiveEndpoint::csp_connect_src`. Pass `liveEndpoint` to `startHypergraft` only when the path is not `/_hypergraft/live`.
 
-### Host-requested GET refresh
-
-`requestGraftRefresh(form)` remains while hosts still refresh through HTTP. Prefer `data-graft-live` for current-truth projections.
-
-The form must meet these requirements:
-
-- The form belongs to the current document and is connected.
-- The form has `data-graft`.
-- Its effective method is GET with `application/x-www-form-urlencoded` encoding.
-- Its action is same-origin and has no fragment.
-
-The runtime ignores other forms and calls without an active runtime. The request uses the form's current successful controls without a submitter.
-
-The refresh uses the version 1 patch request, pending state, preflight, feedback, diagnostics, settlement events and island reconciliation. It does not change browser history or emit `hypergraft:locationchange`.
-
-The runtime applies these queue rules:
-
-- Repeated signals for one queued form produce one refresh.
-- A signal during an active refresh retains one later refresh.
-- A navigation or unsafe command retains a cancelled active refresh as one queued refresh.
-- A completed navigation or known unsafe patch releases connected queued forms.
-- An unsafe uncertain result, a navigation hand-off or a navigation failure discards blocked refreshes.
-- A safe refresh failure settles once and causes no automatic retry.
-- Form disconnection or runtime teardown discards queued work.
-
-```html
-<form id="messages-refresh" method="get" action="/messages" data-graft>
-    <button type="submit">Refresh messages</button>
-</form>
-```
-
-```ts
-import { requestGraftRefresh } from "hypergraft/browser";
-
-const form = document.querySelector<HTMLFormElement>("#messages-refresh")!;
-requestGraftRefresh(form);
-```
-
-The host owns the trigger and every product policy around it.
-
-### Command rejection and negotiated success redirect
+### Command rejection and success navigation
 
 ```html
 <form method="post" action="/settings" data-graft>
@@ -269,50 +229,42 @@ The host owns the trigger and every product policy around it.
 <section id="settings-form"><!-- server-rendered form fragment --></section>
 ```
 
+Same-origin `POST` forms with `application/x-www-form-urlencoded` or `multipart/form-data` are enhanced. Multipart commands send `FormData` without a manual `Content-Type` header so the browser supplies the boundary. Invalid command forms emit `invalid-command-form` and do not submit natively. A native POST without patch metadata receives a no-store 400 before domain work.
+
 ```rust
 use axum::{extract::Form, response::Response};
-use hypergraft::{outcome, CommandGraft, PatchStatus};
+use hypergraft::{outcome, PatchGraft, PatchStatus};
 
 async fn save_settings(
-    graft: CommandGraft,
+    _graft: PatchGraft,
     Form(form): Form<SettingsForm>,
 ) -> Result<Response, HostError> {
-    let rejected = form.validate();
-    if let Err(errors) = rejected {
-        let fragment = SettingsFragment { errors };
-        return match graft {
-            CommandGraft::Document => render_document("Settings", &fragment),
-            CommandGraft::Patch => Ok(outcome::children_patch(
-                PatchStatus::UnprocessableEntity,
-                "settings-form",
-                &fragment,
-            )?),
-        };
+    if let Err(errors) = form.validate() {
+        return Ok(outcome::children_patch(
+            PatchStatus::UnprocessableEntity,
+            "settings-form",
+            &SettingsFragment { errors },
+        )?);
     }
     persist_settings(form).await?;
-    Ok(outcome::redirect(graft, "/settings")?)
+    Ok(outcome::command_navigation("/settings")?)
 }
 ```
 
 ### Command patch with a canonical location
 
-A command can update bounded targets and replace the current browser location. The native response uses a `303` redirect to the same canonical URL.
+A command can update bounded targets and replace the current browser location.
 
 ```rust
-match graft {
-    CommandGraft::Document => Ok(outcome::redirect(graft, "/items/selected")?),
-    CommandGraft::Patch => {
-        let mut patches = PatchSet::new();
-        patches.children("item-results", &results)?;
-        patches.replace_location("/items/selected")?;
-        Ok(patches.respond(PatchStatus::Ok)?)
-    }
-}
+let mut patches = PatchSet::new();
+patches.children("item-results", &results)?;
+patches.replace_location("/items/selected")?;
+Ok(patches.respond(PatchStatus::Ok)?)
 ```
 
 The browser changes the location only after the complete patch applies. The fixed history operation is `replace`.
 
-The patch must update each refresh form that depends on the old location state. Hypergraft does not infer or copy host query parameters.
+The patch must update each live projection form that depends on the old location state. Hypergraft does not infer or copy host query parameters.
 
 ### Streamed command with progress frames
 
@@ -348,7 +300,7 @@ fn stream_log(
 }
 ```
 
-Native document fallback waits for the finished page. Do not stream a document response.
+Do not stream a document response.
 
 ### Transient island proposing through a real form
 

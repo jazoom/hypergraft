@@ -9,19 +9,18 @@ use axum::{
 use futures_util::{Stream, StreamExt, pin_mut};
 
 use crate::{
-    GRAFT_TRANSFER, GraftRequest, InvalidNavigation, MAX_STREAM_BYTES, MAX_STREAM_FRAMES,
-    MEDIA_TYPE, Navigation, PatchBuildError, PatchSet, PatchStatus, StreamFrame, merge_vary,
+    GRAFT_TRANSFER, InvalidNavigation, MAX_STREAM_BYTES, MAX_STREAM_FRAMES, MEDIA_TYPE, Navigation,
+    PageGraft, PatchBuildError, PatchSet, PatchStatus, StreamFrame, merge_vary,
 };
 
 /// Build a validated native redirect or complete-browser-navigation envelope.
-pub fn redirect<G>(graft: G, destination: impl Into<String>) -> Result<Response, InvalidNavigation>
-where
-    G: Into<GraftRequest>,
-{
+pub fn page_redirect(
+    graft: PageGraft,
+    destination: impl Into<String>,
+) -> Result<Response, InvalidNavigation> {
     let destination = destination.into();
-    // Validate before choosing either representation.
     let navigation = Navigation::new(destination.clone())?;
-    if graft.into().is_enhanced() {
+    if graft.is_navigation() {
         return Ok(navigation.respond());
     }
     let mut response = StatusCode::SEE_OTHER.into_response();

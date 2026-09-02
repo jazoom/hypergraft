@@ -1,11 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { MEDIA_TYPE, MAX_RESPONSE_BYTES, PATCH_STATUSES } from "./patches";
-import {
-    requestGraftRefresh,
-    resetHypergraftForTests,
-    startHypergraft,
-} from "./requests";
+import { resetHypergraftForTests, startHypergraft } from "./requests";
 import { DIAGNOSTIC_EVENT, type DiagnosticDetail } from "./diagnostics";
 import type { RequestSettledDetail } from "./events";
 
@@ -101,17 +97,6 @@ function submit(element: HTMLFormElement, submitter?: HTMLElement) {
     });
     element.dispatchEvent(event);
     return event;
-}
-
-function refreshForm() {
-    const element = document.createElement("form");
-    element.method = "get";
-    element.action = "/messages";
-    element.dataset.graft = "";
-    element.innerHTML =
-        '<input name="view" value="inbox"><button name="intent" value="manual">Refresh</button>';
-    document.body.append(element);
-    return element;
 }
 
 test("requestSubmit derives the native POST contract and uses the unsafe lane", async () => {
@@ -432,17 +417,128 @@ test("a known 429 patch applies once, releases the unsafe lane and does not retr
 });
 
 test.each([
-    ["cross-origin", { action: "https://example.test/theme" }],
-    ["unsupported method", { method: "put" }],
-    ["unsupported encoding", { enctype: "multipart/form-data" }],
-])("uses native fallback for %s", (_name, values) => {
-    const element = form();
-    Object.assign(element, values);
-    expect(submit(element).defaultPrevented).toBe(false);
-    expect(fetch).not.toHaveBeenCalled();
+    [
+        "cross-origin action",
+        (element: HTMLFormElement) => {
+            element.action = "https://example.test/theme";
+        },
+    ],
+    [
+        "unsupported method",
+        (element: HTMLFormElement) => {
+            element.method = "put";
+        },
+    ],
+    [
+        "unsupported encoding",
+        (element: HTMLFormElement) => {
+            element.enctype = "text/plain";
+        },
+    ],
+    [
+        "fragment action",
+        (element: HTMLFormElement) => {
+            element.action = "/dashboard/account/theme#card";
+        },
+    ],
+    [
+        "credential-bearing action",
+        (element: HTMLFormElement) => {
+            element.action =
+                "http://user:secret@localhost:3000/dashboard/account/theme";
+        },
+    ],
+    [
+        "malformed action",
+        (element: HTMLFormElement) => {
+            element.setAttribute("action", "http://[");
+        },
+    ],
+])(
+    "an invalid command form with a %s emits one diagnostic and does not submit",
+    (_name, mutate) => {
+        const details = collectDiagnostics();
+        const element = form();
+        mutate(element);
+        expect(submit(element).defaultPrevented).toBe(true);
+        expect(fetch).not.toHaveBeenCalled();
+        expect(details).toEqual([{ reason: "invalid-command-form", element }]);
+        expect(element.hasAttribute("data-graft-uncertain")).toBe(false);
+    },
+);
+
+test("multipart POST sends FormData with file bytes, successful controls and no Content-Type", async () => {
+    const fetchMock = vi.mocked(fetch).mockResolvedValue(patch());
+    const file = new File([new Uint8Array([1, 2, 3, 4])], "photo.png", {
+        type: "image/png",
+    });
+    const element = form(`
+        <input name="expected_revision" value="absent">
+        <input name="skipped" value="no" disabled>
+        <input name="photo" type="file">
+        <button name="intent" value="upload" type="submit">Upload</button>`);
+    element.enctype = "multipart/form-data";
+    const input = element.elements.namedItem("photo") as HTMLInputElement;
+    (input.files as unknown as File[]).push(file);
+    const button = element.querySelector("button")!;
+
+    expect(submit(element, button).defaultPrevented).toBe(true);
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const init = fetchMock.mock.calls[0]![1];
+    expect(init).toMatchObject({
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        redirect: "manual",
+        headers: {
+            "Graft-Request": "patch",
+            Accept: MEDIA_TYPE,
+        },
+    });
+    expect(init?.headers).not.toHaveProperty("Content-Type");
+    const body = init?.body as FormData;
+    expect(body).toBeInstanceOf(FormData);
+    expect(body.get("expected_revision")).toBe("absent");
+    expect(body.get("skipped")).toBeNull();
+    expect(body.get("intent")).toBe("upload");
+    const photo = body.get("photo");
+    expect(photo).toBeInstanceOf(File);
+    expect((photo as File).name).toBe("photo.png");
+    expect(
+        Array.from(new Uint8Array(await (photo as File).arrayBuffer())),
+    ).toEqual([1, 2, 3, 4]);
 });
 
-test("uses native fallback when a file is selected", () => {
+test("an aborted multipart POST stays uncertain and keeps the unsafe lock", async () => {
+    const abort = new DOMException("Aborted", "AbortError");
+    vi.mocked(fetch).mockRejectedValue(abort);
+    const details = collectSettled();
+    const element = form(
+        '<input name="expected_revision" value="absent"><input name="photo" type="file">',
+    );
+    element.enctype = "multipart/form-data";
+
+    submit(element);
+    await flush();
+
+    expect(element.hasAttribute("data-graft-uncertain")).toBe(true);
+    expect(details).toEqual([
+        {
+            requestKind: "patch",
+            form: element,
+            url: "http://localhost:3000/dashboard/account/theme",
+            outcome: "uncertain-unsafe-result",
+        },
+    ]);
+    const other = form();
+    expect(submit(other).defaultPrevented).toBe(true);
+    expect(fetch).toHaveBeenCalledOnce();
+});
+
+test("a urlencoded command with a selected file emits one diagnostic and does not submit", () => {
+    const details = collectDiagnostics();
     const element = form('<input name="attachment" type="file">');
     const input = element.elements.namedItem("attachment") as HTMLInputElement;
     Object.defineProperty(input, "files", {
@@ -450,8 +546,9 @@ test("uses native fallback when a file is selected", () => {
         value: [new File(["content"], "record.txt", { type: "text/plain" })],
     });
 
-    expect(submit(element).defaultPrevented).toBe(false);
+    expect(submit(element).defaultPrevented).toBe(true);
     expect(fetch).not.toHaveBeenCalled();
+    expect(details).toEqual([{ reason: "invalid-command-form", element }]);
 });
 
 test("one pending POST blocks every other enhanced request", async () => {
@@ -594,10 +691,12 @@ test("a safe patch cannot request a command location replacement", async () => {
             { status: 200, headers: { "content-type": MEDIA_TYPE } },
         ),
     );
-    const element = refreshForm();
+    const element = form('<input name="view" value="inbox">');
+    element.method = "get";
+    element.action = "/messages";
     const originalUrl = location.href;
 
-    requestGraftRefresh(element);
+    submit(element);
     await flush();
 
     expect(document.getElementById("result")).toBeNull();
@@ -732,311 +831,6 @@ test("fails closed for a cross-form submitter reference", async () => {
         .dispatchEvent(new Event("change", { bubbles: true }));
     await flush();
     expect(fetch).not.toHaveBeenCalled();
-});
-
-test("a requested refresh starts immediately without changing location state", async () => {
-    const fetchMock = vi.mocked(fetch).mockResolvedValue(patch("Messages"));
-    const details = collectSettled();
-    const locationChanges = vi.fn();
-    addEventListener("hypergraft:locationchange", locationChanges);
-    const element = refreshForm();
-    const originalUrl = location.href;
-    const originalState = history.state;
-
-    requestGraftRefresh(element);
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(element.hasAttribute("data-graft-pending")).toBe(true);
-    const [url, init] = fetchMock.mock.calls[0]!;
-    expect(String(url)).toBe("http://localhost:3000/messages?view=inbox");
-    expect(init).toMatchObject({
-        method: "GET",
-        credentials: "same-origin",
-        cache: "no-store",
-        redirect: "manual",
-        headers: { "Graft-Request": "patch", Accept: MEDIA_TYPE },
-    });
-
-    await flush();
-
-    expect(document.getElementById("result")?.textContent).toBe("Messages");
-    expect(element.hasAttribute("data-graft-pending")).toBe(false);
-    expect(location.href).toBe(originalUrl);
-    expect(history.state).toEqual(originalState);
-    expect(locationChanges).not.toHaveBeenCalled();
-    expect(details).toHaveLength(1);
-    removeEventListener("hypergraft:locationchange", locationChanges);
-});
-
-test.each([
-    [
-        "detached",
-        (element: HTMLFormElement) => {
-            element.remove();
-        },
-    ],
-    [
-        "foreign-document",
-        (element: HTMLFormElement) => {
-            document.implementation.createHTMLDocument().body.append(element);
-        },
-    ],
-    [
-        "unmarked",
-        (element: HTMLFormElement) => {
-            element.removeAttribute("data-graft");
-        },
-    ],
-    [
-        "non-GET",
-        (element: HTMLFormElement) => {
-            element.method = "post";
-        },
-    ],
-    [
-        "unsupported-encoding",
-        (element: HTMLFormElement) => {
-            element.enctype = "multipart/form-data";
-        },
-    ],
-    [
-        "cross-origin",
-        (element: HTMLFormElement) => {
-            element.action = "https://example.test/messages";
-        },
-    ],
-    [
-        "fragment",
-        (element: HTMLFormElement) => {
-            element.action = "/messages#latest";
-        },
-    ],
-])("ignores a %s refresh form", (_name, invalidate) => {
-    const element = refreshForm();
-    invalidate(element);
-
-    requestGraftRefresh(element);
-
-    expect(fetch).not.toHaveBeenCalled();
-});
-
-test("refresh signals coalesce while navigation blocks their form", async () => {
-    let resolveNavigation!: (response: Response) => void;
-    let resolveRefresh!: (response: Response) => void;
-    const fetchMock = vi
-        .mocked(fetch)
-        .mockImplementationOnce(
-            () =>
-                new Promise((resolve) => {
-                    resolveNavigation = resolve;
-                }),
-        )
-        .mockImplementationOnce(
-            () =>
-                new Promise((resolve) => {
-                    resolveRefresh = resolve;
-                }),
-        );
-    const element = refreshForm();
-    const link = document.createElement("a");
-    link.href = "/patients";
-    link.dataset.graft = "";
-    document.body.append(link);
-
-    link.click();
-    requestGraftRefresh(element);
-    requestGraftRefresh(element);
-    requestGraftRefresh(element);
-    expect(fetchMock).toHaveBeenCalledOnce();
-
-    resolveNavigation(patch("Patients"));
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    resolveRefresh(patch("Refreshed"));
-    await flush();
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-});
-
-test("a refresh signal during an active refresh retains one later refresh", async () => {
-    let resolveFirst!: (response: Response) => void;
-    let resolveSecond!: (response: Response) => void;
-    const fetchMock = vi
-        .mocked(fetch)
-        .mockImplementationOnce(
-            () =>
-                new Promise((resolve) => {
-                    resolveFirst = resolve;
-                }),
-        )
-        .mockImplementationOnce(
-            () =>
-                new Promise((resolve) => {
-                    resolveSecond = resolve;
-                }),
-        );
-    const element = refreshForm();
-
-    requestGraftRefresh(element);
-    requestGraftRefresh(element);
-    requestGraftRefresh(element);
-    expect(fetchMock).toHaveBeenCalledOnce();
-
-    resolveFirst(patch("First"));
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    resolveSecond(patch("Second"));
-    await flush();
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(document.getElementById("result")?.textContent).toBe("Second");
-});
-
-test("navigation cancels an active refresh and retains one later refresh", async () => {
-    const resolvers: ((response: Response) => void)[] = [];
-    const fetchMock = vi.mocked(fetch).mockImplementation(
-        () =>
-            new Promise((resolve) => {
-                resolvers.push(resolve);
-            }),
-    );
-    const element = refreshForm();
-    const link = document.createElement("a");
-    link.href = "/patients";
-    link.dataset.graft = "";
-    document.body.append(link);
-
-    requestGraftRefresh(element);
-    link.click();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(element.hasAttribute("data-graft-pending")).toBe(false);
-
-    resolvers[1]!(patch("Patients"));
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    resolvers[0]!(patch("Stale refresh"));
-    await flush();
-    expect(document.getElementById("result")?.textContent).toBe("Patients");
-
-    resolvers[2]!(patch("Current refresh"));
-    await flush();
-    expect(document.getElementById("result")?.textContent).toBe(
-        "Current refresh",
-    );
-});
-
-test("a known unsafe settlement releases one queued refresh", async () => {
-    let resolveCommand!: (response: Response) => void;
-    let resolveRefresh!: (response: Response) => void;
-    const fetchMock = vi
-        .mocked(fetch)
-        .mockImplementationOnce(
-            () =>
-                new Promise((resolve) => {
-                    resolveCommand = resolve;
-                }),
-        )
-        .mockImplementationOnce(
-            () =>
-                new Promise((resolve) => {
-                    resolveRefresh = resolve;
-                }),
-        );
-    const command = form();
-    const refresh = refreshForm();
-
-    submit(command);
-    requestGraftRefresh(refresh);
-    requestGraftRefresh(refresh);
-    expect(fetchMock).toHaveBeenCalledOnce();
-
-    resolveCommand(patch("Saved"));
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    resolveRefresh(patch("Authoritative messages"));
-    await flush();
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-});
-
-test("an uncertain unsafe settlement discards queued refreshes", async () => {
-    let resolveCommand!: (response: Response) => void;
-    const fetchMock = vi.mocked(fetch).mockImplementationOnce(
-        () =>
-            new Promise((resolve) => {
-                resolveCommand = resolve;
-            }),
-    );
-    const command = form();
-    const refresh = refreshForm();
-
-    submit(command);
-    requestGraftRefresh(refresh);
-    resolveCommand(
-        new Response("malformed", {
-            status: 200,
-            headers: { "content-type": MEDIA_TYPE },
-        }),
-    );
-    await flush();
-    requestGraftRefresh(refresh);
-    await flush();
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(command.hasAttribute("data-graft-uncertain")).toBe(true);
-});
-
-test("a queued refresh is discarded when its form disconnects", async () => {
-    let resolveNavigation!: (response: Response) => void;
-    const fetchMock = vi.mocked(fetch).mockImplementationOnce(
-        () =>
-            new Promise((resolve) => {
-                resolveNavigation = resolve;
-            }),
-    );
-    const element = refreshForm();
-    const link = document.createElement("a");
-    link.href = "/patients";
-    link.dataset.graft = "";
-    document.body.append(link);
-
-    link.click();
-    requestGraftRefresh(element);
-    element.remove();
-    resolveNavigation(patch("Patients"));
-    await flush();
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-});
-
-test("a safe refresh failure does not start an automatic retry", async () => {
-    const fetchMock = vi
-        .mocked(fetch)
-        .mockRejectedValue(new TypeError("offline"));
-
-    requestGraftRefresh(refreshForm());
-    await flush();
-    await flush();
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-});
-
-test("runtime teardown cancels an active refresh and its retained signal", async () => {
-    let resolveRefresh!: (response: Response) => void;
-    const fetchMock = vi.mocked(fetch).mockReturnValue(
-        new Promise((resolve) => {
-            resolveRefresh = resolve;
-        }),
-    );
-    const element = refreshForm();
-
-    requestGraftRefresh(element);
-    requestGraftRefresh(element);
-    cleanup?.();
-    cleanup = undefined;
-    resolveRefresh(patch("Late refresh"));
-    await flush();
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(document.getElementById("result")).toBeNull();
-    requestGraftRefresh(element);
-    expect(fetchMock).toHaveBeenCalledOnce();
 });
 
 test("a safe GET navigation hand-off emits no settled event", async () => {
@@ -1784,27 +1578,24 @@ test("fragment-bearing links stay native", () => {
     expect(fetch).not.toHaveBeenCalled();
 });
 
-test("GET and POST forms with fragment actions stay native", () => {
+test("GET forms with fragment actions stay native", () => {
     const getForm = form('<input name="q" value="x">');
     getForm.method = "get";
     getForm.action = "/patients#results";
     const getEvent = submit(getForm);
     expect(getEvent.defaultPrevented).toBe(false);
-
-    const postForm = form();
-    postForm.action = "/dashboard/account/theme#card";
-    const postEvent = submit(postForm);
-    expect(postEvent.defaultPrevented).toBe(false);
     expect(fetch).not.toHaveBeenCalled();
 });
 
-test("a submitter formaction with a fragment stays native", () => {
+test("a submitter formaction with a fragment emits one diagnostic and does not submit", () => {
+    const details = collectDiagnostics();
     const element = form(
         '<button type="submit" formaction="/save#done">Save</button>',
     );
     const event = submit(element, element.querySelector("button")!);
-    expect(event.defaultPrevented).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
     expect(fetch).not.toHaveBeenCalled();
+    expect(details).toEqual([{ reason: "invalid-command-form", element }]);
 });
 
 test("live-form input and change do not schedule a fragment action", async () => {

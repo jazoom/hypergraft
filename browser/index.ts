@@ -1,5 +1,4 @@
 export {
-    requestGraftRefresh,
     startHypergraft,
     type HypergraftOptions,
     type TransportFeedback,

@@ -11,6 +11,7 @@ export type DiagnosticReason =
     | "target-content"
     | "apply-failure"
     | "invalid-live-form"
+    | "invalid-command-form"
     | "unknown-island"
     | "invalid-feedback";
 
@@ -21,13 +22,17 @@ export type DiagnosticDetail =
     | {
           reason: Exclude<
               DiagnosticReason,
-              "unknown-island" | "invalid-feedback"
+              "invalid-command-form" | "unknown-island" | "invalid-feedback"
           >;
           requestKind: "navigation" | "patch";
           unsafe: boolean;
           url: string;
           element?: HTMLElement;
           targetId?: string;
+      }
+    | {
+          reason: "invalid-command-form";
+          element: HTMLElement;
       }
     | {
           reason: "unknown-island";
@@ -52,11 +57,14 @@ export function listenForDiagnostics(
     return () => removeEventListener(DIAGNOSTIC_EVENT, handler);
 }
 
-// The reason an internal failure carries. The live-form configuration problem
-// is reported directly rather than thrown, so it is not a failure reason.
+// The reason an internal failure carries. Configuration problems are reported
+// directly rather than thrown, so they are not failure reasons.
 type FailureReason = Exclude<
     DiagnosticReason,
-    "invalid-live-form" | "unknown-island" | "invalid-feedback"
+    | "invalid-live-form"
+    | "invalid-command-form"
+    | "unknown-island"
+    | "invalid-feedback"
 >;
 
 /** Internal error used by the bounded reader and preflight. Public diagnostics

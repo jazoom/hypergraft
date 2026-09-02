@@ -29,13 +29,11 @@ import {
     type LiveController,
 } from "./live";
 
-type SafeFormSource = "submission" | "refresh";
 type Lane = {
     controller?: AbortController;
     sequence: number;
     error: boolean;
     cancelPending?: () => void;
-    active?: { form: HTMLFormElement; source: SafeFormSource };
 };
 type UnsafeState =
     | { kind: "idle" }
@@ -58,7 +56,6 @@ type Runtime = {
     composing: boolean;
     navigationPending: boolean;
     queuedHistoryUrl: URL | undefined;
-    queuedRefreshForms: Set<HTMLFormElement>;
     detachListeners: () => void;
     stopIslands: () => void;
     live: LiveController;
@@ -175,54 +172,47 @@ function getFormUrl(form: HTMLFormElement, submitter?: HTMLElement | null) {
     url.search = parameters.toString();
     return url;
 }
-function isRefreshForm(form: HTMLFormElement): boolean {
-    if (
-        !(form instanceof HTMLFormElement) ||
-        form.ownerDocument !== document ||
-        !form.isConnected ||
-        !form.hasAttribute("data-graft")
-    )
-        return false;
-    const values = effectiveFormValues(form);
-    if (
-        values.method !== "get" ||
-        values.encoding !== "application/x-www-form-urlencoded"
-    )
-        return false;
-    try {
-        const url = new URL(values.action, document.baseURI);
-        return sameOrigin(url) && !url.hash;
-    } catch {
-        return false;
-    }
-}
 function preparePost(form: HTMLFormElement, submitter?: HTMLElement | null) {
-    const values = effectiveFormValues(form, submitter);
-    if (
-        values.method !== "post" ||
-        values.encoding !== "application/x-www-form-urlencoded"
-    )
-        return undefined;
-    const url = new URL(values.action, document.baseURI);
-    if (!sameOrigin(url)) return undefined;
-    if (
-        [...form.querySelectorAll<HTMLInputElement>('input[type="file"]')].some(
-            (input) => (input.files?.length ?? 0) > 0,
+    try {
+        const values = effectiveFormValues(form, submitter);
+        if (values.method !== "post") return undefined;
+        const action =
+            values.button?.getAttribute("formaction") ??
+            form.getAttribute("action") ??
+            values.action;
+        const url = new URL(action, document.baseURI);
+        if (!sameOrigin(url) || url.hash || url.username || url.password)
+            return undefined;
+        if (values.encoding === "multipart/form-data")
+            return {
+                url,
+                body: new FormData(form, values.button),
+                submitter: values.button,
+            };
+        if (values.encoding !== "application/x-www-form-urlencoded")
+            return undefined;
+        if (
+            [
+                ...form.querySelectorAll<HTMLInputElement>(
+                    'input[type="file"]',
+                ),
+            ].some((input) => (input.files?.length ?? 0) > 0)
         )
-    )
-        return undefined;
-    if (url.hash) return undefined;
-    const data = new FormData(form, values.button);
-    const body = new URLSearchParams();
-    for (const [name, value] of data) {
-        if (typeof value !== "string") {
-            if (value.name || value.size) return undefined;
-            body.append(name, "");
-            continue;
+            return undefined;
+        const data = new FormData(form, values.button);
+        const body = new URLSearchParams();
+        for (const [name, value] of data) {
+            if (typeof value !== "string") {
+                if (value.name || value.size) return undefined;
+                body.append(name, "");
+                continue;
+            }
+            body.append(name, value);
         }
-        body.append(name, value);
+        return { url, body, submitter: values.button };
+    } catch {
+        return undefined;
     }
-    return { url, body, submitter: values.button };
 }
 
 export async function readBoundedResponse(response: Response): Promise<string> {
@@ -467,7 +457,10 @@ function hypergraftFailure(error: unknown): HypergraftError | undefined {
 }
 function diagnosticReason(
     error: unknown,
-): Exclude<DiagnosticReason, "unknown-island" | "invalid-feedback"> {
+): Exclude<
+    DiagnosticReason,
+    "invalid-command-form" | "unknown-island" | "invalid-feedback"
+> {
     return hypergraftFailure(error)?.reason ?? "transport";
 }
 function diagnosticTargetId(error: unknown): string | undefined {
@@ -561,39 +554,12 @@ async function safeRequest(
     };
 }
 
-function queueRefresh(runtime: Runtime, form: HTMLFormElement): void {
-    if (runtime.disposed || !isRefreshForm(form)) return;
-    if (documentUnsafe.kind === "uncertain") return;
-    runtime.queuedRefreshForms.add(form);
-}
-
-function drainQueuedRefreshes(runtime: Runtime): void {
-    if (
-        runtime.disposed ||
-        runtime.navigationPending ||
-        documentUnsafe.kind !== "idle"
-    )
-        return;
-    for (const form of [...runtime.queuedRefreshForms]) {
-        if (!isRefreshForm(form)) {
-            runtime.queuedRefreshForms.delete(form);
-            continue;
-        }
-        if (runtime.formLanes.get(form)?.active) continue;
-        runtime.queuedRefreshForms.delete(form);
-        void submitSafe(runtime, form, undefined, "refresh");
-    }
-}
-
-function cancelActiveSafeForms(runtime: Runtime, retainRefreshes = false) {
+function cancelActiveSafeForms(runtime: Runtime) {
     for (const lane of runtime.activeSafeFormLanes) {
-        if (retainRefreshes && lane.active?.source === "refresh")
-            queueRefresh(runtime, lane.active.form);
         ++lane.sequence;
         lane.controller?.abort();
         lane.cancelPending?.();
         lane.cancelPending = undefined;
-        lane.active = undefined;
     }
     runtime.activeSafeFormLanes.clear();
 }
@@ -616,13 +582,12 @@ async function navigate(
     )
         return;
     runtime.navigationPending = true;
-    cancelActiveSafeForms(runtime, true);
+    cancelActiveSafeForms(runtime);
     runtime.live.suspend();
     const sequence = ++runtime.navigationLane.sequence;
     runtime.navigationLane.controller?.abort();
     runtime.navigationLane.controller = new AbortController();
     const responseUrl: { current?: string } = {};
-    let refreshDisposition: "retain" | "drain" | "discard" = "retain";
     try {
         const result = await safeRequest(
             runtime,
@@ -639,7 +604,6 @@ async function navigate(
         )
             return;
         if (result.kind === "handed-off") {
-            refreshDisposition = "discard";
             return;
         }
         if (mode === "push")
@@ -666,7 +630,6 @@ async function navigate(
         }
         window.scrollTo(0, 0);
         runtime.live.resume();
-        refreshDisposition = "drain";
     } catch (error) {
         if (
             errorName(error) === "AbortError" ||
@@ -682,16 +645,11 @@ async function navigate(
             element,
             targetId: diagnosticTargetId(error),
         });
-        refreshDisposition = "discard";
         if (mode === "push") location.assign(url.href);
         else location.reload();
     } finally {
         if (sequence === runtime.navigationLane.sequence) {
             runtime.navigationPending = false;
-            if (refreshDisposition === "discard")
-                runtime.queuedRefreshForms.clear();
-            else if (refreshDisposition === "drain")
-                drainQueuedRefreshes(runtime);
         }
     }
 }
@@ -736,20 +694,13 @@ async function submitSafe(
     runtime: Runtime,
     form: HTMLFormElement,
     submitter?: HTMLElement | null,
-    source: SafeFormSource = "submission",
 ) {
     if (runtime.disposed || !form.isConnected) return;
-    if (source === "refresh" && !isRefreshForm(form)) {
-        runtime.queuedRefreshForms.delete(form);
-        return;
-    }
     if (documentUnsafe.kind !== "idle" || runtime.navigationPending) {
-        if (source === "refresh") queueRefresh(runtime, form);
         return;
     }
     const url = getFormUrl(form, submitter);
-    if (source === "submission" && form.hasAttribute("data-graft-live"))
-        runtime.live.retireForm(form);
+    if (form.hasAttribute("data-graft-live")) runtime.live.retireForm(form);
     const button = submitterControl(submitter);
     const lane = runtime.formLanes.get(form) ?? { sequence: 0, error: false };
     runtime.formLanes.set(form, lane);
@@ -761,7 +712,6 @@ async function submitSafe(
     lane.cancelPending?.();
     lane.cancelPending = undefined;
     lane.controller = new AbortController();
-    lane.active = { form, source };
     runtime.activeSafeFormLanes.add(lane);
     const restorePending = pendingState(form, button);
     lane.cancelPending = restorePending;
@@ -772,7 +722,6 @@ async function submitSafe(
     // records only the outcome and the status of a received unparseable
     // response. Superseded requests and navigation hand-offs emit nothing.
     let settlement: Settlement | undefined;
-    let drainRefreshes = false;
     try {
         const result = await safeRequest(
             runtime,
@@ -786,16 +735,11 @@ async function submitSafe(
         if (result.kind === "applied") {
             settlement = result.settlement;
             responseUrl.current = result.url;
-            if (source === "submission") {
-                history.replaceState({ hypergraft: true }, "", result.url);
-                emitLocationChange({
-                    url: location.href,
-                    cause: "get-form-replacement",
-                });
-            }
-            drainRefreshes = true;
-        } else if (result.kind === "handed-off") {
-            runtime.queuedRefreshForms.clear();
+            history.replaceState({ hypergraft: true }, "", result.url);
+            emitLocationChange({
+                url: location.href,
+                cause: "get-form-replacement",
+            });
         }
     } catch (error) {
         if (
@@ -817,7 +761,6 @@ async function submitSafe(
                 status === undefined
                     ? { outcome: "safe-failure" }
                     : { outcome: "safe-failure", status };
-            drainRefreshes = true;
         }
     } finally {
         // An older request for this form must not clear the replacement's
@@ -825,7 +768,6 @@ async function submitSafe(
         if (!runtime.disposed && sequence === lane.sequence) {
             runtime.activeSafeFormLanes.delete(lane);
             lane.cancelPending = undefined;
-            lane.active = undefined;
             if (settlement) {
                 // Pending state is final before lifecycle observers reconcile
                 // retained roots, so restore the form and submitter first.
@@ -837,7 +779,6 @@ async function submitSafe(
                     ...settlement,
                 });
             }
-            if (drainRefreshes) drainQueuedRefreshes(runtime);
             runtime.live.restoreForm(form);
         }
     }
@@ -860,7 +801,7 @@ type UnsafeOutcome =
           url: string;
           reason: Exclude<
               DiagnosticReason,
-              "unknown-island" | "invalid-feedback"
+              "invalid-command-form" | "unknown-island" | "invalid-feedback"
           >;
           targetId?: string;
       }
@@ -877,21 +818,26 @@ async function unsafeRequest(
     form: HTMLFormElement,
     request: {
         url: URL;
-        body: URLSearchParams;
+        body: URLSearchParams | FormData;
     },
 ): Promise<UnsafeOutcome> {
     let response: Response;
+    const headers: Record<string, string> = {
+        "Graft-Request": "patch",
+        Accept: MEDIA_TYPE,
+    };
+    // FormData must not set Content-Type. The browser supplies the multipart
+    // boundary. A manual header drops that boundary and the server cannot parse
+    // the body.
+    if (!(request.body instanceof FormData))
+        headers["Content-Type"] = "application/x-www-form-urlencoded";
     try {
         response = await fetch(request.url, {
             method: "POST",
             credentials: "same-origin",
             cache: "no-store",
             redirect: "manual",
-            headers: {
-                "Graft-Request": "patch",
-                Accept: MEDIA_TYPE,
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
+            headers,
             body: request.body,
         });
     } catch {
@@ -963,7 +909,7 @@ async function submitUnsafe(
     form: HTMLFormElement,
     prepared: {
         url: URL;
-        body: URLSearchParams;
+        body: URLSearchParams | FormData;
         submitter?: HTMLButtonElement | HTMLInputElement;
     },
 ) {
@@ -973,7 +919,7 @@ async function submitUnsafe(
         runtime.navigationPending
     )
         return;
-    cancelActiveSafeForms(runtime, true);
+    cancelActiveSafeForms(runtime);
     runtime.live.suspend();
     documentUnsafe = { kind: "pending", form };
     const restorePending = pendingState(form, prepared.submitter);
@@ -988,12 +934,10 @@ async function submitUnsafe(
         return;
     }
     if (outcome.kind === "handed-off") {
-        runtime.queuedRefreshForms.clear();
         restorePending();
         return;
     }
     if (outcome.kind === "uncertain") {
-        runtime.queuedRefreshForms.clear();
         documentUnsafe = { kind: "uncertain", form };
         form.setAttribute("data-graft-uncertain", "");
         // Mark uncertainty before restoring pending state, then request host
@@ -1038,7 +982,6 @@ async function submitUnsafe(
         void navigate(runtime, historyUrl, "pop");
     } else if (outcome.kind === "applied") {
         runtime.live.resume();
-        drainQueuedRefreshes(runtime);
     }
 }
 
@@ -1132,7 +1075,6 @@ function disposeRuntime(runtime: Runtime, replacement: boolean) {
     runtime.navigationLane.controller?.abort();
     runtime.navigationPending = false;
     runtime.queuedHistoryUrl = undefined;
-    runtime.queuedRefreshForms.clear();
     cancelActiveSafeForms(runtime);
     runtime.options = {};
     // A replacement inherits the document-level unsafe guard. A final stop
@@ -1152,7 +1094,6 @@ function createRuntime(options: HypergraftOptions): Runtime {
         composing: false,
         navigationPending: false,
         queuedHistoryUrl: undefined,
-        queuedRefreshForms: new Set(),
         detachListeners: () => undefined,
         stopIslands: () => undefined,
         live: {
@@ -1195,7 +1136,14 @@ function createRuntime(options: HypergraftOptions): Runtime {
             return;
         }
         const prepared = preparePost(form, event.submitter);
-        if (!prepared) return;
+        if (!prepared) {
+            event.preventDefault();
+            emitDiagnostic({
+                reason: "invalid-command-form",
+                element: form,
+            });
+            return;
+        }
         event.preventDefault();
         void submitUnsafe(runtime, form, prepared);
     };
@@ -1236,13 +1184,6 @@ function createRuntime(options: HypergraftOptions): Runtime {
     };
     runtime.live.reconcile();
     return runtime;
-}
-
-export function requestGraftRefresh(form: HTMLFormElement): void {
-    const runtime = activeRuntime;
-    if (!runtime || !isRefreshForm(form)) return;
-    queueRefresh(runtime, form);
-    drainQueuedRefreshes(runtime);
 }
 
 export function startHypergraft(options: HypergraftOptions = {}) {
