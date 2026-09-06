@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
+    pin::Pin,
     sync::Arc,
     time::Duration,
 };
@@ -17,7 +18,7 @@ use axum::{
 };
 use tokio::{
     sync::{Semaphore, mpsc, oneshot},
-    time::{MissedTickBehavior, interval_at},
+    time::{MissedTickBehavior, Sleep, interval_at},
 };
 
 use crate::{
@@ -154,13 +155,111 @@ struct OutboundPatch {
 }
 
 struct SubscriptionTask {
-    cancel: oneshot::Sender<()>,
-    join: tokio::task::JoinHandle<()>,
+    cancel: Option<oneshot::Sender<()>>,
+    join: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl SubscriptionTask {
+    fn request_cancel(&mut self) {
+        if let Some(cancel) = self.cancel.take() {
+            let _ = cancel.send(());
+        }
+    }
+
+    async fn join(&mut self) {
+        self.request_cancel();
+        if let Some(join) = self.join.take() {
+            let _ = join.await;
+        }
+    }
+}
+
+// Each admitted subscription sends at most one failure. Notification must not wait for session cleanup.
+#[derive(Clone)]
+struct Termination {
+    tx: mpsc::UnboundedSender<CloseClass>,
+}
+
+impl Termination {
+    fn pair() -> (Self, mpsc::UnboundedReceiver<CloseClass>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (Self { tx }, rx)
+    }
+
+    fn request(&self, class: CloseClass) {
+        let _ = self.tx.send(class);
+    }
+}
+
+struct ListenerGuard {
+    handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl ListenerGuard {
+    fn spawn<F>(future: F) -> Self
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        Self {
+            handle: Some(tokio::spawn(future)),
+        }
+    }
+
+    async fn abort_and_wait(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+            let _ = handle.await;
+        }
+    }
+}
+
+impl Drop for ListenerGuard {
+    fn drop(&mut self) {
+        // Nested invalidation polling must stop if the projection task is dropped.
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
+    }
 }
 
 enum SessionEnd {
     Silent,
     Close(CloseClass),
+}
+
+enum Outgoing {
+    Binary(Vec<u8>),
+    Ping,
+}
+
+async fn send_bounded<Sock: FrameSocket>(
+    socket: &mut Sock,
+    lease: &mut Pin<&mut Sleep>,
+    heartbeat_period: Duration,
+    outgoing: Outgoing,
+) -> Result<(), SessionEnd> {
+    let write = async {
+        match outgoing {
+            Outgoing::Binary(bytes) => socket.send_binary(bytes).await,
+            Outgoing::Ping => socket.send_ping().await,
+        }
+    };
+    tokio::select! {
+        biased;
+        _ = lease.as_mut() => Err(SessionEnd::Close(CloseClass::LeaseExpiry)),
+        result = write => match result {
+            Ok(()) => Ok(()),
+            Err(()) => Err(SessionEnd::Close(CloseClass::Retryable)),
+        },
+        _ = tokio::time::sleep(heartbeat_period) => Err(SessionEnd::Close(CloseClass::Retryable)),
+    }
+}
+
+async fn close_best_effort<Sock: FrameSocket>(socket: &mut Sock, class: CloseClass) {
+    tokio::select! {
+        _ = tokio::time::sleep(Duration::from_secs(crate::live::HEARTBEAT_SECONDS)) => {}
+        _ = socket.close(class) => {}
+    }
 }
 
 pub(crate) async fn run_session<S, G, Sock>(
@@ -182,13 +281,13 @@ pub(crate) async fn run_session<S, G, Sock>(
     let connection = tokio::select! {
         biased;
         _ = &mut lease => {
-            let _ = socket.close(CloseClass::LeaseExpiry).await;
+            close_best_effort(&mut socket, CloseClass::LeaseExpiry).await;
             return;
         }
         result = guard.bind(&upgrade_extensions) => match result {
             Ok(connection) => Arc::new(connection),
             Err(failure) => {
-                let _ = socket.close(failure.close_class()).await;
+                close_best_effort(&mut socket, failure.close_class()).await;
                 return;
             }
         }
@@ -201,7 +300,7 @@ pub(crate) async fn run_session<S, G, Sock>(
     heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<OutboundPatch>(config.max_subscriptions);
-    let (close_tx, mut close_rx) = mpsc::channel::<CloseClass>(1);
+    let (termination, mut close_rx) = Termination::pair();
     let (retired_tx, mut retired_rx) = mpsc::unbounded_channel::<u32>();
     let (revalidate_tx, mut revalidate_rx) = mpsc::unbounded_channel::<Result<(), CloseClass>>();
     let refreshes = Arc::new(Semaphore::new(config.max_concurrent_refreshes));
@@ -221,8 +320,8 @@ pub(crate) async fn run_session<S, G, Sock>(
                 break SessionEnd::Close(class.unwrap_or(CloseClass::Retryable));
             }
             result = revalidate_rx.recv() => {
-                if let Some(task) = heartbeat_revalidate.take() {
-                    let _ = task.join.await;
+                if let Some(mut task) = heartbeat_revalidate.take() {
+                    task.join().await;
                 }
                 match result {
                     Some(Err(class)) => break SessionEnd::Close(class),
@@ -232,9 +331,9 @@ pub(crate) async fn run_session<S, G, Sock>(
             }
             retired = retired_rx.recv() => {
                 if let Some(id) = retired
-                    && let Some(task) = subscriptions.remove(&id)
+                    && let Some(mut task) = subscriptions.remove(&id)
                 {
-                    let _ = task.join.await;
+                    task.join().await;
                 }
             }
             _ = heartbeat.tick() => {
@@ -245,8 +344,15 @@ pub(crate) async fn run_session<S, G, Sock>(
                     break SessionEnd::Close(CloseClass::LeaseExpiry);
                 }
                 outbound_messages += 1;
-                if socket.send_ping().await.is_err() {
-                    break SessionEnd::Close(CloseClass::Retryable);
+                if let Err(end) = send_bounded(
+                    &mut socket,
+                    &mut lease,
+                    heartbeat_period,
+                    Outgoing::Ping,
+                )
+                .await
+                {
+                    break end;
                 }
                 pong_outstanding = true;
                 if heartbeat_revalidate.is_none() {
@@ -268,8 +374,15 @@ pub(crate) async fn run_session<S, G, Sock>(
                 }
                 outbound_messages += 1;
                 outbound_bytes += patch.bytes.len();
-                if socket.send_binary(patch.bytes).await.is_err() {
-                    break SessionEnd::Close(CloseClass::Retryable);
+                if let Err(end) = send_bounded(
+                    &mut socket,
+                    &mut lease,
+                    heartbeat_period,
+                    Outgoing::Binary(patch.bytes),
+                )
+                .await
+                {
+                    break end;
                 }
             }
             incoming = socket.recv() => {
@@ -293,9 +406,8 @@ pub(crate) async fn run_session<S, G, Sock>(
                             }
                             Ok(ControlMessage::Terminal) => break SessionEnd::Silent,
                             Ok(ControlMessage::Unsubscribe { id }) => {
-                                if let Some(task) = subscriptions.remove(&id) {
-                                    let _ = task.cancel.send(());
-                                    let _ = task.join.await;
+                                if let Some(mut task) = subscriptions.remove(&id) {
+                                    task.join().await;
                                 }
                             }
                             Ok(ControlMessage::Subscribe { id, url }) => {
@@ -315,7 +427,7 @@ pub(crate) async fn run_session<S, G, Sock>(
                                     connection: connection.clone(),
                                     refreshes: refreshes.clone(),
                                     outbound: outbound_tx.clone(),
-                                    close: close_tx.clone(),
+                                    termination: termination.clone(),
                                     retired: retired_tx.clone(),
                                 });
                                 subscriptions.insert(id, task);
@@ -327,20 +439,22 @@ pub(crate) async fn run_session<S, G, Sock>(
         }
     };
 
-    let mut joins = Vec::with_capacity(subscriptions.len() + 1);
+    let mut tasks = Vec::with_capacity(subscriptions.len() + 1);
     if let Some(task) = heartbeat_revalidate.take() {
-        let _ = task.cancel.send(());
-        joins.push(task.join);
+        tasks.push(task);
     }
     for (_, task) in subscriptions {
-        let _ = task.cancel.send(());
-        joins.push(task.join);
+        tasks.push(task);
     }
-    for join in joins {
-        let _ = join.await;
+    for task in &mut tasks {
+        task.request_cancel();
     }
+    for task in &mut tasks {
+        task.join().await;
+    }
+    drop(connection);
     if let SessionEnd::Close(class) = end {
-        let _ = socket.close(class).await;
+        close_best_effort(&mut socket, class).await;
     }
 }
 
@@ -353,7 +467,7 @@ struct ProjectionRuntime<C> {
     connection: Arc<C>,
     refreshes: Arc<Semaphore>,
     outbound: mpsc::Sender<OutboundPatch>,
-    close: mpsc::Sender<CloseClass>,
+    termination: Termination,
     retired: mpsc::UnboundedSender<u32>,
 }
 
@@ -367,7 +481,7 @@ struct SpawnRequest<S, G: LiveGuard> {
     connection: Arc<G::Connection>,
     refreshes: Arc<Semaphore>,
     outbound: mpsc::Sender<OutboundPatch>,
-    close: mpsc::Sender<CloseClass>,
+    termination: Termination,
     retired: mpsc::UnboundedSender<u32>,
 }
 
@@ -379,8 +493,8 @@ where
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let join = tokio::spawn(run_subscription(request, cancel_rx));
     SubscriptionTask {
-        cancel: cancel_tx,
-        join,
+        cancel: Some(cancel_tx),
+        join: Some(join),
     }
 }
 
@@ -406,8 +520,8 @@ where
         }
     });
     SubscriptionTask {
-        cancel: cancel_tx,
-        join,
+        cancel: Some(cancel_tx),
+        join: Some(join),
     }
 }
 
@@ -426,11 +540,7 @@ where
                 return;
             }
             Err(SubscribeStart::Close(class)) => {
-                tokio::select! {
-                    biased;
-                    _ = &mut cancel => return,
-                    _ = request.close.send(class) => {}
-                }
+                request.termination.request(class);
                 let _ = request.retired.send(request.id);
                 return;
             }
@@ -442,7 +552,7 @@ where
         connection,
         refreshes,
         outbound,
-        close,
+        termination,
         retired,
         ..
     } = request;
@@ -450,7 +560,7 @@ where
         connection,
         refreshes,
         outbound,
-        close,
+        termination,
         retired,
     };
     run_projection(id, projection, guard, runtime, cancel).await;
@@ -500,7 +610,7 @@ async fn run_projection<C, G>(
     );
     let (notify_tx, mut notify_rx) = mpsc::channel::<()>(1);
     let (ready_tx, ready_rx) = oneshot::channel();
-    let listener = tokio::spawn(async move {
+    let mut listener = ListenerGuard::spawn(async move {
         let mut ready_tx = Some(ready_tx);
         while let Some(()) = futures_util::future::poll_fn(|context| {
             let event = invalidation.as_mut().poll_next(context);
@@ -514,10 +624,14 @@ async fn run_projection<C, G>(
             let _ = notify_tx.try_send(());
         }
     });
-    let _ = ready_rx.await;
 
     let refresh = projection.refresh.clone();
     let result = async {
+        tokio::select! {
+            biased;
+            _ = &mut cancel => return Ok(()),
+            _ = ready_rx => {}
+        }
         if refresh_once(
             id,
             refresh.as_ref(),
@@ -558,10 +672,10 @@ async fn run_projection<C, G>(
     }
     .await;
 
-    listener.abort();
+    listener.abort_and_wait().await;
     drop(projection.lifetime);
     if let Err(class) = result {
-        let _ = runtime.close.send(class).await;
+        runtime.termination.request(class);
     }
     let _ = runtime.retired.send(id);
 }

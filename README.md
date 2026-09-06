@@ -26,6 +26,10 @@ Client controls use bounded JSON. Server patches use binary frames with a 4-byte
 
 The lease timer starts before host bind work. Expiry cancels a pending bind, a pending factory and a pending revalidation. The deadline cancels asynchronous host futures that yield. It cannot interrupt host code that does not yield.
 
+Socket writes wait at most one heartbeat interval or until the remaining lease ends, whichever is sooner. A stalled write is retryable unless the lease deadline also expires. Close delivery waits at most one heartbeat interval. If the peer does not receive the close frame, Hypergraft still releases the socket and host resources.
+
+Shutdown cancels projection tasks and nested invalidation listeners. Repeated unsubscribe and shutdown cleanup is idempotent. Pings count toward the outbound message budget.
+
 Retry delays use bounded exponential backoff with jitter from 1 to 30 seconds. Protocol and terminal closes do not reconnect.
 
 ## Rust host boundary

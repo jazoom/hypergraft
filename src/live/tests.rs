@@ -1101,3 +1101,406 @@ async fn socket_counts_a_pending_factory_against_subscription_admission() {
     ));
     session.await.unwrap();
 }
+
+fn dropping_pending(
+    drops: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) -> impl futures_util::Stream<Item = ()> + Send {
+    struct Flag(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    impl Drop for Flag {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    futures_util::stream::unfold(Flag(drops), |flag| async move {
+        std::future::pending::<()>().await;
+        Some(((), flag))
+    })
+}
+
+#[derive(Clone)]
+struct TrackedLive {
+    projections: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    listeners: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+async fn tracked_projection(
+    State(state): State<TrackedLive>,
+) -> Result<LiveProjection<()>, LiveReject> {
+    Ok(
+        LiveProjection::new(dropping_pending(state.listeners), |_ctx| async {
+            Ok(children_patch("item-results", "ready"))
+        })
+        .with_lifetime(LifetimeLease(state.projections)),
+    )
+}
+
+#[derive(Clone)]
+struct RefreshHold {
+    started: std::sync::Arc<Notify>,
+    projections: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    listeners: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+async fn held_refresh(State(state): State<RefreshHold>) -> Result<LiveProjection<()>, LiveReject> {
+    let started = state.started.clone();
+    Ok(
+        LiveProjection::new(dropping_pending(state.listeners), move |_ctx| {
+            let started = started.clone();
+            async move {
+                started.notify_one();
+                std::future::pending().await
+            }
+        })
+        .with_lifetime(LifetimeLease(state.projections)),
+    )
+}
+
+struct StallingBinarySocket {
+    incoming: mpsc::UnboundedReceiver<super::socket::Incoming>,
+    outgoing: mpsc::UnboundedSender<FakeOut>,
+    send_started: std::sync::Arc<Notify>,
+    fail_after: Option<std::time::Duration>,
+}
+
+impl super::socket::FrameSocket for StallingBinarySocket {
+    async fn send_binary(&mut self, _bytes: Vec<u8>) -> Result<(), ()> {
+        self.send_started.notify_one();
+        if let Some(delay) = self.fail_after {
+            tokio::time::sleep(delay).await;
+            return Err(());
+        }
+        std::future::pending().await
+    }
+
+    async fn send_ping(&mut self) -> Result<(), ()> {
+        self.outgoing.send(FakeOut::Ping).map_err(|_| ())
+    }
+
+    async fn close(&mut self, class: CloseClass) -> Result<(), ()> {
+        self.outgoing.send(FakeOut::Close(class)).map_err(|_| ())
+    }
+
+    async fn recv(&mut self) -> Option<super::socket::Incoming> {
+        self.incoming.recv().await
+    }
+}
+
+struct StallingCloseSocket {
+    close_started: std::sync::Arc<Notify>,
+}
+
+impl super::socket::FrameSocket for StallingCloseSocket {
+    async fn send_binary(&mut self, _bytes: Vec<u8>) -> Result<(), ()> {
+        Ok(())
+    }
+
+    async fn send_ping(&mut self) -> Result<(), ()> {
+        Ok(())
+    }
+
+    async fn close(&mut self, _class: CloseClass) -> Result<(), ()> {
+        self.close_started.notify_one();
+        std::future::pending().await
+    }
+
+    async fn recv(&mut self) -> Option<super::socket::Incoming> {
+        std::future::pending().await
+    }
+}
+
+#[derive(Clone)]
+struct BarrierFailGuard {
+    admission: SocketAdmission<&'static str>,
+    started: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    barrier: std::sync::Arc<tokio::sync::Barrier>,
+}
+
+impl LiveGuard for BarrierFailGuard {
+    type Connection = PermitConn;
+    type Context = ();
+
+    async fn bind(
+        &self,
+        _extensions: &axum::http::Extensions,
+    ) -> Result<Self::Connection, GuardFailure> {
+        Ok(PermitConn {
+            _permit: self.admission.try_acquire("anon", 1).unwrap(),
+        })
+    }
+
+    async fn revalidate(&self, _connection: &Self::Connection) -> Result<(), GuardFailure> {
+        let n = self
+            .started
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.barrier.wait().await;
+        // All factories pass before refresh revalidation fails in the next barrier round.
+        if n < 3 {
+            Ok(())
+        } else {
+            Err(GuardFailure::Retryable)
+        }
+    }
+}
+
+fn assert_released(
+    projections: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    listeners: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    admission: &SocketAdmission<&'static str>,
+) {
+    assert_eq!(projections.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(listeners.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(admission.try_acquire("anon", 1).is_ok());
+}
+
+#[tokio::test(start_paused = true)]
+async fn socket_bounds_binary_writes_and_prioritises_lease_expiry() {
+    for (elapsed, fail_after, expected) in [
+        (HEARTBEAT_SECONDS, None, CloseClass::Retryable),
+        (LEASE_SECONDS, None, CloseClass::LeaseExpiry),
+        (
+            LEASE_SECONDS,
+            Some(std::time::Duration::from_secs(LEASE_SECONDS)),
+            CloseClass::LeaseExpiry,
+        ),
+    ] {
+        let admission = SocketAdmission::new();
+        let projections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let listeners = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let send_started = std::sync::Arc::new(Notify::new());
+        let waiting = send_started.notified();
+        let (in_tx, in_rx) = mpsc::unbounded_channel();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        let socket = StallingBinarySocket {
+            incoming: in_rx,
+            outgoing: out_tx,
+            send_started: send_started.clone(),
+            fail_after,
+        };
+        let router = std::sync::Arc::new(
+            LiveRouter::new()
+                .route("/items", tracked_projection)
+                .unwrap(),
+        );
+        let session = tokio::spawn(super::socket::run_session(
+            socket,
+            TrackedLive {
+                projections: projections.clone(),
+                listeners: listeners.clone(),
+            },
+            router,
+            PermitGuard {
+                admission: admission.clone(),
+            },
+            LiveSocketConfig::default(),
+            axum::http::Extensions::new(),
+        ));
+        in_tx
+            .send(super::socket::Incoming::Text(
+                r#"{"v":"1","type":"subscribe","id":1,"url":"/items"}"#.to_owned(),
+            ))
+            .unwrap();
+        waiting.await;
+        tokio::time::advance(std::time::Duration::from_secs(elapsed)).await;
+        assert!(matches!(
+            out_rx.recv().await,
+            Some(FakeOut::Close(class)) if class == expected
+        ));
+        session.await.unwrap();
+        assert_released(&projections, &listeners, &admission);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn socket_releases_resources_after_a_stalled_close_handshake() {
+    let admission = SocketAdmission::new();
+    let close_started = std::sync::Arc::new(Notify::new());
+    let waiting = close_started.notified();
+    let socket = StallingCloseSocket {
+        close_started: close_started.clone(),
+    };
+    let session = tokio::spawn(super::socket::run_session(
+        socket,
+        (),
+        std::sync::Arc::new(LiveRouter::new()),
+        PermitGuard {
+            admission: admission.clone(),
+        },
+        LiveSocketConfig::default(),
+        axum::http::Extensions::new(),
+    ));
+    tokio::time::advance(std::time::Duration::from_secs(LEASE_SECONDS)).await;
+    waiting.await;
+    assert!(!session.is_finished());
+    assert!(admission.try_acquire("anon", 1).is_ok());
+    tokio::time::advance(std::time::Duration::from_secs(HEARTBEAT_SECONDS)).await;
+    session.await.unwrap();
+}
+
+#[tokio::test]
+async fn socket_closes_when_three_projections_fail_together() {
+    let admission = SocketAdmission::new();
+    let guard = BarrierFailGuard {
+        admission: admission.clone(),
+        started: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        barrier: std::sync::Arc::new(tokio::sync::Barrier::new(3)),
+    };
+    let started = guard.started.clone();
+    let projections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let listeners = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (socket, incoming, mut outgoing) = session_pair();
+    let session = tokio::spawn(super::socket::run_session(
+        socket,
+        TrackedLive {
+            projections: projections.clone(),
+            listeners: listeners.clone(),
+        },
+        std::sync::Arc::new(
+            LiveRouter::new()
+                .route("/items", tracked_projection)
+                .unwrap(),
+        ),
+        guard,
+        LiveSocketConfig::default().max_subscriptions(3).unwrap(),
+        axum::http::Extensions::new(),
+    ));
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"subscribe","id":1,"url":"/items"}"#.to_owned(),
+        ))
+        .unwrap();
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"subscribe","id":2,"url":"/items"}"#.to_owned(),
+        ))
+        .unwrap();
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"subscribe","id":3,"url":"/items"}"#.to_owned(),
+        ))
+        .unwrap();
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        assert!(matches!(
+            outgoing.recv().await,
+            Some(FakeOut::Close(CloseClass::Retryable))
+        ));
+        session.await.unwrap();
+    })
+    .await;
+    assert!(ended.is_ok(), "session deadlocked during shutdown");
+    assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 6);
+    assert_eq!(projections.load(std::sync::atomic::Ordering::SeqCst), 3);
+    assert_eq!(listeners.load(std::sync::atomic::Ordering::SeqCst), 3);
+    assert!(admission.try_acquire("anon", 1).is_ok());
+}
+
+#[tokio::test(start_paused = true)]
+async fn socket_releases_projection_resources_at_the_lease_bound() {
+    let admission = SocketAdmission::new();
+    let projections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let listeners = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let router = std::sync::Arc::new(
+        LiveRouter::new()
+            .route("/items", tracked_projection)
+            .unwrap(),
+    );
+    let (socket, incoming, mut outgoing) = session_pair();
+    let session = tokio::spawn(super::socket::run_session(
+        socket,
+        TrackedLive {
+            projections: projections.clone(),
+            listeners: listeners.clone(),
+        },
+        router,
+        PermitGuard {
+            admission: admission.clone(),
+        },
+        LiveSocketConfig::default(),
+        axum::http::Extensions::new(),
+    ));
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"subscribe","id":1,"url":"/items"}"#.to_owned(),
+        ))
+        .unwrap();
+    assert!(matches!(outgoing.recv().await, Some(FakeOut::Binary(_))));
+    tokio::time::advance(std::time::Duration::from_secs(LEASE_SECONDS)).await;
+    assert!(matches!(
+        outgoing.recv().await,
+        Some(FakeOut::Close(CloseClass::LeaseExpiry))
+    ));
+    session.await.unwrap();
+    assert_released(&projections, &listeners, &admission);
+}
+
+#[tokio::test]
+async fn socket_releases_resources_after_peer_closure_during_an_active_refresh() {
+    let admission = SocketAdmission::new();
+    let started = std::sync::Arc::new(Notify::new());
+    let waiting = started.notified();
+    let projections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let listeners = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let router = std::sync::Arc::new(LiveRouter::new().route("/items", held_refresh).unwrap());
+    let (socket, incoming, _outgoing) = session_pair();
+    let session = tokio::spawn(super::socket::run_session(
+        socket,
+        RefreshHold {
+            started: started.clone(),
+            projections: projections.clone(),
+            listeners: listeners.clone(),
+        },
+        router,
+        PermitGuard {
+            admission: admission.clone(),
+        },
+        LiveSocketConfig::default(),
+        axum::http::Extensions::new(),
+    ));
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"subscribe","id":1,"url":"/items"}"#.to_owned(),
+        ))
+        .unwrap();
+    waiting.await;
+    incoming.send(super::socket::Incoming::Close).unwrap();
+    session.await.unwrap();
+    assert_released(&projections, &listeners, &admission);
+}
+
+#[tokio::test]
+async fn socket_releases_resources_when_cancelled_during_an_active_refresh() {
+    let admission = SocketAdmission::new();
+    let started = std::sync::Arc::new(Notify::new());
+    let waiting = started.notified();
+    let projections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let listeners = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let router = std::sync::Arc::new(LiveRouter::new().route("/items", held_refresh).unwrap());
+    let (socket, incoming, _outgoing) = session_pair();
+    let session = tokio::spawn(super::socket::run_session(
+        socket,
+        RefreshHold {
+            started: started.clone(),
+            projections: projections.clone(),
+            listeners: listeners.clone(),
+        },
+        router,
+        PermitGuard {
+            admission: admission.clone(),
+        },
+        LiveSocketConfig::default(),
+        axum::http::Extensions::new(),
+    ));
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"subscribe","id":1,"url":"/items"}"#.to_owned(),
+        ))
+        .unwrap();
+    waiting.await;
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"unsubscribe","id":1}"#.to_owned(),
+        ))
+        .unwrap();
+    incoming.send(super::socket::Incoming::Close).unwrap();
+    session.await.unwrap();
+    assert_released(&projections, &listeners, &admission);
+}
