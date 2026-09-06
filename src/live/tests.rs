@@ -6,7 +6,7 @@ use axum::{
 use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{Notify, broadcast, mpsc};
 use tower::ServiceExt;
 
 use crate::{
@@ -816,6 +816,280 @@ async fn socket_closes_before_exceeding_the_subscription_limit() {
         ))
         .unwrap();
     assert!(matches!(outgoing.recv().await, Some(FakeOut::Binary(_))));
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"subscribe","id":2,"url":"/items"}"#.to_owned(),
+        ))
+        .unwrap();
+    assert!(matches!(
+        outgoing.recv().await,
+        Some(FakeOut::Close(CloseClass::Protocol))
+    ));
+    session.await.unwrap();
+}
+
+#[derive(Clone)]
+struct PendingBindGuard {
+    admission: SocketAdmission<&'static str>,
+    acquired: std::sync::Arc<Notify>,
+}
+
+impl LiveGuard for PendingBindGuard {
+    type Connection = ();
+    type Context = ();
+
+    async fn bind(
+        &self,
+        _extensions: &axum::http::Extensions,
+    ) -> Result<Self::Connection, GuardFailure> {
+        let _permit = self.admission.try_acquire("anon", 1).unwrap();
+        self.acquired.notify_one();
+        std::future::pending().await
+    }
+
+    async fn revalidate(&self, _connection: &Self::Connection) -> Result<(), GuardFailure> {
+        Ok(())
+    }
+}
+
+struct PermitConn {
+    _permit: crate::live::AdmissionPermit<&'static str>,
+}
+
+#[derive(Clone)]
+struct PermitGuard {
+    admission: SocketAdmission<&'static str>,
+}
+
+impl LiveGuard for PermitGuard {
+    type Connection = PermitConn;
+    type Context = ();
+
+    async fn bind(
+        &self,
+        _extensions: &axum::http::Extensions,
+    ) -> Result<Self::Connection, GuardFailure> {
+        Ok(PermitConn {
+            _permit: self.admission.try_acquire("anon", 1).unwrap(),
+        })
+    }
+
+    async fn revalidate(&self, _connection: &Self::Connection) -> Result<(), GuardFailure> {
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct PendingRevalidateGuard;
+
+impl LiveGuard for PendingRevalidateGuard {
+    type Connection = ();
+    type Context = ();
+
+    async fn bind(
+        &self,
+        _extensions: &axum::http::Extensions,
+    ) -> Result<Self::Connection, GuardFailure> {
+        Ok(())
+    }
+
+    async fn revalidate(&self, _connection: &Self::Connection) -> Result<(), GuardFailure> {
+        std::future::pending().await
+    }
+}
+
+#[derive(Clone)]
+struct FactoryGate {
+    started: std::sync::Arc<Notify>,
+    release: std::sync::Arc<Notify>,
+}
+
+async fn gated_projection(
+    State(gate): State<FactoryGate>,
+) -> Result<LiveProjection<()>, LiveReject> {
+    gate.started.notify_one();
+    gate.release.notified().await;
+    Ok(LiveProjection::new(
+        futures_util::stream::pending(),
+        |_ctx| async { Ok(children_patch("item-results", "late")) },
+    ))
+}
+
+#[tokio::test(start_paused = true)]
+async fn socket_cancels_a_pending_bind_at_the_lease_bound() {
+    let admission = SocketAdmission::new();
+    let acquired = std::sync::Arc::new(Notify::new());
+    let waiting = acquired.notified();
+    let guard = PendingBindGuard {
+        admission: admission.clone(),
+        acquired: acquired.clone(),
+    };
+    let (closed_tx, mut closed_rx) = mpsc::unbounded_channel();
+    let socket = LeaseSocket {
+        pong_pending: false,
+        closed: closed_tx,
+    };
+    let router = std::sync::Arc::new(LiveRouter::new());
+    let session = tokio::spawn(super::socket::run_session(
+        socket,
+        (),
+        router,
+        guard,
+        LiveSocketConfig::default(),
+        axum::http::Extensions::new(),
+    ));
+    waiting.await;
+    assert!(admission.try_acquire("anon", 1).is_err());
+    tokio::time::advance(std::time::Duration::from_secs(LEASE_SECONDS)).await;
+    assert_eq!(closed_rx.recv().await, Some(CloseClass::LeaseExpiry));
+    session.await.unwrap();
+    assert!(admission.try_acquire("anon", 1).is_ok());
+}
+
+#[tokio::test(start_paused = true)]
+async fn socket_cancels_a_pending_factory_at_the_lease_bound() {
+    let admission = SocketAdmission::new();
+    let gate = FactoryGate {
+        started: std::sync::Arc::new(Notify::new()),
+        release: std::sync::Arc::new(Notify::new()),
+    };
+    let started = gate.started.notified();
+    let router = std::sync::Arc::new(LiveRouter::new().route("/items", gated_projection).unwrap());
+    let (socket, incoming, mut outgoing) = session_pair();
+    let session = tokio::spawn(super::socket::run_session(
+        socket,
+        gate.clone(),
+        router,
+        PermitGuard {
+            admission: admission.clone(),
+        },
+        LiveSocketConfig::default(),
+        axum::http::Extensions::new(),
+    ));
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"subscribe","id":1,"url":"/items"}"#.to_owned(),
+        ))
+        .unwrap();
+    started.await;
+    assert!(admission.try_acquire("anon", 1).is_err());
+    tokio::time::advance(std::time::Duration::from_secs(HEARTBEAT_SECONDS)).await;
+    assert!(matches!(outgoing.recv().await, Some(FakeOut::Ping)));
+    incoming.send(super::socket::Incoming::Pong).unwrap();
+    tokio::time::advance(std::time::Duration::from_secs(
+        LEASE_SECONDS - HEARTBEAT_SECONDS,
+    ))
+    .await;
+    loop {
+        match outgoing.recv().await {
+            Some(FakeOut::Close(class)) => {
+                assert_eq!(class, CloseClass::LeaseExpiry);
+                break;
+            }
+            Some(FakeOut::Ping) => {}
+            Some(FakeOut::Binary(_)) => panic!("late outbound patch"),
+            None => panic!("socket ended without lease close"),
+        }
+    }
+    gate.release.notify_one();
+    session.await.unwrap();
+    assert!(outgoing.try_recv().is_err());
+    assert!(admission.try_acquire("anon", 1).is_ok());
+}
+
+#[tokio::test(start_paused = true)]
+async fn socket_reaches_the_lease_bound_during_pending_revalidation() {
+    let router = std::sync::Arc::new(LiveRouter::new());
+    let (socket, _incoming, mut outgoing) = session_pair();
+    let session = tokio::spawn(super::socket::run_session(
+        socket,
+        (),
+        router,
+        PendingRevalidateGuard,
+        LiveSocketConfig::default(),
+        axum::http::Extensions::new(),
+    ));
+    tokio::time::advance(std::time::Duration::from_secs(HEARTBEAT_SECONDS)).await;
+    assert!(matches!(outgoing.recv().await, Some(FakeOut::Ping)));
+    tokio::time::advance(std::time::Duration::from_secs(
+        LEASE_SECONDS - HEARTBEAT_SECONDS,
+    ))
+    .await;
+    assert!(matches!(
+        outgoing.recv().await,
+        Some(FakeOut::Close(CloseClass::LeaseExpiry))
+    ));
+    session.await.unwrap();
+}
+
+#[tokio::test]
+async fn socket_unsubscribe_cancels_the_factory_and_releases_its_slot() {
+    let gate = FactoryGate {
+        started: std::sync::Arc::new(Notify::new()),
+        release: std::sync::Arc::new(Notify::new()),
+    };
+    let started = gate.started.notified();
+    let router = std::sync::Arc::new(LiveRouter::new().route("/items", gated_projection).unwrap());
+    let (socket, incoming, mut outgoing) = session_pair();
+    let session = tokio::spawn(super::socket::run_session(
+        socket,
+        gate.clone(),
+        router,
+        UnitGuard,
+        LiveSocketConfig::default().max_subscriptions(1).unwrap(),
+        axum::http::Extensions::new(),
+    ));
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"subscribe","id":1,"url":"/items"}"#.to_owned(),
+        ))
+        .unwrap();
+    started.await;
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"unsubscribe","id":1}"#.to_owned(),
+        ))
+        .unwrap();
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"subscribe","id":2,"url":"/items"}"#.to_owned(),
+        ))
+        .unwrap();
+    gate.started.notified().await;
+    gate.release.notify_one();
+    let Some(FakeOut::Binary(bytes)) = outgoing.recv().await else {
+        panic!("replacement subscription did not produce a patch");
+    };
+    assert_eq!(&bytes[..SUBSCRIPTION_HEADER_BYTES], &2u32.to_be_bytes());
+    incoming.send(super::socket::Incoming::Close).unwrap();
+    session.await.unwrap();
+    assert!(outgoing.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn socket_counts_a_pending_factory_against_subscription_admission() {
+    let gate = FactoryGate {
+        started: std::sync::Arc::new(Notify::new()),
+        release: std::sync::Arc::new(Notify::new()),
+    };
+    let started = gate.started.notified();
+    let router = std::sync::Arc::new(LiveRouter::new().route("/items", gated_projection).unwrap());
+    let (socket, incoming, mut outgoing) = session_pair();
+    let config = LiveSocketConfig::default().max_subscriptions(1).unwrap();
+    let session = tokio::spawn(super::socket::run_session(
+        socket,
+        gate.clone(),
+        router,
+        UnitGuard,
+        config,
+        axum::http::Extensions::new(),
+    ));
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"subscribe","id":1,"url":"/items"}"#.to_owned(),
+        ))
+        .unwrap();
+    started.await;
     incoming
         .send(super::socket::Incoming::Text(
             r#"{"v":"1","type":"subscribe","id":2,"url":"/items"}"#.to_owned(),

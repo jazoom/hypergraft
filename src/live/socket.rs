@@ -22,9 +22,9 @@ use tokio::{
 
 use crate::{
     live::{
-        CloseClass, GuardFailure, InstantiateError, LiveEndpoint, LiveGuard, LiveProjection,
-        LiveRouter, LiveSocketConfig, MAX_CONTROL_MESSAGE_BYTES, MAX_INBOUND_CONTROLS,
-        MAX_OUTBOUND_BYTES, MAX_OUTBOUND_MESSAGES, ProjectionError, SUBPROTOCOL,
+        CloseClass, InstantiateError, LiveEndpoint, LiveGuard, LiveProjection, LiveRouter,
+        LiveSocketConfig, MAX_CONTROL_MESSAGE_BYTES, MAX_INBOUND_CONTROLS, MAX_OUTBOUND_BYTES,
+        MAX_OUTBOUND_MESSAGES, ProjectionError, SUBPROTOCOL,
         codec::{ControlError, ControlMessage, parse_control},
         endpoint::offered_subprotocol,
     },
@@ -175,11 +175,22 @@ pub(crate) async fn run_session<S, G, Sock>(
     G: LiveGuard,
     Sock: FrameSocket,
 {
-    let connection = match guard.bind(&upgrade_extensions).await {
-        Ok(connection) => Arc::new(connection),
-        Err(failure) => {
-            let _ = socket.close(failure.close_class()).await;
+    // The advertised lease covers bind. A ready deadline must win over later work.
+    let lease = tokio::time::sleep(Duration::from_secs(crate::live::LEASE_SECONDS));
+    tokio::pin!(lease);
+
+    let connection = tokio::select! {
+        biased;
+        _ = &mut lease => {
+            let _ = socket.close(CloseClass::LeaseExpiry).await;
             return;
+        }
+        result = guard.bind(&upgrade_extensions) => match result {
+            Ok(connection) => Arc::new(connection),
+            Err(failure) => {
+                let _ = socket.close(failure.close_class()).await;
+                return;
+            }
         }
     };
     let heartbeat_period = Duration::from_secs(crate::live::HEARTBEAT_SECONDS);
@@ -188,14 +199,14 @@ pub(crate) async fn run_session<S, G, Sock>(
         heartbeat_period,
     );
     heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    let lease = tokio::time::sleep(Duration::from_secs(crate::live::LEASE_SECONDS));
-    tokio::pin!(lease);
 
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<OutboundPatch>(config.max_subscriptions);
     let (close_tx, mut close_rx) = mpsc::channel::<CloseClass>(1);
     let (retired_tx, mut retired_rx) = mpsc::unbounded_channel::<u32>();
+    let (revalidate_tx, mut revalidate_rx) = mpsc::unbounded_channel::<Result<(), CloseClass>>();
     let refreshes = Arc::new(Semaphore::new(config.max_concurrent_refreshes));
     let mut subscriptions: HashMap<u32, SubscriptionTask> = HashMap::new();
+    let mut heartbeat_revalidate: Option<SubscriptionTask> = None;
     let mut used_ids = HashSet::new();
     let mut inbound_controls = 0usize;
     let mut outbound_messages = 0usize;
@@ -204,9 +215,20 @@ pub(crate) async fn run_session<S, G, Sock>(
 
     let end = loop {
         tokio::select! {
+            biased;
             _ = &mut lease => break SessionEnd::Close(CloseClass::LeaseExpiry),
             class = close_rx.recv() => {
                 break SessionEnd::Close(class.unwrap_or(CloseClass::Retryable));
+            }
+            result = revalidate_rx.recv() => {
+                if let Some(task) = heartbeat_revalidate.take() {
+                    let _ = task.join.await;
+                }
+                match result {
+                    Some(Err(class)) => break SessionEnd::Close(class),
+                    Some(Ok(())) => {}
+                    None => break SessionEnd::Close(CloseClass::Retryable),
+                }
             }
             retired = retired_rx.recv() => {
                 if let Some(id) = retired
@@ -227,9 +249,12 @@ pub(crate) async fn run_session<S, G, Sock>(
                     break SessionEnd::Close(CloseClass::Retryable);
                 }
                 pong_outstanding = true;
-                match guard.revalidate(connection.as_ref()).await {
-                    Ok(_) => {}
-                    Err(failure) => break SessionEnd::Close(failure.close_class()),
+                if heartbeat_revalidate.is_none() {
+                    heartbeat_revalidate = Some(spawn_revalidate(
+                        guard.clone(),
+                        connection.clone(),
+                        revalidate_tx.clone(),
+                    ));
                 }
             }
             outbound = outbound_rx.recv() => {
@@ -280,7 +305,7 @@ pub(crate) async fn run_session<S, G, Sock>(
                                 if subscriptions.len() >= config.max_subscriptions {
                                     break SessionEnd::Close(CloseClass::Protocol);
                                 }
-                                match spawn_subscription(SpawnRequest {
+                                let task = spawn_subscription(SpawnRequest {
                                     id,
                                     url,
                                     host: host.clone(),
@@ -292,17 +317,8 @@ pub(crate) async fn run_session<S, G, Sock>(
                                     outbound: outbound_tx.clone(),
                                     close: close_tx.clone(),
                                     retired: retired_tx.clone(),
-                                })
-                                .await
-                                {
-                                    Ok(task) => {
-                                        subscriptions.insert(id, task);
-                                    }
-                                    Err(SubscribeStart::Ignore) => {}
-                                    Err(SubscribeStart::Close(class)) => {
-                                        break SessionEnd::Close(class);
-                                    }
-                                }
+                                });
+                                subscriptions.insert(id, task);
                             }
                         }
                     }
@@ -311,7 +327,11 @@ pub(crate) async fn run_session<S, G, Sock>(
         }
     };
 
-    let mut joins = Vec::with_capacity(subscriptions.len());
+    let mut joins = Vec::with_capacity(subscriptions.len() + 1);
+    if let Some(task) = heartbeat_revalidate.take() {
+        let _ = task.cancel.send(());
+        joins.push(task.join);
+    }
     for (_, task) in subscriptions {
         let _ = task.cancel.send(());
         joins.push(task.join);
@@ -351,40 +371,81 @@ struct SpawnRequest<S, G: LiveGuard> {
     retired: mpsc::UnboundedSender<u32>,
 }
 
-async fn spawn_subscription<S, G>(
-    request: SpawnRequest<S, G>,
-) -> Result<SubscriptionTask, SubscribeStart>
+fn spawn_subscription<S, G>(request: SpawnRequest<S, G>) -> SubscriptionTask
 where
     S: Clone + Send + Sync + 'static,
     G: LiveGuard,
 {
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let join = tokio::spawn(run_subscription(request, cancel_rx));
+    SubscriptionTask {
+        cancel: cancel_tx,
+        join,
+    }
+}
+
+fn spawn_revalidate<G>(
+    guard: G,
+    connection: Arc<G::Connection>,
+    results: mpsc::UnboundedSender<Result<(), CloseClass>>,
+) -> SubscriptionTask
+where
+    G: LiveGuard,
+{
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let join = tokio::spawn(async move {
+        tokio::select! {
+            biased;
+            _ = cancel_rx => {}
+            result = guard.revalidate(connection.as_ref()) => {
+                let _ = results.send(match result {
+                    Ok(_) => Ok(()),
+                    Err(failure) => Err(failure.close_class()),
+                });
+            }
+        }
+    });
+    SubscriptionTask {
+        cancel: cancel_tx,
+        join,
+    }
+}
+
+async fn run_subscription<S, G>(request: SpawnRequest<S, G>, mut cancel: oneshot::Receiver<()>)
+where
+    S: Clone + Send + Sync + 'static,
+    G: LiveGuard,
+{
+    let projection = tokio::select! {
+        biased;
+        _ = &mut cancel => return,
+        result = instantiate(&request) => match result {
+            Ok(projection) => projection,
+            Err(SubscribeStart::Ignore) => {
+                let _ = request.retired.send(request.id);
+                return;
+            }
+            Err(SubscribeStart::Close(class)) => {
+                tokio::select! {
+                    biased;
+                    _ = &mut cancel => return,
+                    _ = request.close.send(class) => {}
+                }
+                let _ = request.retired.send(request.id);
+                return;
+            }
+        }
+    };
     let SpawnRequest {
         id,
-        url,
-        host,
-        router,
         guard,
-        extensions,
         connection,
         refreshes,
         outbound,
         close,
         retired,
+        ..
     } = request;
-    let context = match guard.revalidate(connection.as_ref()).await {
-        Ok(context) => context,
-        Err(GuardFailure::Terminal) => return Err(SubscribeStart::Close(CloseClass::Terminal)),
-        Err(GuardFailure::Retryable) => return Err(SubscribeStart::Close(CloseClass::Retryable)),
-    };
-    let projection = match router.dispatch(&host, &url, extensions, context).await {
-        Ok(projection) => projection,
-        Err(
-            InstantiateError::Unregistered | InstantiateError::Invalid | InstantiateError::Retire,
-        ) => {
-            return Err(SubscribeStart::Ignore);
-        }
-    };
-    let (cancel_tx, cancel_rx) = oneshot::channel();
     let runtime = ProjectionRuntime {
         connection,
         refreshes,
@@ -392,11 +453,35 @@ where
         close,
         retired,
     };
-    let join = tokio::spawn(run_projection(id, projection, guard, runtime, cancel_rx));
-    Ok(SubscriptionTask {
-        cancel: cancel_tx,
-        join,
-    })
+    run_projection(id, projection, guard, runtime, cancel).await;
+}
+
+async fn instantiate<S, G>(
+    request: &SpawnRequest<S, G>,
+) -> Result<LiveProjection<G::Context>, SubscribeStart>
+where
+    S: Clone + Send + Sync + 'static,
+    G: LiveGuard,
+{
+    let context = match request.guard.revalidate(request.connection.as_ref()).await {
+        Ok(context) => context,
+        Err(failure) => return Err(SubscribeStart::Close(failure.close_class())),
+    };
+    match request
+        .router
+        .dispatch(
+            &request.host,
+            &request.url,
+            request.extensions.clone(),
+            context,
+        )
+        .await
+    {
+        Ok(projection) => Ok(projection),
+        Err(
+            InstantiateError::Unregistered | InstantiateError::Invalid | InstantiateError::Retire,
+        ) => Err(SubscribeStart::Ignore),
+    }
 }
 
 async fn run_projection<C, G>(

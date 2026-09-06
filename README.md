@@ -24,6 +24,8 @@ A connected `form[data-graft][data-graft-live]` describes one GET projection. Ea
 
 Client controls use bounded JSON. Server patches use binary frames with a 4-byte big-endian subscription header and one UTF-8 envelope. Live envelopes cannot carry titles, navigation, locations, phases or statuses. A five-minute lease permits 4,096 controls, 4,096 patch messages and 128 MiB of patch data. Hypergraft sends a ping every 15 seconds and requires a pong. The browser reconnects after lease expiry or a retryable close.
 
+The lease timer starts before host bind work. Expiry cancels a pending bind, a pending factory and a pending revalidation. The deadline cancels asynchronous host futures that yield. It cannot interrupt host code that does not yield.
+
 Retry delays use bounded exponential backoff with jitter from 1 to 30 seconds. Protocol and terminal closes do not reconnect.
 
 ## Rust host boundary
