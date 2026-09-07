@@ -20,10 +20,12 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
-            - uses: actions/checkout@v4
-            - uses: jdx/mise-action@v2
+            - uses: actions/checkout@v7
+            - uses: jdx/mise-action@v4
             - name: Install JavaScript dependencies
               run: pnpm install --frozen-lockfile
+            - name: Install Rust check components
+              run: rustup component add rustfmt clippy
             - name: Check formatting
               run: |
                   taplo format --check
@@ -50,8 +52,8 @@ jobs:
             matrix:
                 browser: [chromium, firefox, webkit]
         steps:
-            - uses: actions/checkout@v4
-            - uses: jdx/mise-action@v2
+            - uses: actions/checkout@v7
+            - uses: jdx/mise-action@v4
             - name: Install JavaScript dependencies
               run: pnpm install --frozen-lockfile
             - name: Install the selected Playwright browser
