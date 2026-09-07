@@ -1,5 +1,7 @@
 # Security policy
 
+Hypergraft is an unpublished source preview. The source-preview Rust API and browser API remain experimental. Those APIs can change without a new protocol version. Protocol version 1 is the versioned wire contract.
+
 ## Supported versions
 
 Only the current `main` branch receives security fixes. Hypergraft has no public package release.
