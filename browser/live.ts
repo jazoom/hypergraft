@@ -1,5 +1,10 @@
 import { emitDiagnostic, HypergraftError } from "./diagnostics";
-import { emitLivePatch } from "./events";
+import {
+    emitLivePatch,
+    emitLiveStateChange,
+    type LiveCloseClassification,
+    type LiveStateChangeDetail,
+} from "./events";
 import {
     apply,
     MAX_RESPONSE_BYTES,
@@ -30,8 +35,7 @@ export const LIVE_CLOSE = {
 
 export type LiveCloseCode = (typeof LIVE_CLOSE)[keyof typeof LIVE_CLOSE];
 
-type LiveMode =
-    "idle" | "connecting" | "open" | "reconnecting" | "suspended" | "stopped";
+type LiveMode = LiveStateChangeDetail["state"];
 
 type Subscription = {
     id: number;
@@ -132,6 +136,24 @@ function reconnects(code: number): boolean {
     );
 }
 
+function classifyClose(code: number): LiveCloseClassification | undefined {
+    switch (code) {
+        case LIVE_CLOSE.retryable:
+        case 1006:
+            return "retryable";
+        case LIVE_CLOSE.terminal:
+            return "terminal";
+        case LIVE_CLOSE.protocol:
+            return "protocol";
+        case LIVE_CLOSE.leaseExpiry:
+            return "leaseExpiry";
+        case LIVE_CLOSE.resynchronisation:
+            return "resynchronisation";
+        default:
+            return undefined;
+    }
+}
+
 function retryDelay(attempt: number): number {
     const exponential = Math.min(
         LIVE_RETRY_MAX_SECONDS,
@@ -175,6 +197,7 @@ export function createLiveController(
     let nextId = 0;
     let socket: WebSocket | null = null;
     let mode: LiveMode = "idle";
+    let published = false;
     let retryAttempt = 0;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let leaseTimer: ReturnType<typeof setTimeout> | undefined;
@@ -202,6 +225,41 @@ export function createLiveController(
         for (const sub of subs.values()) sub.id = 0;
     };
 
+    const liveStateDetail = (
+        state: LiveMode,
+        closeCode?: number,
+        retryDelayMs?: number,
+    ): LiveStateChangeDetail => {
+        const close =
+            closeCode === undefined ? undefined : classifyClose(closeCode);
+        switch (state) {
+            case "reconnecting":
+                return {
+                    state,
+                    retryDelayMs: retryDelayMs ?? 0,
+                    close: close ?? "retryable",
+                };
+            case "stopped":
+                return close === undefined ? { state } : { state, close };
+            case "idle":
+            case "connecting":
+            case "open":
+            case "suspended":
+                return { state };
+        }
+    };
+
+    const announce = (
+        next: LiveMode,
+        closeCode?: number,
+        retryDelayMs?: number,
+    ) => {
+        if (published && mode === next) return;
+        mode = next;
+        published = true;
+        emitLiveStateChange(liveStateDetail(next, closeCode, retryDelayMs));
+    };
+
     const closeSocket = (code: LiveCloseCode) => {
         const current = socket;
         if (!current) return;
@@ -212,7 +270,8 @@ export function createLiveController(
             socket = null;
             clearLease();
             clearIdentifiers();
-            mode = code === LIVE_CLOSE.protocol ? "stopped" : "idle";
+            if (code === LIVE_CLOSE.protocol) announce("stopped", code);
+            else announce("idle");
         }
     };
 
@@ -454,19 +513,20 @@ export function createLiveController(
                 unsafe: false,
                 url: endpoint,
             });
-            mode = "stopped";
+            announce("stopped");
             return;
         }
         ws.binaryType = "arraybuffer";
         socket = ws;
-        mode = "connecting";
+        announce("connecting");
         ws.addEventListener("open", () => {
             if (generation !== expectedGeneration || socket !== ws) return;
             if (ws.protocol !== LIVE_SUBPROTOCOL || ws.extensions !== "") {
                 reportSocketProtocol("protocol");
                 return;
             }
-            mode = "open";
+            announce("open");
+            if (generation !== expectedGeneration || socket !== ws) return;
             clearLease();
             leaseTimer = setTimeout(
                 () => closeSocket(LIVE_CLOSE.leaseExpiry),
@@ -484,7 +544,6 @@ export function createLiveController(
             clearIdentifiers();
             if (mode === "stopped" || mode === "suspended") return;
             if (reconnects(event.code)) {
-                mode = "reconnecting";
                 const delay = retryDelay(retryAttempt);
                 retryAttempt += 1;
                 clearRetry();
@@ -492,9 +551,11 @@ export function createLiveController(
                     retryTimer = undefined;
                     if (mode === "reconnecting") connect();
                 }, delay);
+                // A host listener can stop or suspend the runtime synchronously.
+                announce("reconnecting", event.code, delay);
                 return;
             }
-            mode = "stopped";
+            announce("stopped", event.code);
         });
     };
 
@@ -553,7 +614,7 @@ export function createLiveController(
                     element: desired[0],
                 });
             }
-            mode = "stopped";
+            announce("stopped");
             return;
         }
         const desiredSet = new Set(desired);
@@ -579,7 +640,7 @@ export function createLiveController(
         if (subs.size === 0) {
             clearRetry();
             if (socket) abandonSocket();
-            mode = "idle";
+            announce("idle");
             return;
         }
         if (mode === "idle") connect();
@@ -615,7 +676,7 @@ export function createLiveController(
             if (subs.size === 0 && mode !== "suspended" && mode !== "stopped") {
                 clearRetry();
                 if (socket) abandonSocket();
-                mode = "idle";
+                announce("idle");
             }
         },
         restoreForm(form, sequence) {
@@ -627,16 +688,16 @@ export function createLiveController(
             if (mode === "stopped" || mode === "suspended") return;
             clearRetry();
             abandonSocket();
-            mode = "suspended";
+            announce("suspended");
         },
         resume() {
             if (mode !== "suspended") return;
-            mode = "idle";
+            announce("idle");
             retryAttempt = 0;
             reconcile();
         },
         stop() {
-            mode = "stopped";
+            if (mode !== "stopped" || !published) announce("stopped");
             clearRetry();
             observer.disconnect();
             abandonSocket();

@@ -4,6 +4,7 @@ export const LOCATION_CHANGE_EVENT = "hypergraft:locationchange";
 export const REQUEST_SETTLED_EVENT = "hypergraft:requestsettled";
 export const PROGRESS_EVENT = "hypergraft:progress";
 export const LIVE_PATCH_EVENT = "hypergraft:livepatch";
+export const LIVE_STATE_CHANGE_EVENT = "hypergraft:livestatechange";
 
 export type LocationChangeDetail = {
     url: string;
@@ -45,6 +46,28 @@ export type AppliedLivePatchDetail = {
     url: string;
     targetIds: readonly string[];
 };
+
+export type LiveCloseClassification =
+    "retryable" | "terminal" | "protocol" | "leaseExpiry" | "resynchronisation";
+
+/**
+ * Bounded live transport state. An open socket does not prove that a
+ * projection is current. Retry delay is present only while a reconnect
+ * timer exists. Close classification is present only when a recognised
+ * close caused the transition. The event never carries payloads, raw
+ * close reasons, request URLs or form values.
+ */
+export type LiveStateChangeDetail =
+    | { state: "idle" }
+    | { state: "connecting" }
+    | { state: "open" }
+    | {
+          state: "reconnecting";
+          retryDelayMs: number;
+          close: LiveCloseClassification;
+      }
+    | { state: "suspended" }
+    | { state: "stopped"; close?: LiveCloseClassification };
 
 export type ProgressDetail = {
     requestKind: "patch";
@@ -97,4 +120,15 @@ export function listenForLivePatches(
         listener((event as CustomEvent<AppliedLivePatchDetail>).detail);
     addEventListener(LIVE_PATCH_EVENT, handler);
     return () => removeEventListener(LIVE_PATCH_EVENT, handler);
+}
+export function emitLiveStateChange(detail: LiveStateChangeDetail): void {
+    dispatchEvent(new CustomEvent(LIVE_STATE_CHANGE_EVENT, { detail }));
+}
+export function listenForLiveStateChanges(
+    listener: (detail: LiveStateChangeDetail) => void,
+): () => void {
+    const handler = (event: Event) =>
+        listener((event as CustomEvent<LiveStateChangeDetail>).detail);
+    addEventListener(LIVE_STATE_CHANGE_EVENT, handler);
+    return () => removeEventListener(LIVE_STATE_CHANGE_EVENT, handler);
 }

@@ -87,6 +87,23 @@ Safe failures are tracked by source form, not by a request lane: a successful re
 
 `hypergraft:diagnostic` is a typed, secret-safe fact emitted before fallback or feedback. Its closed reasons cover transport, redirect, byte limit, UTF-8, protocol, target/content and patch-application failures, plus invalid live-form, invalid command-form, unknown-island and feedback configuration. Request diagnostics are bounded to request classification, URL, originating element and, where already validated, target identifier; configuration diagnostics carry only their closed, relevant element or island-name facts. Diagnostics never expose response bodies, form values, server diagnostics or arbitrary exceptions. Hosts may listen in development; production logging and presentation remain host policy.
 
+Hosts register `listenForLiveStateChanges` before `startHypergraft`. The runtime then emits the first live transport state. A replacement runtime that inherits a pending or uncertain command emits `suspended` first. It does not emit `connecting` or `open` before the required reload.
+
+`hypergraft:livestatechange` reports only transport state. Its closed state union contains:
+
+- `idle`
+- `connecting`
+- `open`
+- `reconnecting`
+- `suspended`
+- `stopped`
+
+Only `reconnecting` includes `retryDelayMs`, between 1,000 and 30,000 milliseconds, while a reconnect timer exists. The detail includes `close` only when a recognised close caused the transition. The event excludes untrusted data and request details.
+
+`suspended` is an intentional pause during a command or navigation. `reconnecting` is a retryable disconnection. `stopped` is terminal. An open socket does not prove that every projection is current. `hypergraft:livepatch` remains the evidence that a particular patch applied.
+
+Runtime teardown emits `stopped` unless the transport already reports that state. Later socket events and repeated teardown do not emit another state.
+
 ## Islands
 
 `observeIslands` scans host-authored `data-island` roots and does not add binding attributes. An initialiser receives its root and an `IslandMountContext` with one lifetime `AbortSignal`. Hypergraft aborts the signal before destruction after removal, a name change or runtime teardown. Event listeners can use the signal and return `void`: `root.addEventListener("click", handler, { signal: context.signal })`. Other initialisers can return an `IslandInstance`, a cleanup callback or `void`. Mount, reconciliation and destruction failures are isolated per island. Connected roots mount once. Applied patches scan their targets before reconciliation. Location changes scan the document before reconciliation. A retained node that gains `data-island` through morph mounts after the patch. Moved roots keep their instances. Disconnected roots are cleaned up.
@@ -365,6 +382,7 @@ Register this initialiser with `observeIslands({ "position-preview": initPositio
 import {
     bindTransportFeedback,
     listenForDiagnostics,
+    listenForLiveStateChanges,
     startHypergraft,
 } from "hypergraft/browser";
 
@@ -373,6 +391,10 @@ const stopDiagnostics = import.meta.env.DEV
           console.warn("Hypergraft diagnostic", detail),
       )
     : () => {};
+const stopLiveState = listenForLiveStateChanges((detail) => {
+    // An open socket does not prove that every projection is current.
+    if (import.meta.env.DEV) console.info("Hypergraft live state", detail);
+});
 const bound = bindTransportFeedback(document.body);
 const stopRuntime = startHypergraft({
     feedback: bound.feedback,
@@ -383,6 +405,7 @@ const stopRuntime = startHypergraft({
 export function stopHostIntegration(): void {
     stopRuntime();
     bound.destroy();
+    stopLiveState();
     stopDiagnostics();
 }
 ```

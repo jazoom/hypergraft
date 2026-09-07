@@ -1,7 +1,12 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import fixture from "../protocol-v1.json";
-import { LIVE_PATCH_EVENT, type AppliedLivePatchDetail } from "./events";
+import {
+    LIVE_PATCH_EVENT,
+    listenForLiveStateChanges,
+    type AppliedLivePatchDetail,
+    type LiveStateChangeDetail,
+} from "./events";
 import {
     DEFAULT_LIVE_ENDPOINT,
     LIVE_CLOSE,
@@ -53,6 +58,11 @@ class MockSocket extends EventTarget {
         this.readyState = MockSocket.CLOSED;
         this.dispatchEvent(new CloseEvent("close", { code }));
     }
+    finishClose(code = this.closedWith ?? 1000, reason = "") {
+        this.closedWith = code;
+        this.readyState = MockSocket.CLOSED;
+        this.dispatchEvent(new CloseEvent("close", { code, reason }));
+    }
     receive(id: number, envelope: string) {
         const encoded = new TextEncoder().encode(envelope);
         const buffer = new ArrayBuffer(4 + encoded.byteLength);
@@ -84,9 +94,21 @@ function liveForm(id: string, action: string, target: string) {
 }
 
 let cleanup: (() => void) | undefined;
+let stopListeners: (() => void)[] = [];
+
+function recordLiveStates(): LiveStateChangeDetail[] {
+    const details: LiveStateChangeDetail[] = [];
+    stopListeners.push(
+        listenForLiveStateChanges((detail) => {
+            details.push(detail);
+        }),
+    );
+    return details;
+}
 
 beforeEach(() => {
     MockSocket.instances = [];
+    stopListeners = [];
     vi.stubGlobal("WebSocket", MockSocket);
     vi.stubGlobal("fetch", vi.fn());
     history.replaceState({}, "", "/");
@@ -96,6 +118,8 @@ beforeEach(() => {
 afterEach(() => {
     cleanup?.();
     cleanup = undefined;
+    for (const stop of stopListeners) stop();
+    stopListeners = [];
     resetHypergraftForTests();
     vi.unstubAllGlobals();
     vi.useRealTimers();
@@ -241,11 +265,18 @@ test("renews before it exceeds the inbound message budget", async () => {
 
 test("stops after a protocol frame from the server", async () => {
     liveForm("one", "/items", "item-results");
+    const states = recordLiveStates();
     cleanup = startHypergraft();
     await vi.waitFor(() => expect(MockSocket.instances).toHaveLength(1));
     const socket = MockSocket.instances[0]!;
     socket.dispatchEvent(new MessageEvent("message", { data: "not binary" }));
     expect(socket.closedWith).toBe(LIVE_CLOSE.protocol);
+    expect(states.at(-1)).toEqual({ state: "stopped", close: "protocol" });
+    cleanup();
+    cleanup();
+    expect(states.filter((detail) => detail.state === "stopped")).toHaveLength(
+        1,
+    );
 });
 
 test("keeps a submitted live form retired until its GET settles", async () => {
@@ -383,14 +414,12 @@ test.each(["command", "navigation"])(
             new SubmitEvent("submit", { bubbles: true, cancelable: true }),
         );
         if (kind === "command")
-            document
-                .getElementById("command")!
-                .dispatchEvent(
-                    new SubmitEvent("submit", {
-                        bubbles: true,
-                        cancelable: true,
-                    }),
-                );
+            document.getElementById("command")!.dispatchEvent(
+                new SubmitEvent("submit", {
+                    bubbles: true,
+                    cancelable: true,
+                }),
+            );
         else document.getElementById("next")!.click();
         expect(form.hasAttribute("data-graft-pending")).toBe(false);
         resolveGet(
@@ -545,6 +574,180 @@ test("teardown closes the socket", async () => {
     cleanup();
     cleanup = undefined;
     expect(MockSocket.instances[0]!.readyState).toBe(MockSocket.CLOSED);
+});
+
+test("emits reconnect and teardown live state without duplicates", async () => {
+    vi.useFakeTimers();
+    liveForm("one", "/items", "item-results");
+    const states = recordLiveStates();
+    cleanup = startHypergraft();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(states).toEqual([{ state: "connecting" }, { state: "open" }]);
+    document.body.append(document.createElement("div"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(states).toEqual([{ state: "connecting" }, { state: "open" }]);
+    const first = MockSocket.instances[0]!;
+    first.close(LIVE_CLOSE.retryable);
+    const reconnect = states.at(-1);
+    expect(reconnect?.state).toBe("reconnecting");
+    if (reconnect?.state !== "reconnecting") return;
+    expect(reconnect.close).toBe("retryable");
+    expect(reconnect.retryDelayMs).toBeGreaterThanOrEqual(
+        LIVE_RETRY_MIN_SECONDS * 1000,
+    );
+    expect(reconnect.retryDelayMs).toBeLessThanOrEqual(
+        LIVE_RETRY_MAX_SECONDS * 1000,
+    );
+    await vi.advanceTimersByTimeAsync(LIVE_RETRY_MAX_SECONDS * 1000);
+    expect(states.at(-2)).toEqual({ state: "connecting" });
+    expect(states.at(-1)).toEqual({ state: "open" });
+    cleanup();
+    cleanup = undefined;
+    first.close(LIVE_CLOSE.retryable);
+    MockSocket.instances[1]?.close(LIVE_CLOSE.retryable);
+    await vi.advanceTimersByTimeAsync(LIVE_RETRY_MAX_SECONDS * 1000);
+    expect(states.at(-1)).toEqual({ state: "stopped" });
+    expect(states.filter((detail) => detail.state === "stopped")).toHaveLength(
+        1,
+    );
+    cleanup = startHypergraft();
+    cleanup();
+    cleanup = undefined;
+    expect(states.filter((detail) => detail.state === "stopped")).toHaveLength(
+        2,
+    );
+});
+
+test("emits reconnecting only after a delayed close event", async () => {
+    vi.useFakeTimers();
+    liveForm("one", "/items", "item-results");
+    const states = recordLiveStates();
+    cleanup = startHypergraft();
+    await vi.advanceTimersByTimeAsync(0);
+    const socket = MockSocket.instances[0]!;
+    expect(states).toEqual([{ state: "connecting" }, { state: "open" }]);
+    vi.spyOn(socket, "close").mockImplementation((code = 1000) => {
+        socket.readyState = MockSocket.CLOSING;
+        setTimeout(() => socket.finishClose(code, "private peer reason"), 25);
+    });
+    await vi.advanceTimersByTimeAsync(LIVE_LEASE_SECONDS * 1000);
+    expect(socket.readyState).toBe(MockSocket.CLOSING);
+    expect(states).toEqual([{ state: "connecting" }, { state: "open" }]);
+    await vi.advanceTimersByTimeAsync(25);
+    const reconnect = states.at(-1);
+    expect(reconnect).toEqual({
+        state: "reconnecting",
+        close: "leaseExpiry",
+        retryDelayMs: expect.any(Number),
+    });
+    if (reconnect?.state !== "reconnecting") return;
+    expect(reconnect.retryDelayMs).toBeGreaterThanOrEqual(
+        LIVE_RETRY_MIN_SECONDS * 1000,
+    );
+    expect(reconnect.retryDelayMs).toBeLessThanOrEqual(
+        LIVE_RETRY_MAX_SECONDS * 1000,
+    );
+});
+
+test.each(["open", "reconnecting"] as const)(
+    "teardown from a %s listener releases transport timers",
+    async (state) => {
+        vi.useFakeTimers();
+        liveForm("one", "/items", "item-results");
+        const states = recordLiveStates();
+        stopListeners.push(
+            listenForLiveStateChanges((detail) => {
+                if (detail.state === state) cleanup?.();
+            }),
+        );
+        cleanup = startHypergraft();
+        await vi.advanceTimersByTimeAsync(0);
+        const socket = MockSocket.instances[0]!;
+        if (state === "reconnecting") socket.finishClose(LIVE_CLOSE.retryable);
+        expect(states.at(-1)).toEqual({ state: "stopped" });
+        expect(vi.getTimerCount()).toBe(0);
+        socket.finishClose(LIVE_CLOSE.retryable);
+        await vi.advanceTimersByTimeAsync(LIVE_LEASE_SECONDS * 1000);
+        expect(MockSocket.instances).toHaveLength(1);
+        expect(
+            states.filter((detail) => detail.state === "stopped"),
+        ).toHaveLength(1);
+    },
+);
+
+test.each(["pending", "uncertain"] as const)(
+    "a replacement emits inherited %s suspension as its initial live state",
+    async (state) => {
+        vi.useFakeTimers();
+        vi.spyOn(location, "reload").mockImplementation(() => {});
+        liveForm("one", "/items", "item-results");
+        document.body.insertAdjacentHTML(
+            "beforeend",
+            '<form id="command" data-graft method="post" action="/save"></form>',
+        );
+        const first = recordLiveStates();
+        cleanup = startHypergraft();
+        await vi.advanceTimersByTimeAsync(0);
+        let resolve!: (response: Response) => void;
+        let reject!: (error: Error) => void;
+        vi.mocked(fetch).mockReturnValue(
+            new Promise((done, fail) => {
+                resolve = done;
+                reject = fail;
+            }),
+        );
+        document.getElementById("command")!.dispatchEvent(
+            new SubmitEvent("submit", {
+                bubbles: true,
+                cancelable: true,
+            }),
+        );
+        if (state === "uncertain") {
+            reject(new TypeError("network failed"));
+            await vi.advanceTimersByTimeAsync(0);
+        }
+        expect(first.at(-1)).toEqual({ state: "suspended" });
+        for (const stop of stopListeners) stop();
+        stopListeners = [];
+        const replacement = recordLiveStates();
+        cleanup = startHypergraft();
+        liveForm("two", "/other", "other-results");
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(replacement.slice(0, 2)).toEqual([
+            { state: "stopped" },
+            { state: "suspended" },
+        ]);
+        expect(
+            replacement.some(
+                (detail) =>
+                    detail.state === "connecting" || detail.state === "open",
+            ),
+        ).toBe(false);
+        if (state === "pending") {
+            resolve(
+                new Response(envelope("item-results", "Disposed"), {
+                    headers: { "content-type": MEDIA_TYPE },
+                }),
+            );
+            await vi.advanceTimersByTimeAsync(0);
+        }
+        cleanup();
+        cleanup();
+        cleanup = undefined;
+        expect(replacement.at(-1)).toEqual({ state: "stopped" });
+        expect(
+            replacement.filter((detail) => detail.state === "stopped"),
+        ).toHaveLength(2);
+    },
+);
+
+test("emits idle at startup when the document has no live form", async () => {
+    const states = recordLiveStates();
+    cleanup = startHypergraft();
+    expect(states).toEqual([{ state: "idle" }]);
+    document.body.append(document.createElement("div"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(states).toEqual([{ state: "idle" }]);
 });
 
 test("discovers at most 64 live forms", async () => {
