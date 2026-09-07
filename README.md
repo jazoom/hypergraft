@@ -387,7 +387,7 @@ export function stopHostIntegration(): void {
 }
 ```
 
-The host must provide trusted server rendering, authentication, authorisation, unsafe-method Origin checks, a nonce-compatible Content Security Policy and product-owned feedback markup. The Trusted Types policy is exported as `TRUSTED_TYPES_POLICY_NAME`; effective CSP compatibility remains an integration-test responsibility.
+The host must provide trusted server rendering, authentication, authorisation, unsafe-method Origin checks, a nonce-compatible Content Security Policy and product-owned feedback markup. Read [Security](docs/security.md) for the working CSP header, the Trusted Types policy and the single runtime copy boundary.
 
 ## Development setup
 

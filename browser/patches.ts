@@ -23,22 +23,26 @@ export const PHASES = ["progress", "final"] as const;
 export type PatchPhase = (typeof PHASES)[number];
 
 type TrustedPolicy = { createHTML(value: string): unknown };
-const trustedTypes = (
-    globalThis as typeof globalThis & {
-        trustedTypes?: {
-            createPolicy(
-                name: string,
-                rules: { createHTML(value: string): string },
-            ): TrustedPolicy;
-        };
-    }
-).trustedTypes;
-// This private passthrough policy grants the framework access to the parsing
-// sink. It does not sanitise or otherwise make application markup safe.
+type TrustedTypePolicyFactory = {
+    createPolicy(
+        name: string,
+        rules: { createHTML(value: string): string },
+    ): TrustedPolicy;
+};
+
 export const TRUSTED_TYPES_POLICY_NAME = "hypergraft";
-const policy = trustedTypes?.createPolicy(TRUSTED_TYPES_POLICY_NAME, {
-    createHTML: (value) => value,
-});
+// Cached only after a successful createPolicy in this module instance. The
+// private passthrough grants access to the HTML parsing sink. It does not
+// sanitise application markup, and imports must not create the policy.
+let policy: TrustedPolicy | undefined;
+
+function trustedTypeFactory(): TrustedTypePolicyFactory | undefined {
+    return (
+        globalThis as typeof globalThis & {
+            trustedTypes?: TrustedTypePolicyFactory;
+        }
+    ).trustedTypes;
+}
 
 export type ValidateContent = (fragment: DocumentFragment) => void;
 
@@ -76,6 +80,16 @@ function fail(
 }
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+function htmlForParser(text: string): string {
+    const factory = trustedTypeFactory();
+    if (!factory) return text;
+    if (!policy) {
+        policy = factory.createPolicy(TRUSTED_TYPES_POLICY_NAME, {
+            createHTML: (value) => value,
+        });
+    }
+    return policy.createHTML(text) as string;
 }
 function attributes(element: Element, allowed: Set<string>) {
     for (const attribute of element.attributes)
@@ -238,10 +252,7 @@ function parseEnvelope(
     const parser = new DOMParser();
     let parsed: Document;
     try {
-        parsed = parser.parseFromString(
-            (policy ? policy.createHTML(text) : text) as string,
-            "text/html",
-        );
+        parsed = parser.parseFromString(htmlForParser(text), "text/html");
     } catch (error) {
         fail("protocol", `unable to parse response: ${errorMessage(error)}`);
     }

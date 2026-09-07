@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en-AU">
+    <head>
+        <meta charset="utf-8" />
+        <title>CSP fixture</title>
+    </head>
+    <body>
+        <main id="main" tabindex="-1">
+            <div id="command">
+                <p id="original">Original</p>
+                <form method="post" action="/command" data-graft>
+                    <input name="credential" value="wrong" />
+                    <button id="save" type="submit">Save</button>
+                </form>
+            </div>
+        </main>
+        <script nonce="hypergraft-csp-fixture">
+            (() => {
+                const factory = window.trustedTypes;
+                if (!factory) return;
+                const names = [];
+                const original = factory.createPolicy.bind(factory);
+                factory.createPolicy = (name, rules) => {
+                    const created = original(name, rules);
+                    names.push(name);
+                    return created;
+                };
+                window.__hypergraftCreatedPolicies = names;
+            })();
+        </script>
+        <script type="module" src="./csp.ts"></script>
+    </body>
+</html>
