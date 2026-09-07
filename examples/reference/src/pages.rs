@@ -45,6 +45,14 @@ impl StatusFilter {
     fn is_done(self) -> bool {
         matches!(self, Self::Done)
     }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Open => "open",
+            Self::Done => "done",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -54,20 +62,30 @@ pub(crate) struct TaskQuery {
 }
 
 impl TaskQuery {
-    pub(crate) fn parse(query: &str) -> Self {
-        let mut search = String::new();
-        let mut status = StatusFilter::All;
-        for (key, value) in form_urlencoded::parse(query.as_bytes()) {
-            match key.as_ref() {
-                "q" => search = normalise_search(&value),
-                "status" => status = StatusFilter::parse(&value),
-                _ => {}
-            }
+    pub(crate) fn unfiltered() -> Self {
+        Self {
+            search: String::new(),
+            status: StatusFilter::All,
         }
-        Self { search, status }
     }
 
-    fn matches(&self, task: &Task) -> bool {
+    pub(crate) fn parse(query: &str) -> Self {
+        let mut parsed = Self::unfiltered();
+        for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+            parsed.apply(&key, &value);
+        }
+        parsed
+    }
+
+    pub(crate) fn apply(&mut self, key: &str, value: &str) {
+        match key {
+            "q" => self.search = normalise_search(value),
+            "status" => self.status = StatusFilter::parse(value),
+            _ => {}
+        }
+    }
+
+    pub(crate) fn matches(&self, task: &Task) -> bool {
         if !self.status.matches(task) {
             return false;
         }
@@ -77,6 +95,22 @@ impl TaskQuery {
         task.title
             .to_lowercase()
             .contains(&self.search.to_lowercase())
+    }
+
+    pub(crate) fn path(&self) -> String {
+        let mut serializer = form_urlencoded::Serializer::new(String::new());
+        if !self.search.is_empty() {
+            serializer.append_pair("q", &self.search);
+        }
+        if !self.status.is_all() {
+            serializer.append_pair("status", self.status.as_str());
+        }
+        let encoded = serializer.finish();
+        if encoded.is_empty() {
+            "/tasks".to_owned()
+        } else {
+            format!("/tasks?{encoded}")
+        }
     }
 }
 
@@ -101,19 +135,47 @@ struct TasksPage<'a> {
     search: &'a str,
     status: StatusFilter,
     tasks: &'a [Task],
+    error: Option<&'a str>,
+    created: Option<&'a Task>,
+    hidden_by_filter: bool,
 }
 
 #[derive(Template)]
 #[template(path = "task-filter.html")]
-struct TaskFilter<'a> {
-    search: &'a str,
-    status: StatusFilter,
+pub(crate) struct TaskFilter<'a> {
+    pub(crate) search: &'a str,
+    pub(crate) status: StatusFilter,
 }
 
 #[derive(Template)]
 #[template(path = "task-results.html")]
-struct TaskResults<'a> {
-    tasks: &'a [Task],
+pub(crate) struct TaskResults<'a> {
+    pub(crate) tasks: &'a [Task],
+}
+
+#[derive(Template)]
+#[template(path = "task-create.html")]
+pub(crate) struct TaskCreate<'a> {
+    pub(crate) search: &'a str,
+    pub(crate) status: StatusFilter,
+    pub(crate) error: Option<&'a str>,
+    pub(crate) created: Option<&'a Task>,
+    pub(crate) hidden_by_filter: bool,
+}
+
+#[derive(Template)]
+#[template(path = "task-create-filters.html")]
+pub(crate) struct TaskCreateFilters<'a> {
+    pub(crate) search: &'a str,
+    pub(crate) status: StatusFilter,
+}
+
+#[derive(Template)]
+#[template(path = "task-create-feedback.html")]
+pub(crate) struct TaskCreateFeedback<'a> {
+    pub(crate) error: Option<&'a str>,
+    pub(crate) created: Option<&'a Task>,
+    pub(crate) hidden_by_filter: bool,
 }
 
 #[derive(Template)]
@@ -129,6 +191,7 @@ pub enum AppError {
 
 impl From<PatchBuildError> for AppError {
     fn from(_: PatchBuildError) -> Self {
+        // Responses must not expose rendered HTML or extractor diagnostics.
         Self::Internal
     }
 }
@@ -161,6 +224,9 @@ pub async fn tasks(
         search: &query.search,
         status: query.status,
         tasks: &tasks,
+        error: None,
+        created: None,
+        hidden_by_filter: false,
     };
     match graft {
         GraftRequest::Document => document("Tasks", &page),
@@ -174,6 +240,13 @@ pub async fn tasks(
                 },
             )?
             .with_children("task-results", &TaskResults { tasks: &tasks })?
+            .with_children(
+                "task-create-filters",
+                &TaskCreateFilters {
+                    search: &query.search,
+                    status: query.status,
+                },
+            )?
             .respond(PatchStatus::Ok)?),
     }
 }

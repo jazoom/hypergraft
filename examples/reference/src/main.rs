@@ -1,3 +1,4 @@
+mod commands;
 mod pages;
 mod security;
 mod state;
@@ -27,7 +28,7 @@ struct Assets {
 }
 
 #[derive(Clone)]
-struct AppState {
+pub(crate) struct AppState {
     pub(crate) store: Store,
     assets: Assets,
 }
@@ -48,8 +49,9 @@ async fn main() {
         assets,
     };
     let browser = Router::new()
-        .route("/tasks", get(pages::tasks))
+        .route("/tasks", get(pages::tasks).post(commands::create))
         .route("/tasks/{id}", get(pages::task))
+        .layer(commands::command_body_limit())
         .layer(middleware::from_fn(security::enforce_origin))
         .layer(middleware::from_fn(hypergraft::middleware::classify));
     let assets = Router::new()

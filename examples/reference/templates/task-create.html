@@ -1,0 +1,16 @@
+<div id="task-create-filters">{% include "task-create-filters.html" %}</div>
+<p>
+    <label for="task-title">Title</label>
+    <input
+        id="task-title"
+        name="title"
+        type="text"
+        value=""
+        autocomplete="off"
+        aria-describedby="task-create-feedback"
+    />
+</p>
+<div id="task-create-feedback">{% include "task-create-feedback.html" %}</div>
+<p>
+    <button type="submit" aria-disabled="false">Create</button>
+</p>

@@ -1,4 +1,5 @@
-import { startHypergraft } from "hypergraft/browser";
+import { bindTransportFeedback, startHypergraft } from "hypergraft/browser";
 import "./style.css";
 
-startHypergraft();
+const { feedback } = bindTransportFeedback(document);
+startHypergraft({ feedback });

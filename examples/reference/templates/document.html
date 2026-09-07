@@ -11,6 +11,18 @@
         <header>
             <p><a href="/tasks" data-graft>Tasks</a></p>
         </header>
+        <div data-graft-feedback hidden>
+            <p data-graft-feedback-safe role="status">
+                The request failed. Try again.
+            </p>
+            <p data-graft-feedback-uncertain role="alert" hidden>
+                The result is uncertain. Reload the page before you continue.
+            </p>
+            <button type="button" data-graft-feedback-dismiss>Dismiss</button>
+            <button type="button" data-graft-feedback-reload hidden>
+                Reload
+            </button>
+        </div>
         <main id="main" tabindex="-1">{{ body|safe }}</main>
     </body>
 </html>

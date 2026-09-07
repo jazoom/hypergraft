@@ -1,0 +1,13 @@
+{% if let Some(message) = error %}
+<p role="alert">{{ message }}</p>
+{% else %}
+    {% if let Some(task) = created %}
+    <p role="status">
+        Created
+        <a href="/tasks/{{ task.id }}" data-graft>{{ task.title }}</a>.
+        {% if hidden_by_filter %}
+        This filter hides the new task.
+        {% endif %}
+    </p>
+    {% endif %}
+{% endif %}

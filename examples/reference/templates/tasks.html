@@ -13,4 +13,8 @@
 >
     {% include "task-filter.html" %}
 </form>
+<h2>Create a task</h2>
+<form id="task-create" method="post" action="/tasks" data-graft>
+    {% include "task-create.html" %}
+</form>
 <section id="task-results">{% include "task-results.html" %}</section>
