@@ -1,0 +1,17 @@
+[package]
+name = "hypergraft-reference"
+version = "0.0.1"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Anonymous in-memory Hypergraft reference application"
+
+[[bin]]
+name = "hypergraft-reference"
+path = "src/main.rs"
+
+[dependencies]
+askama = "0.16.0"
+axum = "0.8.9"
+hypergraft = { path = "../.." }
+tokio = { version = "1.53.1", features = ["macros", "net", "rt"] }

@@ -18,7 +18,7 @@ description = "Check the Hypergraft Rust and TypeScript project"
 run = [
   "taplo format --check",
   "pnpm check",
-  "cargo clippy --all-targets --all-features -- --deny warnings",
+  "cargo clippy --workspace --all-targets --all-features -- --deny warnings",
 ]
 
 [tasks.test]
@@ -26,12 +26,19 @@ description = "Run the Hypergraft test suite"
 run = [
   "pnpm test",
   "pnpm test:browser",
-  "cargo test --all-features --quiet",
+  "cargo test --workspace --all-features --quiet",
 ]
 
 [tasks."test:browser"]
 description = "Run the focused Hypergraft Chromium contract suite"
 run = "pnpm test:browser"
+
+[tasks.example]
+description = "Build assets and launch the anonymous reference application"
+run = [
+  "pnpm example:build",
+  "cargo run -p hypergraft-reference",
+]
 
 [tasks.clean]
 alias = "c"

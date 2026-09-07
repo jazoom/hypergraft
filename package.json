@@ -43,7 +43,8 @@
         "test": "vitest run --config vitest.config.ts",
         "test:browser": "vitest run --config vitest.browser.config.ts",
         "check": "tsgo --noEmit --project tsconfig.json",
-        "format": "prettier --write --cache --log-level warn ."
+        "format": "prettier --write --cache --log-level warn .",
+        "example:build": "vite build --config examples/reference/vite.config.ts"
     },
     "devDependencies": {
         "@typescript/native-preview": "7.0.0-dev.20260628.1",

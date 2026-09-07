@@ -5,6 +5,7 @@
 /playwright-report
 /test-results
 /browser/__screenshots__
+/examples/reference/dist
 
 .env
 .env.*

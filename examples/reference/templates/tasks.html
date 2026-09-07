@@ -1,0 +1,17 @@
+<h1>Tasks</h1>
+<p>
+    This list is anonymous and lives in process memory. A restart restores the
+    seed data.
+</p>
+<ul>
+    {% for task in tasks %}
+    <li>
+        <a href="/tasks/{{ task.id }}" data-graft>{{ task.title }}</a>
+        {% if task.done %}
+        <span>Done</span>
+        {% else %}
+        <span>Open</span>
+        {% endif %}
+    </li>
+    {% endfor %}
+</ul>

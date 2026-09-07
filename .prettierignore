@@ -3,3 +3,5 @@ pnpm-lock.yaml
 node_modules
 /target
 /.cache
+/examples/reference/dist
+/examples/reference/templates

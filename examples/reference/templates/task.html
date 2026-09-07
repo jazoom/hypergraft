@@ -1,0 +1,12 @@
+<article>
+    <h1>{{ task.title }}</h1>
+    <p>
+        Status:
+        {% if task.done %}
+        Done
+        {% else %}
+        Open
+        {% endif %}
+    </p>
+    <p><a href="/tasks" data-graft>Back to tasks</a></p>
+</article>

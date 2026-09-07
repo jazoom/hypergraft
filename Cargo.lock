@@ -397,6 +397,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hypergraft-reference"
+version = "0.0.1"
+dependencies = [
+ "askama",
+ "axum",
+ "hypergraft",
+ "tokio",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
