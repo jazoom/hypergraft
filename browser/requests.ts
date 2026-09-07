@@ -287,13 +287,22 @@ type ConsumeOutcome =
       }
     | { kind: "stale" };
 
+type PendingSession = {
+    consumeOwned(element: Element): void;
+    retainTransport(): void;
+    restore(): void;
+};
+
 async function consumeEnhanced(
     runtime: Runtime,
     response: Response,
     isStale: () => boolean,
     allowLocationReplacement: boolean,
     onProgress?: (batch: PreparedBatch, frame: number) => void,
+    pending?: PendingSession,
 ): Promise<ConsumeOutcome> {
+    const consumeOwned =
+        pending && ((element: Element) => pending.consumeOwned(element));
     let transfer: "complete" | "stream";
     try {
         transfer = transferKind(response);
@@ -326,7 +335,7 @@ async function consumeEnhanced(
                 response.status,
             );
         try {
-            apply(prepared.batch);
+            apply(prepared.batch, consumeOwned);
         } catch (error) {
             throw tagStatus(
                 new HypergraftError("apply-failure", errorMessage(error)),
@@ -369,12 +378,13 @@ async function consumeEnhanced(
                 runtime.options.validateContent,
             );
             try {
-                apply(prepared.batch);
+                apply(prepared.batch, consumeOwned);
             } catch (error) {
                 throw new HypergraftError("apply-failure", errorMessage(error));
             }
             frame += 1;
             if (prepared.phase === "progress") {
+                pending?.retainTransport();
                 onProgress?.(prepared.batch, frame);
                 continue;
             }
@@ -475,6 +485,7 @@ async function safeRequest(
     sequence: number,
     responseUrl?: { current?: string },
     failedForm?: HTMLFormElement,
+    pending?: PendingSession,
 ): Promise<SafeOutcome> {
     let response: Response;
     try {
@@ -538,6 +549,7 @@ async function safeRequest(
                   });
               }
             : undefined,
+        pending,
     );
     if (consumed.kind === "stale") return { kind: "stale" };
     if (consumed.kind === "navigation") {
@@ -657,36 +669,66 @@ async function navigate(
 function pendingState(
     form: HTMLFormElement,
     submitter?: HTMLButtonElement | HTMLInputElement,
-) {
-    const oldBusy = form.getAttribute("aria-busy");
+): PendingSession {
+    const originalBusy = form.getAttribute("aria-busy");
     const hadPending = form.hasAttribute("data-graft-pending");
-    const oldDisabled = submitter?.disabled;
-    const oldAriaDisabled = submitter?.getAttribute("aria-disabled") ?? null;
+    const originalDisabled = submitter?.disabled;
+    const originalAriaDisabled =
+        submitter?.getAttribute("aria-disabled") ?? null;
     const hadSubmitterPending =
         submitter?.hasAttribute("data-graft-submitter-pending") ?? false;
     let restored = false;
-    form.setAttribute("aria-busy", "true");
-    form.setAttribute("data-graft-pending", "");
-    if (submitter) {
+    // undefined means no applied patch authored this control. null or a value
+    // is the latest Morphlex snapshot, including explicit removal.
+    let authoredBusy: string | null | undefined;
+    let authoredDisabled: boolean | undefined;
+    let authoredAriaDisabled: string | null | undefined;
+    const overlay = () => {
+        form.setAttribute("aria-busy", "true");
+        form.setAttribute("data-graft-pending", "");
+        if (!submitter?.isConnected) return;
         submitter.disabled = true;
         submitter.setAttribute("aria-disabled", "true");
         submitter.setAttribute("data-graft-submitter-pending", "");
-    }
-    return () => {
-        if (restored) return;
-        restored = true;
-        oldBusy === null
-            ? form.removeAttribute("aria-busy")
-            : form.setAttribute("aria-busy", oldBusy);
-        if (!hadPending) form.removeAttribute("data-graft-pending");
-        form.removeAttribute("data-graft-progress");
-        if (!submitter?.isConnected) return;
-        submitter.disabled = oldDisabled ?? false;
-        oldAriaDisabled === null
-            ? submitter.removeAttribute("aria-disabled")
-            : submitter.setAttribute("aria-disabled", oldAriaDisabled);
-        if (!hadSubmitterPending)
-            submitter.removeAttribute("data-graft-submitter-pending");
+    };
+    overlay();
+    return {
+        consumeOwned(element) {
+            if (restored) return;
+            if (element === form) authoredBusy = form.getAttribute("aria-busy");
+            else if (element === submitter && submitter.isConnected) {
+                authoredDisabled = submitter.disabled;
+                authoredAriaDisabled = submitter.getAttribute("aria-disabled");
+            }
+        },
+        retainTransport() {
+            if (!restored) overlay();
+        },
+        restore() {
+            if (restored) return;
+            restored = true;
+            const busy =
+                authoredBusy !== undefined ? authoredBusy : originalBusy;
+            busy === null
+                ? form.removeAttribute("aria-busy")
+                : form.setAttribute("aria-busy", busy);
+            if (!hadPending) form.removeAttribute("data-graft-pending");
+            form.removeAttribute("data-graft-progress");
+            if (!submitter?.isConnected) return;
+            submitter.disabled =
+                authoredDisabled !== undefined
+                    ? authoredDisabled
+                    : (originalDisabled ?? false);
+            const ariaDisabled =
+                authoredAriaDisabled !== undefined
+                    ? authoredAriaDisabled
+                    : originalAriaDisabled;
+            ariaDisabled === null
+                ? submitter.removeAttribute("aria-disabled")
+                : submitter.setAttribute("aria-disabled", ariaDisabled);
+            if (!hadSubmitterPending)
+                submitter.removeAttribute("data-graft-submitter-pending");
+        },
     };
 }
 
@@ -714,9 +756,9 @@ async function submitSafe(
     lane.cancelPending = undefined;
     lane.controller = new AbortController();
     runtime.activeSafeFormLanes.add(lane);
-    const restorePending = pendingState(form, button);
+    const pending = pendingState(form, button);
     lane.cancelPending = () => {
-        restorePending();
+        pending.restore();
         runtime.live.restoreForm(form, sequence);
     };
     // The effective request URL: the response URL once a response was
@@ -735,6 +777,7 @@ async function submitSafe(
             sequence,
             responseUrl,
             form,
+            pending,
         );
         if (result.kind === "applied") {
             settlement = result.settlement;
@@ -775,7 +818,7 @@ async function submitSafe(
             if (settlement) {
                 // Pending state is final before lifecycle observers reconcile
                 // retained roots, so restore the form and submitter first.
-                restorePending();
+                pending.restore();
                 emitRequestSettled({
                     requestKind: "patch",
                     form,
@@ -824,6 +867,7 @@ async function unsafeRequest(
         url: URL;
         body: URLSearchParams | FormData;
     },
+    pending: PendingSession,
 ): Promise<UnsafeOutcome> {
     let response: Response;
     const headers: Record<string, string> = {
@@ -884,6 +928,7 @@ async function unsafeRequest(
                     targetIds: batch.patches.map((patch) => patch.targetId),
                 });
             },
+            pending,
         );
     } catch (error) {
         return failure(error);
@@ -926,10 +971,10 @@ async function submitUnsafe(
     runtime.live.suspend();
     cancelActiveSafeForms(runtime);
     documentUnsafe = { kind: "pending", form };
-    const restorePending = pendingState(form, prepared.submitter);
-    const outcome = await unsafeRequest(runtime, form, prepared);
+    const pending = pendingState(form, prepared.submitter);
+    const outcome = await unsafeRequest(runtime, form, prepared, pending);
     if (runtime.disposed) {
-        restorePending();
+        pending.restore();
         // The command may have reached the server, but a disposed runtime
         // cannot apply or report its response. Reload authoritative state
         // rather than leaving a replacement runtime silently locked.
@@ -938,7 +983,7 @@ async function submitUnsafe(
         return;
     }
     if (outcome.kind === "handed-off") {
-        restorePending();
+        pending.restore();
         return;
     }
     if (outcome.kind === "uncertain") {
@@ -946,7 +991,7 @@ async function submitUnsafe(
         form.setAttribute("data-graft-uncertain", "");
         // Mark uncertainty before restoring pending state, then request host
         // feedback before observers receive the final settlement fact.
-        restorePending();
+        pending.restore();
         emitDiagnostic({
             reason: outcome.reason,
             requestKind: "patch",
@@ -971,7 +1016,7 @@ async function submitUnsafe(
                 cause: "command-patch-replacement",
             });
         }
-        restorePending();
+        pending.restore();
     }
     emitRequestSettled({
         requestKind: "patch",

@@ -381,7 +381,13 @@ function parseEnvelope(
     };
 }
 
-export function apply(batch: PreparedBatch) {
+export function apply(
+    batch: PreparedBatch,
+    // Cleanup consumes this immediately. Morphlex can leave an authored
+    // disabled value identical to the pending overlay, so ownership cannot
+    // be inferred from the live DOM after apply.
+    consumeOwned?: (element: Element) => void,
+) {
     const active = document.activeElement as
         HTMLInputElement | HTMLTextAreaElement | null;
     const focusId = active?.id;
@@ -390,7 +396,7 @@ export function apply(batch: PreparedBatch) {
     for (const patch of batch.patches) {
         if (patch.operation === "append")
             appendChildren(patch.target, patch.nodes);
-        else morphChildren(patch.target, patch.nodes);
+        else morphChildren(patch.target, patch.nodes, consumeOwned);
     }
     if (batch.title !== undefined) document.title = batch.title;
     if (focusId) {

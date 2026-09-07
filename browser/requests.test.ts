@@ -89,6 +89,38 @@ function form(markup = '<input name="theme" value="dark">') {
     return element;
 }
 
+function panelForm(markup: string, attributes: Record<string, string> = {}) {
+    const panel = document.createElement("div");
+    panel.id = "panel";
+    const element = document.createElement("form");
+    element.method = "post";
+    element.action = "/dashboard/account/theme";
+    element.dataset.graft = "";
+    element.id = "task-create";
+    for (const [name, value] of Object.entries(attributes))
+        element.setAttribute(name, value);
+    element.innerHTML = markup;
+    panel.append(element);
+    document.getElementById("main")!.append(panel);
+    return element;
+}
+
+function panelEnvelope(inner: string, phase?: "progress" | "final") {
+    const phaseAttribute = phase ? ` phase="${phase}"` : "";
+    return `<graft-patch-set version="1"${phaseAttribute}><graft-patch operation="children" target="panel"><template>${inner}</template></graft-patch></graft-patch-set>`;
+}
+
+function panelFormMarkup(buttonAttributes = "", extra = "") {
+    return `<form id="task-create" method="post" action="/dashboard/account/theme" data-graft><button id="save" type="submit"${buttonAttributes}>Save</button>${extra}</form>`;
+}
+
+function panelReply(inner: string, status = 200) {
+    return new Response(panelEnvelope(inner), {
+        status,
+        headers: { "content-type": MEDIA_TYPE },
+    });
+}
+
 function submit(element: HTMLFormElement, submitter?: HTMLElement) {
     const event = new SubmitEvent("submit", {
         bubbles: true,
@@ -1851,4 +1883,220 @@ test("an incomplete unsafe stream stays uncertain", async () => {
     expect(element.hasAttribute("data-graft-uncertain")).toBe(true);
     expect(details[0]?.outcome).toBe("uncertain-unsafe-result");
     expect(details[0]).not.toHaveProperty("status");
+});
+
+test.each(["get", "post"])(
+    "an applied %s form keeps a server-disabled submitter disabled",
+    async (method) => {
+        vi.mocked(fetch).mockResolvedValue(
+            panelReply(panelFormMarkup(" disabled"), 422),
+        );
+        const element = panelForm(
+            '<button id="save" type="submit">Save</button>',
+        );
+        const button = element.querySelector<HTMLButtonElement>("#save")!;
+        element.method = method;
+        const observed: { disabled: boolean; pending: boolean }[] = [];
+        addEventListener("hypergraft:requestsettled", () =>
+            observed.push({
+                disabled: button.disabled,
+                pending: button.hasAttribute("data-graft-submitter-pending"),
+            }),
+        );
+
+        submit(element, button);
+        await flush();
+
+        expect(button.isConnected).toBe(true);
+        expect(button.disabled).toBe(true);
+        expect(button.hasAttribute("data-graft-submitter-pending")).toBe(false);
+        expect(element.hasAttribute("data-graft-pending")).toBe(false);
+        expect(observed).toEqual([{ disabled: true, pending: false }]);
+    },
+);
+
+test("an applied command respects removal of disabled and busy attributes", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+        panelReply(
+            `<form id="task-create" method="post" action="/dashboard/account/theme" data-graft><button id="save" type="submit" aria-disabled="false">Save</button></form>`,
+        ),
+    );
+    const element = panelForm(
+        '<button id="save" type="submit" disabled aria-disabled="true">Save</button>',
+        { "aria-busy": "polite" },
+    );
+    const button = element.querySelector<HTMLButtonElement>("#save")!;
+
+    submit(element, button);
+    await flush();
+
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute("aria-disabled")).toBe("false");
+    expect(element.hasAttribute("aria-busy")).toBe(false);
+    expect(element.hasAttribute("data-graft-pending")).toBe(false);
+});
+
+test("an applied command restores submitter state when the patch leaves it unowned", async () => {
+    vi.mocked(fetch).mockResolvedValue(patch("Updated"));
+    const element = panelForm('<button id="save" type="submit">Save</button>');
+    const button = element.querySelector<HTMLButtonElement>("#save")!;
+
+    submit(element, button);
+    await flush();
+
+    expect(button.isConnected).toBe(true);
+    expect(button.disabled).toBe(false);
+    expect(button.hasAttribute("aria-disabled")).toBe(false);
+    expect(button.hasAttribute("data-graft-submitter-pending")).toBe(false);
+});
+
+test("a failed command restores original submitter state when nothing applied", async () => {
+    vi.mocked(fetch).mockRejectedValue(new TypeError("offline"));
+    const element = panelForm(
+        '<button id="save" type="submit" disabled>Save</button>',
+    );
+    const button = element.querySelector<HTMLButtonElement>("#save")!;
+
+    submit(element, button);
+    await flush();
+
+    expect(button.disabled).toBe(true);
+    expect(button.hasAttribute("data-graft-submitter-pending")).toBe(false);
+    expect(element.hasAttribute("data-graft-pending")).toBe(false);
+    expect(element.hasAttribute("data-graft-uncertain")).toBe(true);
+});
+
+test("a replaced submitter does not receive the original control's pending state", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+        panelReply(
+            `<form id="task-create" method="post" action="/dashboard/account/theme" data-graft><button id="other" type="submit">Other</button></form>`,
+        ),
+    );
+    const element = panelForm('<button id="save" type="submit">Save</button>');
+    const button = element.querySelector<HTMLButtonElement>("#save")!;
+
+    submit(element, button);
+    await flush();
+
+    expect(button.isConnected).toBe(false);
+    const other = document.getElementById("other") as HTMLButtonElement;
+    expect(other.disabled).toBe(false);
+    expect(other.hasAttribute("data-graft-submitter-pending")).toBe(false);
+});
+
+test("a streamed command keeps pending presentation across progress frames", async () => {
+    const progress: { disabled: boolean; pending: boolean; busy: boolean }[] =
+        [];
+    addEventListener("hypergraft:progress", () => {
+        const button = document.getElementById("save") as HTMLButtonElement;
+        const element = document.getElementById(
+            "task-create",
+        ) as HTMLFormElement;
+        progress.push({
+            disabled: button.disabled,
+            pending: element.hasAttribute("data-graft-pending"),
+            busy: element.getAttribute("aria-busy") === "true",
+        });
+    });
+    vi.mocked(fetch).mockResolvedValue(
+        streamReply([
+            panelEnvelope(
+                panelFormMarkup("", '<p id="partial">Working</p>'),
+                "progress",
+            ),
+            panelEnvelope(
+                panelFormMarkup("", '<p id="result">Done</p>'),
+                "final",
+            ),
+        ]),
+    );
+    const element = panelForm('<button id="save" type="submit">Save</button>');
+    const button = element.querySelector<HTMLButtonElement>("#save")!;
+
+    submit(element, button);
+    await flush();
+
+    expect(progress).toEqual([{ disabled: true, pending: true, busy: true }]);
+    expect(button.disabled).toBe(false);
+    expect(element.hasAttribute("data-graft-pending")).toBe(false);
+    expect(element.hasAttribute("data-graft-progress")).toBe(false);
+    expect(document.getElementById("result")?.textContent).toBe("Done");
+});
+
+test("a streamed command keeps the latest authored submitter state after the final frame", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+        streamReply([
+            panelEnvelope(panelFormMarkup(""), "progress"),
+            panelEnvelope(panelFormMarkup(" disabled"), "final"),
+        ]),
+    );
+    const element = panelForm('<button id="save" type="submit">Save</button>');
+    const button = element.querySelector<HTMLButtonElement>("#save")!;
+    const observed: boolean[] = [];
+    addEventListener("hypergraft:requestsettled", () =>
+        observed.push(button.disabled),
+    );
+
+    submit(element, button);
+    await flush();
+
+    expect(button.disabled).toBe(true);
+    expect(button.hasAttribute("data-graft-submitter-pending")).toBe(false);
+    expect(observed).toEqual([true]);
+});
+
+test.each(["get", "post"])(
+    "an incomplete %s stream keeps the latest applied control attributes",
+    async (method) => {
+        vi.mocked(fetch).mockResolvedValue(
+            streamReply([
+                panelEnvelope(panelFormMarkup(" disabled"), "progress"),
+                panelEnvelope(
+                    panelFormMarkup(' aria-disabled="false"'),
+                    "progress",
+                ),
+            ]),
+        );
+        const element = panelForm(
+            '<button id="save" type="submit" disabled>Save</button>',
+            { "aria-busy": "true" },
+        );
+        element.method = method;
+        const button = element.querySelector<HTMLButtonElement>("#save")!;
+        const details = collectSettled();
+
+        submit(element, button);
+        await flush();
+
+        expect(button.disabled).toBe(false);
+        expect(button.getAttribute("aria-disabled")).toBe("false");
+        expect(button.hasAttribute("data-graft-submitter-pending")).toBe(false);
+        expect(element.hasAttribute("aria-busy")).toBe(false);
+        expect(element.hasAttribute("data-graft-pending")).toBe(false);
+        expect(details.map((detail) => detail.outcome)).toEqual([
+            method === "get" ? "safe-failure" : "uncertain-unsafe-result",
+        ]);
+    },
+);
+
+test("a final frame outside the form preserves attributes from progress", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+        streamReply([
+            panelEnvelope(
+                panelFormMarkup(' disabled aria-disabled="false"'),
+                "progress",
+            ),
+            '<graft-patch-set version="1" phase="final"><graft-patch operation="children" target="theme-card"><template>Done</template></graft-patch></graft-patch-set>',
+        ]),
+    );
+    const element = panelForm('<button id="save" type="submit">Save</button>');
+    const button = element.querySelector<HTMLButtonElement>("#save")!;
+
+    submit(element, button);
+    await flush();
+
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-disabled")).toBe("false");
+    expect(button.hasAttribute("data-graft-submitter-pending")).toBe(false);
+    expect(element.hasAttribute("aria-busy")).toBe(false);
 });

@@ -254,6 +254,37 @@ test("multi-target preflight restores focus by stable ID", () => {
     expect(document.getElementById("other-result")).not.toBeNull();
 });
 
+test("an applied command keeps a server-disabled submitter disabled", async () => {
+    const form = commandForm();
+    const button = form.querySelector("button")!;
+    button.id = "save";
+    vi.mocked(fetch).mockResolvedValue(
+        envelope(
+            "command",
+            '<form method="post" action="/command" data-graft><input name="credential" value="wrong"><button id="save" type="submit" disabled>Save</button></form>',
+            422,
+        ),
+    );
+    const observed: { disabled: boolean; pending: boolean }[] = [];
+    addEventListener("hypergraft:requestsettled", () => {
+        const save = document.getElementById(
+            "save",
+        ) as HTMLButtonElement | null;
+        observed.push({
+            disabled: save?.disabled === true,
+            pending:
+                save?.hasAttribute("data-graft-submitter-pending") === true,
+        });
+    });
+    submit(form, button);
+    await flush();
+    const save = document.getElementById("save") as HTMLButtonElement;
+    expect(save).toBe(button);
+    expect(save.disabled).toBe(true);
+    expect(save.hasAttribute("data-graft-submitter-pending")).toBe(false);
+    expect(observed).toEqual([{ disabled: true, pending: false }]);
+});
+
 test("one live socket applies several atomic projection patches", async () => {
     class MockSocket extends EventTarget {
         static instances: MockSocket[] = [];
