@@ -217,6 +217,9 @@ Place this feedback container before `main` in the document shell:
     <p data-graft-feedback-uncertain role="alert" hidden>
         The result is uncertain.
     </p>
+    <p data-graft-feedback-blocked role="status" hidden>
+        Another request is active. This command was not sent.
+    </p>
     <button type="button" data-graft-feedback-dismiss>Dismiss</button>
     <button type="button" data-graft-feedback-reload hidden>Reload</button>
 </div>
@@ -271,6 +274,9 @@ Live hosts also need the explicit WebSocket source from `LiveEndpoint::csp_conne
 - Version 1 does not restore history scroll positions.
 - Safe GET work is cancellable. An uncertain command keeps the document's unsafe lock and suspends live work until a reload.
 - Server-authored form state wins after a patch. A retained DOM node does not prove request completion.
+- A blocked command emits `command-blocked`, not settlement. The runtime never queues or replays that command.
+- `commandBlockReason()` exposes the current guard for host coordination. A host must revalidate its own deferred actions before submission.
+- Optional `data-graft-feedback-blocked` content explains that a command was not sent. Uncertainty still requires reload feedback.
 
 ### Mistakes to avoid
 

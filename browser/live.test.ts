@@ -378,7 +378,7 @@ test("closes live mode before page navigation", async () => {
     await vi.waitFor(() => expect(MockSocket.instances).toHaveLength(2));
 });
 
-test("closes the socket before an unsafe command and resumes after a known result", async () => {
+test("keeps live work suspended when settlement starts another command", async () => {
     liveForm("one", "/items", "item-results");
     const command = document.createElement("form");
     command.dataset.graft = "";
@@ -389,19 +389,37 @@ test("closes the socket before an unsafe command and resumes after a known resul
     cleanup = startHypergraft();
     await vi.waitFor(() => expect(MockSocket.instances).toHaveLength(1));
     const first = MockSocket.instances[0]!;
-    vi.mocked(fetch).mockResolvedValue(
-        new Response(envelope("item-results", '<p id="saved">Saved</p>'), {
-            status: 200,
-            headers: { "content-type": MEDIA_TYPE },
-        }),
+    let resolveSecond!: (response: Response) => void;
+    vi.mocked(fetch)
+        .mockResolvedValueOnce(
+            new Response(envelope("item-results", '<p id="saved">Saved</p>'), {
+                status: 200,
+                headers: { "content-type": MEDIA_TYPE },
+            }),
+        )
+        .mockReturnValueOnce(
+            new Promise((resolve) => {
+                resolveSecond = resolve;
+            }),
+        );
+    addEventListener(
+        "hypergraft:requestsettled",
+        () => command.requestSubmit(),
+        { once: true },
     );
     command.dispatchEvent(
         new SubmitEvent("submit", { bubbles: true, cancelable: true }),
     );
-    await vi.waitFor(() => expect(first.readyState).toBe(MockSocket.CLOSED));
-    await vi.waitFor(() =>
-        expect(MockSocket.instances.length).toBeGreaterThan(1),
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(first.readyState).toBe(MockSocket.CLOSED);
+    expect(MockSocket.instances).toHaveLength(1);
+    resolveSecond(
+        new Response(envelope("item-results", "Done"), {
+            status: 200,
+            headers: { "content-type": MEDIA_TYPE },
+        }),
     );
+    await vi.waitFor(() => expect(MockSocket.instances).toHaveLength(2));
 });
 
 test("leaves live mode suspended after an uncertain unsafe result", async () => {

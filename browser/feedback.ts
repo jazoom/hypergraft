@@ -33,6 +33,9 @@ export function bindTransportFeedback(
     const safe = container
         ? exactlyOne(container, "[data-graft-feedback-safe]", htmlElement)
         : undefined;
+    const blocked = container
+        ? exactlyOne(container, "[data-graft-feedback-blocked]", htmlElement)
+        : undefined;
     const uncertain = container
         ? exactlyOne(container, "[data-graft-feedback-uncertain]", htmlElement)
         : undefined;
@@ -61,10 +64,11 @@ export function bindTransportFeedback(
 
     let uncertainShown = false;
     let destroyed = false;
-    const showSafe = () => {
+    const showMessage = (message: HTMLElement) => {
         if (destroyed || uncertainShown) return;
         container.hidden = false;
-        safe.hidden = false;
+        safe.hidden = message !== safe;
+        if (blocked) blocked.hidden = message !== blocked;
         uncertain.hidden = true;
         dismiss.hidden = false;
         reload.hidden = true;
@@ -74,6 +78,7 @@ export function bindTransportFeedback(
         uncertainShown = true;
         container.hidden = false;
         safe.hidden = true;
+        if (blocked) blocked.hidden = true;
         uncertain.hidden = false;
         dismiss.hidden = true;
         reload.hidden = false;
@@ -88,7 +93,10 @@ export function bindTransportFeedback(
 
     return {
         feedback: {
-            safeFailure: showSafe,
+            safeFailure: () => showMessage(safe),
+            commandBlocked: () => {
+                if (blocked) showMessage(blocked);
+            },
             safeRecovery: recoverSafe,
             uncertainUnsafeOutcome: showUncertain,
         },

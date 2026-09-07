@@ -1,3 +1,5 @@
+import type { CommandBlockReason } from "./requests";
+
 export const DIAGNOSTIC_EVENT = "hypergraft:diagnostic";
 
 /** Closed, secret-safe failure categories. The public diagnostic event never
@@ -13,7 +15,8 @@ export type DiagnosticReason =
     | "invalid-live-form"
     | "invalid-command-form"
     | "unknown-island"
-    | "invalid-feedback";
+    | "invalid-feedback"
+    | "command-blocked";
 
 /** A bounded failure fact. `targetId` is present only when a validated target
  * identifier existed at the point of failure; `element` is the originating
@@ -22,7 +25,10 @@ export type DiagnosticDetail =
     | {
           reason: Exclude<
               DiagnosticReason,
-              "invalid-command-form" | "unknown-island" | "invalid-feedback"
+              | "invalid-command-form"
+              | "command-blocked"
+              | "unknown-island"
+              | "invalid-feedback"
           >;
           requestKind: "navigation" | "patch";
           unsafe: boolean;
@@ -33,6 +39,11 @@ export type DiagnosticDetail =
     | {
           reason: "invalid-command-form";
           element: HTMLElement;
+      }
+    | {
+          reason: "command-blocked";
+          element: HTMLFormElement;
+          blocked: CommandBlockReason;
       }
     | {
           reason: "unknown-island";
@@ -65,6 +76,7 @@ type FailureReason = Exclude<
     | "invalid-command-form"
     | "unknown-island"
     | "invalid-feedback"
+    | "command-blocked"
 >;
 
 /** Internal error used by the bounded reader and preflight. Public diagnostics

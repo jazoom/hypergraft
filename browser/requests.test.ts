@@ -1,7 +1,11 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { MEDIA_TYPE, MAX_RESPONSE_BYTES, PATCH_STATUSES } from "./patches";
-import { resetHypergraftForTests, startHypergraft } from "./requests";
+import {
+    commandBlockReason,
+    resetHypergraftForTests,
+    startHypergraft,
+} from "./requests";
 import { DIAGNOSTIC_EVENT, type DiagnosticDetail } from "./diagnostics";
 import type { RequestSettledDetail } from "./events";
 
@@ -37,6 +41,7 @@ function showTestAlert(uncertain: boolean) {
 }
 
 let cleanup: (() => void) | undefined;
+const commandBlocked = vi.fn();
 const patch = (content = "Updated", status = 200) => {
     const headers: Record<string, string> = { "content-type": MEDIA_TYPE };
     if (status === 429) headers["retry-after"] = "60";
@@ -48,6 +53,7 @@ const patch = (content = "Updated", status = 200) => {
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(() => {
+    commandBlocked.mockClear();
     history.replaceState({}, "", "/dashboard/account/preferences");
     document.body.innerHTML = `
         <div id="hypergraft-transport-alert" hidden>
@@ -59,6 +65,7 @@ beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
     cleanup = startHypergraft({
         feedback: {
+            commandBlocked,
             safeFailure: () => showTestAlert(false),
             safeRecovery: () => {
                 const alert = document.getElementById(
@@ -228,6 +235,15 @@ test("an unknown POST result settles uncertain after pending state is final", as
         status: 200,
     });
     expect(observed).toEqual([{ pending: false, uncertain: true }]);
+    expect(commandBlockReason()).toBe("uncertain-command");
+    const diagnostics = collectDiagnostics();
+    submit(element);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(details).toHaveLength(1);
+    expect(diagnostics).toEqual([
+        { reason: "command-blocked", element, blocked: "uncertain-command" },
+    ]);
+    expect(commandBlocked).not.toHaveBeenCalled();
 });
 
 test("an unsafe patch application failure settles uncertain without targets", async () => {
@@ -326,8 +342,13 @@ test("an applied unsafe patch settles before a queued history fetch starts", asy
     expect(fetchMock).toHaveBeenCalledOnce();
 
     let settledAt: number[] = [];
-    addEventListener("hypergraft:requestsettled", () =>
-        settledAt.push(fetchMock.mock.calls.length),
+    addEventListener(
+        "hypergraft:requestsettled",
+        () => {
+            settledAt.push(fetchMock.mock.calls.length);
+            expect(commandBlockReason()).toBe("pending-navigation");
+        },
+        { once: true },
     );
     resolveCommand(patch("Committed"));
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -584,6 +605,9 @@ test("a urlencoded command with a selected file emits one diagnostic and does no
 });
 
 test("one pending POST blocks every other enhanced request", async () => {
+    const diagnostics = collectDiagnostics();
+    const settlements = collectSettled();
+    expect(commandBlockReason()).toBeUndefined();
     let resolve!: (response: Response) => void;
     const fetchMock = vi.mocked(fetch).mockReturnValue(
         new Promise((done) => {
@@ -621,12 +645,26 @@ test("one pending POST blocks every other enhanced request", async () => {
     expect(fetchMock.mock.calls[0]![1]?.signal).toBeUndefined();
     expect(first.getAttribute("aria-busy")).toBe("true");
     expect(first.hasAttribute("data-graft-pending")).toBe(true);
+    expect(commandBlockReason()).toBe("pending-command");
+    expect(diagnostics).toEqual([
+        {
+            reason: "command-blocked",
+            element: second,
+            blocked: "pending-command",
+        },
+    ]);
+    expect(commandBlocked).toHaveBeenCalledOnce();
+    expect(settlements).toHaveLength(0);
 
     resolve(patch());
     await flush();
+    expect(commandBlockReason()).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(settlements).toHaveLength(1);
 });
 
 test("a POST cannot start while navigation is pending", async () => {
+    const diagnostics = collectDiagnostics();
     let resolve!: (response: Response) => void;
     vi.mocked(fetch).mockReturnValue(
         new Promise((done) => {
@@ -641,6 +679,15 @@ test("a POST cannot start while navigation is pending", async () => {
 
     const command = form();
     expect(submit(command).defaultPrevented).toBe(true);
+    expect(commandBlockReason()).toBe("pending-navigation");
+    expect(diagnostics).toEqual([
+        {
+            reason: "command-blocked",
+            element: command,
+            blocked: "pending-navigation",
+        },
+    ]);
+    expect(commandBlocked).toHaveBeenCalledOnce();
     expect(fetch).toHaveBeenCalledOnce();
     resolve(
         new Response(

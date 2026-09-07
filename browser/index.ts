@@ -1,5 +1,7 @@
 export {
     startHypergraft,
+    commandBlockReason,
+    type CommandBlockReason,
     type HypergraftOptions,
     type TransportFeedback,
     readBoundedResponse,

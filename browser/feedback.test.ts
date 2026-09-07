@@ -83,6 +83,33 @@ test("uncertainty takes precedence over dismissal and recovery", () => {
     expect(elements.uncertain.hidden).toBe(false);
 });
 
+test("blocked command feedback is dismissible but cannot hide uncertainty", () => {
+    const root = markup();
+    root.insertAdjacentHTML(
+        "afterbegin",
+        "<span data-graft-feedback-blocked hidden>Not sent</span>",
+    );
+    const blocked = root.querySelector<HTMLElement>(
+        "[data-graft-feedback-blocked]",
+    )!;
+    const bound = bindTransportFeedback(root);
+    const elements = parts();
+    bound.feedback.commandBlocked?.();
+    expect(elements.root.hidden).toBe(false);
+    expect(blocked.hidden).toBe(false);
+    expect(elements.safe.hidden).toBe(true);
+    elements.dismiss.click();
+    expect(elements.root.hidden).toBe(true);
+    bound.feedback.safeFailure();
+    expect(blocked.hidden).toBe(true);
+    bound.feedback.uncertainUnsafeOutcome();
+    bound.feedback.commandBlocked?.();
+    expect(blocked.hidden).toBe(true);
+    expect(elements.uncertain.hidden).toBe(false);
+    expect(elements.reload.hidden).toBe(false);
+    bound.destroy();
+});
+
 test("the reload action reloads the current document", () => {
     const reload = vi
         .spyOn(window.location, "reload")

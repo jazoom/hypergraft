@@ -50,6 +50,24 @@ An in-flight or uncertain unsafe command is not cancellable as though it never h
 
 Same-origin `POST` forms with `application/x-www-form-urlencoded` or `multipart/form-data` are enhanced. Multipart commands send `FormData` without a manual `Content-Type` header. Invalid command forms emit `invalid-command-form` and do not submit natively.
 
+### Blocked commands
+
+The runtime never queues or replays an unsafe command automatically. A pending command or navigation blocks another command before transport starts.
+
+A blocked command emits a `command-blocked` diagnostic with its form and a closed `blocked` reason. It emits no request settlement because no request started. The reasons are:
+
+- `pending-command`
+- `pending-navigation`, which includes queued history navigation
+- `uncertain-command`
+
+Pending work requests optional `TransportFeedback.commandBlocked()` feedback. Uncertainty requests reload feedback instead. `bindTransportFeedback` uses an optional `data-graft-feedback-blocked` slot for a dismissible explanation that the command was not sent.
+
+`commandBlockReason()` returns the current reason, or `undefined` when the runtime permits a command. This snapshot does not reserve the command lane.
+
+A host can use that snapshot before an automatic preference update. A host can coalesce its own unsent preference updates after a known settlement. The host owns validation and priority for any deferred user action. An uncertain command retains the document guard across runtime replacement.
+
+A settlement listener can synchronously submit another command. Live work remains suspended until that command also reaches a known result.
+
 ## Pending form state
 
 Temporary pending state is not the latest authoritative form state.
@@ -121,10 +139,15 @@ A disposed runtime never applies a patch, emits settlement or calls feedback. La
     <p data-graft-feedback-uncertain role="alert" hidden>
         The result is uncertain. Reload before continuing.
     </p>
+    <p data-graft-feedback-blocked role="status" hidden>
+        Another request is active. This command was not sent.
+    </p>
     <button type="button" data-graft-feedback-dismiss>Dismiss</button>
     <button type="button" data-graft-feedback-reload hidden>Reload</button>
 </div>
 ```
+
+Blocked feedback can be dismissed without a change to transport state. A missing blocked slot leaves the original feedback slots functional. The diagnostic still reports the blocked command.
 
 Safe feedback can be dismissed without a change to transport state. Uncertainty takes precedence. It cannot be dismissed. It owns reload behaviour. Missing or ambiguous slots produce a diagnostic and a no-op binding. They do not fail application startup.
 

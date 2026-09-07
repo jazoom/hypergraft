@@ -61,10 +61,23 @@ type Runtime = {
     live: LiveController;
 };
 
+export type CommandBlockReason =
+    "pending-command" | "pending-navigation" | "uncertain-command";
+
+/** A blocked command never reaches the server. This does not reserve the lane. */
+export function commandBlockReason(): CommandBlockReason | undefined {
+    if (documentUnsafe.kind === "pending") return "pending-command";
+    if (documentUnsafe.kind === "uncertain") return "uncertain-command";
+    if (activeRuntime?.navigationPending || activeRuntime?.queuedHistoryUrl)
+        return "pending-navigation";
+    return undefined;
+}
+
 export interface TransportFeedback {
     safeFailure(): void;
     safeRecovery(): void;
     uncertainUnsafeOutcome(): void;
+    commandBlocked?(): void;
 }
 
 export interface HypergraftOptions {
@@ -469,7 +482,10 @@ function diagnosticReason(
     error: unknown,
 ): Exclude<
     DiagnosticReason,
-    "invalid-command-form" | "unknown-island" | "invalid-feedback"
+    | "invalid-command-form"
+    | "command-blocked"
+    | "unknown-island"
+    | "invalid-feedback"
 > {
     return hypergraftFailure(error)?.reason ?? "transport";
 }
@@ -848,7 +864,10 @@ type UnsafeOutcome =
           url: string;
           reason: Exclude<
               DiagnosticReason,
-              "invalid-command-form" | "unknown-island" | "invalid-feedback"
+              | "invalid-command-form"
+              | "command-blocked"
+              | "unknown-island"
+              | "invalid-feedback"
           >;
           targetId?: string;
       }
@@ -962,12 +981,18 @@ async function submitUnsafe(
         submitter?: HTMLButtonElement | HTMLInputElement;
     },
 ) {
-    if (
-        runtime.disposed ||
-        documentUnsafe.kind !== "idle" ||
-        runtime.navigationPending
-    )
+    if (runtime.disposed) return;
+    const blocked = commandBlockReason();
+    if (blocked) {
+        emitDiagnostic({
+            reason: "command-blocked",
+            element: form,
+            blocked,
+        });
+        if (blocked === "uncertain-command") showUncertain(runtime);
+        else runtime.options.feedback?.commandBlocked?.();
         return;
+    }
     runtime.live.suspend();
     cancelActiveSafeForms(runtime);
     documentUnsafe = { kind: "pending", form };
@@ -1029,7 +1054,12 @@ async function submitUnsafe(
         const historyUrl = runtime.queuedHistoryUrl;
         runtime.queuedHistoryUrl = undefined;
         void navigate(runtime, historyUrl, "pop");
-    } else if (outcome.kind === "applied") {
+    } else if (
+        outcome.kind === "applied" &&
+        !runtime.disposed &&
+        !commandBlockReason()
+    ) {
+        // A settlement listener can start the next command synchronously.
         runtime.live.resume();
     }
 }
