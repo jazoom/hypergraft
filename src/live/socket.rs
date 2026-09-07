@@ -22,6 +22,7 @@ use tokio::{
 };
 
 use crate::{
+    PatchBuildErrorKind,
     live::{
         CloseClass, InstantiateError, LiveEndpoint, LiveGuard, LiveProjection, LiveRouter,
         LiveSocketConfig, MAX_CONTROL_MESSAGE_BYTES, MAX_INBOUND_CONTROLS, MAX_OUTBOUND_BYTES,
@@ -105,6 +106,7 @@ pub(crate) enum Incoming {
     Binary,
     Pong,
     Close,
+    TransportError,
 }
 
 pub(crate) trait FrameSocket: Send {
@@ -144,7 +146,7 @@ impl FrameSocket for WebSocket {
                 Ok(Message::Pong(_)) => return Some(Incoming::Pong),
                 Ok(Message::Ping(_)) => continue,
                 Ok(Message::Close(_)) => return Some(Incoming::Close),
-                Err(_) => return None,
+                Err(_) => return Some(Incoming::TransportError),
             }
         }
     }
@@ -177,17 +179,17 @@ impl SubscriptionTask {
 // Each admitted subscription sends at most one failure. Notification must not wait for session cleanup.
 #[derive(Clone)]
 struct Termination {
-    tx: mpsc::UnboundedSender<CloseClass>,
+    tx: mpsc::UnboundedSender<SessionClose>,
 }
 
 impl Termination {
-    fn pair() -> (Self, mpsc::UnboundedReceiver<CloseClass>) {
+    fn pair() -> (Self, mpsc::UnboundedReceiver<SessionClose>) {
         let (tx, rx) = mpsc::unbounded_channel();
         (Self { tx }, rx)
     }
 
-    fn request(&self, class: CloseClass) {
-        let _ = self.tx.send(class);
+    fn request(&self, close: SessionClose) {
+        let _ = self.tx.send(close);
     }
 }
 
@@ -224,7 +226,92 @@ impl Drop for ListenerGuard {
 
 enum SessionEnd {
     Silent,
-    Close(CloseClass),
+    Close(SessionClose),
+}
+
+#[derive(Clone, Copy)]
+struct SessionClose {
+    class: CloseClass,
+    reason: CloseReason,
+}
+
+#[derive(Clone, Copy)]
+enum CloseReason {
+    Lease,
+    Guard,
+    Transport,
+    Protocol,
+    Budget,
+    Resynchronisation,
+}
+
+impl SessionClose {
+    const fn new(class: CloseClass, reason: CloseReason) -> Self {
+        Self { class, reason }
+    }
+}
+
+impl CloseReason {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Lease => "lease",
+            Self::Guard => "guard",
+            Self::Transport => "transport",
+            Self::Protocol => "protocol",
+            Self::Budget => "budget",
+            Self::Resynchronisation => "resynchronisation",
+        }
+    }
+
+    const fn is_unexpected(self) -> bool {
+        matches!(
+            self,
+            Self::Guard | Self::Transport | Self::Protocol | Self::Resynchronisation
+        )
+    }
+}
+
+fn close_class_name(class: CloseClass) -> &'static str {
+    match class {
+        CloseClass::Retryable => "retryable",
+        CloseClass::Terminal => "terminal",
+        CloseClass::Protocol => "protocol",
+        CloseClass::LeaseExpiry => "lease_expiry",
+        CloseClass::Resynchronisation => "resynchronisation",
+    }
+}
+
+fn patch_kind_name(kind: PatchBuildErrorKind) -> &'static str {
+    match kind {
+        PatchBuildErrorKind::Rendering => "rendering",
+        PatchBuildErrorKind::DuplicateTarget => "duplicate_target",
+        PatchBuildErrorKind::PatchLimit => "patch_limit",
+        PatchBuildErrorKind::EmptyBatch => "empty_batch",
+        PatchBuildErrorKind::InvalidTarget => "invalid_target",
+        PatchBuildErrorKind::InvalidStatus => "invalid_status",
+        PatchBuildErrorKind::InvalidLocation => "invalid_location",
+        PatchBuildErrorKind::InvalidLiveEnvelope => "invalid_live_envelope",
+        PatchBuildErrorKind::ResponseLimit => "response_limit",
+    }
+}
+
+fn log_session_end(end: &SessionEnd) {
+    match end {
+        SessionEnd::Silent => {
+            tracing::info!(reason = "peer", "live session closed");
+        }
+        SessionEnd::Close(close) => log_session_close(*close),
+    }
+}
+
+fn log_session_close(close: SessionClose) {
+    let close_class = close_class_name(close.class);
+    let reason = close.reason.as_str();
+    if close.reason.is_unexpected() {
+        tracing::warn!(close_class, reason, "live session closed");
+    } else {
+        tracing::info!(close_class, reason, "live session closed");
+    }
 }
 
 enum Outgoing {
@@ -246,12 +333,21 @@ async fn send_bounded<Sock: FrameSocket>(
     };
     tokio::select! {
         biased;
-        _ = lease.as_mut() => Err(SessionEnd::Close(CloseClass::LeaseExpiry)),
+        _ = lease.as_mut() => Err(SessionEnd::Close(SessionClose::new(
+            CloseClass::LeaseExpiry,
+            CloseReason::Lease,
+        ))),
         result = write => match result {
             Ok(()) => Ok(()),
-            Err(()) => Err(SessionEnd::Close(CloseClass::Retryable)),
+            Err(()) => Err(SessionEnd::Close(SessionClose::new(
+                CloseClass::Retryable,
+                CloseReason::Transport,
+            ))),
         },
-        _ = tokio::time::sleep(heartbeat_period) => Err(SessionEnd::Close(CloseClass::Retryable)),
+        _ = tokio::time::sleep(heartbeat_period) => Err(SessionEnd::Close(SessionClose::new(
+            CloseClass::Retryable,
+            CloseReason::Transport,
+        ))),
     }
 }
 
@@ -281,13 +377,17 @@ pub(crate) async fn run_session<S, G, Sock>(
     let connection = tokio::select! {
         biased;
         _ = &mut lease => {
-            close_best_effort(&mut socket, CloseClass::LeaseExpiry).await;
+            let close = SessionClose::new(CloseClass::LeaseExpiry, CloseReason::Lease);
+            log_session_close(close);
+            close_best_effort(&mut socket, close.class).await;
             return;
         }
         result = guard.bind(&upgrade_extensions) => match result {
             Ok(connection) => Arc::new(connection),
             Err(failure) => {
-                close_best_effort(&mut socket, failure.close_class()).await;
+                let close = SessionClose::new(failure.close_class(), CloseReason::Guard);
+                log_session_close(close);
+                close_best_effort(&mut socket, close.class).await;
                 return;
             }
         }
@@ -302,7 +402,7 @@ pub(crate) async fn run_session<S, G, Sock>(
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<OutboundPatch>(config.max_subscriptions);
     let (termination, mut close_rx) = Termination::pair();
     let (retired_tx, mut retired_rx) = mpsc::unbounded_channel::<u32>();
-    let (revalidate_tx, mut revalidate_rx) = mpsc::unbounded_channel::<Result<(), CloseClass>>();
+    let (revalidate_tx, mut revalidate_rx) = mpsc::unbounded_channel::<Result<(), SessionClose>>();
     let refreshes = Arc::new(Semaphore::new(config.max_concurrent_refreshes));
     let mut subscriptions: HashMap<u32, SubscriptionTask> = HashMap::new();
     let mut heartbeat_revalidate: Option<SubscriptionTask> = None;
@@ -315,18 +415,27 @@ pub(crate) async fn run_session<S, G, Sock>(
     let end = loop {
         tokio::select! {
             biased;
-            _ = &mut lease => break SessionEnd::Close(CloseClass::LeaseExpiry),
-            class = close_rx.recv() => {
-                break SessionEnd::Close(class.unwrap_or(CloseClass::Retryable));
+            _ = &mut lease => break SessionEnd::Close(SessionClose::new(
+                CloseClass::LeaseExpiry,
+                CloseReason::Lease,
+            )),
+            close = close_rx.recv() => {
+                break SessionEnd::Close(close.unwrap_or(SessionClose::new(
+                    CloseClass::Retryable,
+                    CloseReason::Transport,
+                )));
             }
             result = revalidate_rx.recv() => {
                 if let Some(mut task) = heartbeat_revalidate.take() {
                     task.join().await;
                 }
                 match result {
-                    Some(Err(class)) => break SessionEnd::Close(class),
+                    Some(Err(close)) => break SessionEnd::Close(close),
                     Some(Ok(())) => {}
-                    None => break SessionEnd::Close(CloseClass::Retryable),
+                    None => break SessionEnd::Close(SessionClose::new(
+                        CloseClass::Retryable,
+                        CloseReason::Transport,
+                    )),
                 }
             }
             retired = retired_rx.recv() => {
@@ -338,10 +447,16 @@ pub(crate) async fn run_session<S, G, Sock>(
             }
             _ = heartbeat.tick() => {
                 if pong_outstanding {
-                    break SessionEnd::Close(CloseClass::Retryable);
+                    break SessionEnd::Close(SessionClose::new(
+                        CloseClass::Retryable,
+                        CloseReason::Transport,
+                    ));
                 }
                 if outbound_messages >= MAX_OUTBOUND_MESSAGES {
-                    break SessionEnd::Close(CloseClass::LeaseExpiry);
+                    break SessionEnd::Close(SessionClose::new(
+                        CloseClass::LeaseExpiry,
+                        CloseReason::Budget,
+                    ));
                 }
                 outbound_messages += 1;
                 if let Err(end) = send_bounded(
@@ -365,12 +480,18 @@ pub(crate) async fn run_session<S, G, Sock>(
             }
             outbound = outbound_rx.recv() => {
                 let Some(patch) = outbound else {
-                    break SessionEnd::Close(CloseClass::Retryable);
+                    break SessionEnd::Close(SessionClose::new(
+                        CloseClass::Retryable,
+                        CloseReason::Transport,
+                    ));
                 };
                 if outbound_messages >= MAX_OUTBOUND_MESSAGES
                     || outbound_bytes.saturating_add(patch.bytes.len()) > MAX_OUTBOUND_BYTES
                 {
-                    break SessionEnd::Close(CloseClass::LeaseExpiry);
+                    break SessionEnd::Close(SessionClose::new(
+                        CloseClass::LeaseExpiry,
+                        CloseReason::Budget,
+                    ));
                 }
                 outbound_messages += 1;
                 outbound_bytes += patch.bytes.len();
@@ -388,21 +509,39 @@ pub(crate) async fn run_session<S, G, Sock>(
             incoming = socket.recv() => {
                 match incoming {
                     None | Some(Incoming::Close) => break SessionEnd::Silent,
+                    Some(Incoming::TransportError) => {
+                        break SessionEnd::Close(SessionClose::new(
+                            CloseClass::Retryable,
+                            CloseReason::Transport,
+                        ));
+                    }
                     Some(Incoming::Pong) => pong_outstanding = false,
                     Some(Incoming::Binary) => {
-                        break SessionEnd::Close(CloseClass::Protocol);
+                        break SessionEnd::Close(SessionClose::new(
+                            CloseClass::Protocol,
+                            CloseReason::Protocol,
+                        ));
                     }
                     Some(Incoming::Text(text)) => {
                         if inbound_controls >= MAX_INBOUND_CONTROLS {
-                            break SessionEnd::Close(CloseClass::LeaseExpiry);
+                            break SessionEnd::Close(SessionClose::new(
+                                CloseClass::LeaseExpiry,
+                                CloseReason::Budget,
+                            ));
                         }
                         if text.len() > MAX_CONTROL_MESSAGE_BYTES {
-                            break SessionEnd::Close(CloseClass::Protocol);
+                            break SessionEnd::Close(SessionClose::new(
+                                CloseClass::Protocol,
+                                CloseReason::Protocol,
+                            ));
                         }
                         inbound_controls += 1;
                         match parse_control(&text) {
                             Err(ControlError::Protocol) => {
-                                break SessionEnd::Close(CloseClass::Protocol);
+                                break SessionEnd::Close(SessionClose::new(
+                                    CloseClass::Protocol,
+                                    CloseReason::Protocol,
+                                ));
                             }
                             Ok(ControlMessage::Terminal) => break SessionEnd::Silent,
                             Ok(ControlMessage::Unsubscribe { id }) => {
@@ -412,10 +551,16 @@ pub(crate) async fn run_session<S, G, Sock>(
                             }
                             Ok(ControlMessage::Subscribe { id, url }) => {
                                 if !used_ids.insert(id) {
-                                    break SessionEnd::Close(CloseClass::Protocol);
+                                    break SessionEnd::Close(SessionClose::new(
+                                        CloseClass::Protocol,
+                                        CloseReason::Protocol,
+                                    ));
                                 }
                                 if subscriptions.len() >= config.max_subscriptions {
-                                    break SessionEnd::Close(CloseClass::Protocol);
+                                    break SessionEnd::Close(SessionClose::new(
+                                        CloseClass::Protocol,
+                                        CloseReason::Protocol,
+                                    ));
                                 }
                                 let task = spawn_subscription(SpawnRequest {
                                     id,
@@ -453,14 +598,15 @@ pub(crate) async fn run_session<S, G, Sock>(
         task.join().await;
     }
     drop(connection);
-    if let SessionEnd::Close(class) = end {
-        close_best_effort(&mut socket, class).await;
+    log_session_end(&end);
+    if let SessionEnd::Close(close) = end {
+        close_best_effort(&mut socket, close.class).await;
     }
 }
 
 enum SubscribeStart {
-    Ignore,
-    Close(CloseClass),
+    Ignore(&'static str),
+    Close(SessionClose),
 }
 
 struct ProjectionRuntime<C> {
@@ -501,7 +647,7 @@ where
 fn spawn_revalidate<G>(
     guard: G,
     connection: Arc<G::Connection>,
-    results: mpsc::UnboundedSender<Result<(), CloseClass>>,
+    results: mpsc::UnboundedSender<Result<(), SessionClose>>,
 ) -> SubscriptionTask
 where
     G: LiveGuard,
@@ -514,7 +660,10 @@ where
             result = guard.revalidate(connection.as_ref()) => {
                 let _ = results.send(match result {
                     Ok(_) => Ok(()),
-                    Err(failure) => Err(failure.close_class()),
+                    Err(failure) => Err(SessionClose::new(
+                        failure.close_class(),
+                        CloseReason::Guard,
+                    )),
                 });
             }
         }
@@ -535,12 +684,13 @@ where
         _ = &mut cancel => return,
         result = instantiate(&request) => match result {
             Ok(projection) => projection,
-            Err(SubscribeStart::Ignore) => {
+            Err(SubscribeStart::Ignore(reason)) => {
+                tracing::debug!(reason, "live subscription retired");
                 let _ = request.retired.send(request.id);
                 return;
             }
-            Err(SubscribeStart::Close(class)) => {
-                request.termination.request(class);
+            Err(SubscribeStart::Close(close)) => {
+                request.termination.request(close);
                 let _ = request.retired.send(request.id);
                 return;
             }
@@ -575,7 +725,12 @@ where
 {
     let context = match request.guard.revalidate(request.connection.as_ref()).await {
         Ok(context) => context,
-        Err(failure) => return Err(SubscribeStart::Close(failure.close_class())),
+        Err(failure) => {
+            return Err(SubscribeStart::Close(SessionClose::new(
+                failure.close_class(),
+                CloseReason::Guard,
+            )));
+        }
     };
     match request
         .router
@@ -588,9 +743,9 @@ where
         .await
     {
         Ok(projection) => Ok(projection),
-        Err(
-            InstantiateError::Unregistered | InstantiateError::Invalid | InstantiateError::Retire,
-        ) => Err(SubscribeStart::Ignore),
+        Err(InstantiateError::Unregistered) => Err(SubscribeStart::Ignore("unregistered")),
+        Err(InstantiateError::Invalid) => Err(SubscribeStart::Ignore("invalid")),
+        Err(InstantiateError::Retire) => Err(SubscribeStart::Ignore("projection")),
     }
 }
 
@@ -674,8 +829,8 @@ async fn run_projection<C, G>(
 
     listener.abort_and_wait().await;
     drop(projection.lifetime);
-    if let Err(class) = result {
-        runtime.termination.request(class);
+    if let Err(close) = result {
+        runtime.termination.request(close);
     }
     let _ = runtime.retired.send(id);
 }
@@ -688,20 +843,24 @@ async fn refresh_once<C, G>(
     refreshes: &Semaphore,
     outbound: &mpsc::Sender<OutboundPatch>,
     cancel: &mut oneshot::Receiver<()>,
-) -> Result<bool, CloseClass>
+) -> Result<bool, SessionClose>
 where
     C: Clone + Send + Sync + 'static,
     G: LiveGuard<Context = C>,
 {
     let permit = tokio::select! {
         _ = &mut *cancel => return Ok(true),
-        permit = refreshes.acquire() => permit.map_err(|_| CloseClass::Retryable)?,
+        permit = refreshes.acquire() => permit.map_err(|_| {
+            SessionClose::new(CloseClass::Retryable, CloseReason::Transport)
+        })?,
     };
     let context = tokio::select! {
         _ = &mut *cancel => return Ok(true),
         result = guard.revalidate(connection) => match result {
             Ok(context) => context,
-            Err(failure) => return Err(failure.close_class()),
+            Err(failure) => {
+                return Err(SessionClose::new(failure.close_class(), CloseReason::Guard));
+            }
         },
     };
     let patch = tokio::select! {
@@ -712,16 +871,30 @@ where
     let html = match patch {
         Ok(set) => match set.encode_live() {
             Ok(html) => html,
-            Err(_) => return Ok(true),
+            Err(error) => {
+                tracing::warn!(
+                    kind = patch_kind_name(error.kind()),
+                    "live projection encode failed"
+                );
+                tracing::debug!(reason = "encode", "live subscription retired");
+                return Ok(true);
+            }
         },
-        Err(ProjectionError::Retire) => return Ok(true),
+        Err(ProjectionError::Retire) => {
+            tracing::debug!(reason = "projection", "live subscription retired");
+            return Ok(true);
+        }
     };
-    let bytes =
-        crate::live::encode_patch_frame(id, &html).map_err(|_| CloseClass::Resynchronisation)?;
+    let bytes = crate::live::encode_patch_frame(id, &html).map_err(|_| {
+        SessionClose::new(
+            CloseClass::Resynchronisation,
+            CloseReason::Resynchronisation,
+        )
+    })?;
     tokio::select! {
         _ = &mut *cancel => Ok(true),
         sent = outbound.send(OutboundPatch { bytes }) => {
-            sent.map_err(|_| CloseClass::Retryable)?;
+            sent.map_err(|_| SessionClose::new(CloseClass::Retryable, CloseReason::Transport))?;
             Ok(false)
         }
     }

@@ -42,7 +42,7 @@ Handlers must extract the narrowest accepted representation. Use `PageGraft` for
 
 `PatchSet::encode_progress` and `encode_final` reject location replacements. `outcome::stream_response` validates frame and byte limits. It requires one final frame. It wraps the frame stream as `Graft-Transfer: stream`. `outcome::command_navigation` builds a validated navigation envelope for patch-only commands. `outcome::page_redirect` selects a native 303 response or a navigation envelope after destination validation.
 
-Hosts render documents and map `PatchBuildError` to their own secret-safe errors. Hosts compose a `LiveRouter` and supply one `LiveGuard`. They mount `live::service` at the configured endpoint. Hosts must not implement a socket loop, protocol codec, subscription map or reconnect policy.
+Hosts render documents and map `PatchBuildError` to their own secret-safe errors. Hosts compose a `LiveRouter` and supply one `LiveGuard`. They mount `live::service` at the configured endpoint. Hosts must not implement a socket loop, protocol codec, subscription map or reconnect policy. Live sockets emit structured `tracing` events. The library does not install a subscriber. Read [Live](docs/live.md) for diagnostic fields and trace levels.
 
 A native document response uses `PatchStatus::status_code` for the same outcome.
 

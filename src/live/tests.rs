@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use askama::Template;
 use axum::{
     extract::{Extension, Path, Query, State},
@@ -8,6 +10,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::{Notify, broadcast, mpsc};
 use tower::ServiceExt;
+use tracing::field::{Field, Visit};
+use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 
 use crate::{
     DomId, MAX_RESPONSE_BYTES, PatchSet, VERSION,
@@ -1503,4 +1507,392 @@ async fn socket_releases_resources_when_cancelled_during_an_active_refresh() {
     incoming.send(super::socket::Incoming::Close).unwrap();
     session.await.unwrap();
     assert_released(&projections, &listeners, &admission);
+}
+
+const LIVE_SECRET: &str = "s3cret-live-token-value";
+const DIAGNOSTIC_FIELDS: &[&str] = &["close_class", "reason", "kind"];
+
+#[derive(Clone, Debug)]
+struct CapturedEvent {
+    level: tracing::Level,
+    message: String,
+    fields: HashMap<String, String>,
+}
+
+#[derive(Clone, Default)]
+struct Capture(std::sync::Arc<std::sync::Mutex<Vec<CapturedEvent>>>);
+
+struct FieldRecorder {
+    message: String,
+    fields: HashMap<String, String>,
+}
+
+impl FieldRecorder {
+    fn record(&mut self, name: &str, value: String) {
+        let value = value.trim_matches('"').to_owned();
+        if name == "message" {
+            self.message = value;
+        } else {
+            self.fields.insert(name.to_owned(), value);
+        }
+    }
+}
+
+impl Visit for FieldRecorder {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.record(field.name(), format!("{value:?}"));
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.record(field.name(), value.to_owned());
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.record(field.name(), value.to_string());
+    }
+
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.record(field.name(), value.to_string());
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.record(field.name(), value.to_string());
+    }
+}
+
+impl<S> Layer<S> for Capture
+where
+    S: tracing::Subscriber,
+{
+    fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+        if !event.metadata().target().starts_with("hypergraft::live") {
+            return;
+        }
+        let mut recorder = FieldRecorder {
+            message: String::new(),
+            fields: HashMap::new(),
+        };
+        event.record(&mut recorder);
+        self.0.lock().unwrap().push(CapturedEvent {
+            level: *event.metadata().level(),
+            message: recorder.message,
+            fields: recorder.fields,
+        });
+    }
+}
+
+impl Capture {
+    fn subscriber(&self) -> impl tracing::Subscriber + Send + Sync + 'static {
+        tracing_subscriber::registry().with(self.clone())
+    }
+
+    fn events(&self) -> Vec<CapturedEvent> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+fn assert_secret_safe(events: &[CapturedEvent], secrets: &[&str]) {
+    for event in events {
+        for key in event.fields.keys() {
+            assert!(
+                DIAGNOSTIC_FIELDS.contains(&key.as_str()),
+                "unexpected diagnostic field {key}"
+            );
+        }
+        let blob = format!("{event:?}");
+        for secret in secrets {
+            assert!(!blob.contains(secret), "diagnostic leaked {secret}: {blob}");
+        }
+    }
+}
+
+fn field_value<'a>(event: &'a CapturedEvent, name: &str) -> Option<&'a str> {
+    event.fields.get(name).map(String::as_str)
+}
+
+#[derive(Clone)]
+struct FailingBindGuard(GuardFailure);
+
+impl LiveGuard for FailingBindGuard {
+    type Connection = ();
+    type Context = ();
+
+    async fn bind(
+        &self,
+        _extensions: &axum::http::Extensions,
+    ) -> Result<Self::Connection, GuardFailure> {
+        Err(self.0)
+    }
+
+    async fn revalidate(&self, _connection: &Self::Connection) -> Result<(), GuardFailure> {
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct EncodeFailState(std::sync::Arc<Notify>);
+
+async fn secret_encode_projection(
+    State(state): State<EncodeFailState>,
+) -> Result<LiveProjection<()>, LiveReject> {
+    let done = state.0.clone();
+    Ok(LiveProjection::new(
+        futures_util::stream::pending(),
+        move |_ctx| {
+            let done = done.clone();
+            async move {
+                done.notify_one();
+                Ok(children_patch("item-results", LIVE_SECRET).title(LIVE_SECRET))
+            }
+        },
+    ))
+}
+
+#[tokio::test]
+async fn live_diagnostics_exclude_secrets_from_encode_failure() {
+    let capture = Capture::default();
+    let _guard = tracing::subscriber::set_default(capture.subscriber());
+    let done = std::sync::Arc::new(Notify::new());
+    let waiting = done.notified();
+    let mut extensions = axum::http::Extensions::new();
+    let mut headers = HeaderMap::new();
+    headers.insert(header::AUTHORIZATION, HeaderValue::from_static(LIVE_SECRET));
+    extensions.insert(headers);
+    let (socket, incoming, mut outgoing) = session_pair();
+    let session = tokio::spawn(super::socket::run_session(
+        socket,
+        EncodeFailState(done.clone()),
+        std::sync::Arc::new(
+            LiveRouter::new()
+                .route("/items", secret_encode_projection)
+                .unwrap(),
+        ),
+        UnitGuard,
+        LiveSocketConfig::default(),
+        extensions,
+    ));
+    incoming
+        .send(super::socket::Incoming::Text(format!(
+            r#"{{"v":"1","type":"subscribe","id":1,"url":"/items?token={LIVE_SECRET}"}}"#
+        )))
+        .unwrap();
+    waiting.await;
+    let mut encoded = false;
+    for _ in 0..32 {
+        tokio::task::yield_now().await;
+        if capture
+            .events()
+            .iter()
+            .any(|event| event.message == "live projection encode failed")
+        {
+            encoded = true;
+            break;
+        }
+    }
+    assert!(encoded, "encode failure was not diagnosed");
+    incoming.send(super::socket::Incoming::Close).unwrap();
+    session.await.unwrap();
+    assert!(outgoing.try_recv().is_err());
+    let events = capture.events();
+    let encode = events
+        .iter()
+        .find(|event| event.message == "live projection encode failed")
+        .expect("encode diagnostic");
+    assert_eq!(encode.level, tracing::Level::WARN);
+    assert_eq!(field_value(encode, "kind"), Some("invalid_live_envelope"));
+    assert_secret_safe(&events, &[LIVE_SECRET, "<p>", "item-results"]);
+}
+
+#[tokio::test]
+async fn live_diagnostics_report_closed_guard_and_lease_reasons() {
+    let capture = Capture::default();
+    let _guard = tracing::subscriber::set_default(capture.subscriber());
+    let (socket, _incoming, mut outgoing) = session_pair();
+    let session = tokio::spawn(super::socket::run_session(
+        socket,
+        (),
+        std::sync::Arc::new(LiveRouter::new()),
+        FailingBindGuard(GuardFailure::Terminal),
+        LiveSocketConfig::default(),
+        axum::http::Extensions::new(),
+    ));
+    assert!(matches!(
+        outgoing.recv().await,
+        Some(FakeOut::Close(CloseClass::Terminal))
+    ));
+    session.await.unwrap();
+    let events = capture.events();
+    let closes: Vec<_> = events
+        .iter()
+        .filter(|event| event.message == "live session closed")
+        .collect();
+    assert_eq!(closes.len(), 1);
+    assert_eq!(closes[0].level, tracing::Level::WARN);
+    assert_eq!(field_value(closes[0], "reason"), Some("guard"));
+    assert_eq!(field_value(closes[0], "close_class"), Some("terminal"));
+
+    let capture = Capture::default();
+    let _guard = tracing::subscriber::set_default(capture.subscriber());
+    let (closed_tx, mut closed_rx) = mpsc::unbounded_channel();
+    tokio::time::pause();
+    let session = tokio::spawn(super::socket::run_session(
+        LeaseSocket {
+            pong_pending: false,
+            closed: closed_tx,
+        },
+        (),
+        std::sync::Arc::new(LiveRouter::new()),
+        UnitGuard,
+        LiveSocketConfig::default(),
+        axum::http::Extensions::new(),
+    ));
+    tokio::time::advance(std::time::Duration::from_secs(LEASE_SECONDS)).await;
+    assert_eq!(closed_rx.recv().await, Some(CloseClass::LeaseExpiry));
+    session.await.unwrap();
+    let events = capture.events();
+    let closes: Vec<_> = events
+        .iter()
+        .filter(|event| event.message == "live session closed")
+        .collect();
+    assert_eq!(closes.len(), 1);
+    assert_eq!(closes[0].level, tracing::Level::INFO);
+    assert_eq!(field_value(closes[0], "reason"), Some("lease"));
+    assert_eq!(field_value(closes[0], "close_class"), Some("lease_expiry"));
+}
+
+#[tokio::test]
+async fn live_diagnostics_distinguish_receive_failure_from_peer_closure() {
+    for failed in [false, true] {
+        let capture = Capture::default();
+        let _guard = tracing::subscriber::set_default(capture.subscriber());
+        use tokio_tungstenite::tungstenite::{client::IntoClientRequest, protocol::CloseFrame};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let origin = format!("http://{address}");
+        let app = service(
+            LiveEndpoint::with_default_path(&origin).unwrap(),
+            LiveSocketConfig::default(),
+            LiveRouter::new(),
+            UnitGuard,
+        )
+        .with_state(());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app.into_make_service())
+                .await
+                .unwrap();
+        });
+        let mut request = format!("ws://{address}{DEFAULT_PATH}")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert(header::ORIGIN, HeaderValue::from_str(&origin).unwrap());
+        request.headers_mut().insert(
+            header::SEC_WEBSOCKET_PROTOCOL,
+            HeaderValue::from_static(SUBPROTOCOL),
+        );
+        request
+            .headers_mut()
+            .insert(header::AUTHORIZATION, HeaderValue::from_static(LIVE_SECRET));
+        let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        if !failed {
+            socket
+                .close(Some(CloseFrame {
+                    code:
+                        tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Normal,
+                    reason: LIVE_SECRET.into(),
+                }))
+                .await
+                .unwrap();
+        }
+        // A dropped TCP connection without a close frame exercises the adapter's receive error.
+        drop(socket);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if !capture.events().is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        server.abort();
+        result.expect("session close diagnostic");
+        let events = capture.events();
+        assert_secret_safe(&events, &[LIVE_SECRET]);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].message, "live session closed");
+        if failed {
+            assert_eq!(events[0].level, tracing::Level::WARN);
+            assert_eq!(field_value(&events[0], "reason"), Some("transport"));
+            assert_eq!(field_value(&events[0], "close_class"), Some("retryable"));
+        } else {
+            assert_eq!(events[0].level, tracing::Level::INFO);
+            assert_eq!(field_value(&events[0], "reason"), Some("peer"));
+            assert_eq!(field_value(&events[0], "close_class"), None);
+        }
+    }
+}
+
+#[tokio::test]
+async fn live_diagnostics_emit_one_session_close_for_simultaneous_failures() {
+    let capture = Capture::default();
+    let _guard = tracing::subscriber::set_default(capture.subscriber());
+    let admission = SocketAdmission::new();
+    let guard = BarrierFailGuard {
+        admission: admission.clone(),
+        started: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        barrier: std::sync::Arc::new(tokio::sync::Barrier::new(3)),
+    };
+    let (socket, incoming, mut outgoing) = session_pair();
+    let session = tokio::spawn(super::socket::run_session(
+        socket,
+        TrackedLive {
+            projections: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            listeners: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        },
+        std::sync::Arc::new(
+            LiveRouter::new()
+                .route("/items", tracked_projection)
+                .unwrap(),
+        ),
+        guard,
+        LiveSocketConfig::default().max_subscriptions(3).unwrap(),
+        axum::http::Extensions::new(),
+    ));
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"subscribe","id":1,"url":"/items"}"#.to_owned(),
+        ))
+        .unwrap();
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"subscribe","id":2,"url":"/items"}"#.to_owned(),
+        ))
+        .unwrap();
+    incoming
+        .send(super::socket::Incoming::Text(
+            r#"{"v":"1","type":"subscribe","id":3,"url":"/items"}"#.to_owned(),
+        ))
+        .unwrap();
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        assert!(matches!(
+            outgoing.recv().await,
+            Some(FakeOut::Close(CloseClass::Retryable))
+        ));
+        session.await.unwrap();
+    })
+    .await;
+    assert!(ended.is_ok(), "session deadlocked during shutdown");
+    let events = capture.events();
+    let closes: Vec<_> = events
+        .iter()
+        .filter(|event| event.message == "live session closed")
+        .collect();
+    assert_eq!(closes.len(), 1);
+    assert_eq!(closes[0].level, tracing::Level::WARN);
+    assert_eq!(field_value(closes[0], "reason"), Some("guard"));
+    assert_eq!(field_value(closes[0], "close_class"), Some("retryable"));
+    assert_secret_safe(&events, &["/items"]);
 }
