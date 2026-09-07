@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use askama::Template;
 use axum::{
@@ -57,9 +57,65 @@ fn children_patch(target: &str, value: &str) -> PatchSet {
         .unwrap()
 }
 
+fn protocol_fixture() -> Value {
+    serde_json::from_str(include_str!("../../protocol-v1.json")).unwrap()
+}
+
+fn protocol_cases(consumer: &str) -> Vec<Value> {
+    protocol_fixture()["cases"]
+        .as_array()
+        .expect("cases")
+        .iter()
+        .filter(|case| {
+            case["consumers"]
+                .as_array()
+                .expect("consumers")
+                .iter()
+                .any(|value| value.as_str() == Some(consumer))
+        })
+        .cloned()
+        .collect()
+}
+
+fn control_text(case: &Value) -> String {
+    if let Some(text) = case["control"].as_str() {
+        return text.to_owned();
+    }
+    if let Some(len) = case["controlByteLength"].as_u64() {
+        let control = r#"{"v":"1","type":"terminal"}"#;
+        return format!("{control}{}", " ".repeat(len as usize - control.len()));
+    }
+    if let Some(len) = case["urlByteLength"].as_u64() {
+        let len = len as usize;
+        let url = format!("/{}", "a".repeat(len.saturating_sub(1)));
+        return format!(r#"{{"v":"1","type":"subscribe","id":1,"url":"{url}"}}"#);
+    }
+    panic!("{} has no control payload", case["name"]);
+}
+
+fn case_builder_patch(case: &Value) -> PatchSet {
+    let builder = &case["builder"];
+    let target = builder["target"].as_str().unwrap();
+    let content = builder["content"].as_str().unwrap();
+    let mut patches = match builder["operation"].as_str().unwrap() {
+        "append" => PatchSet::new()
+            .with_append(DomId::new(target).unwrap(), &Content { value: content })
+            .unwrap(),
+        "children" => children_patch(target, content),
+        other => panic!("{}: {other}", case["name"]),
+    };
+    if let Some(title) = builder["title"].as_str() {
+        patches = patches.title(title);
+    }
+    if let Some(location) = builder["location"].as_str() {
+        patches.replace_location(location).unwrap();
+    }
+    patches
+}
+
 #[test]
 fn matches_the_shared_live_fixture() {
-    let fixture: Value = serde_json::from_str(include_str!("../../protocol-v1.json")).unwrap();
+    let fixture = protocol_fixture();
     assert_eq!(fixture["version"], VERSION);
     assert_eq!(
         fixture["request"]["kinds"],
@@ -154,18 +210,72 @@ fn matches_the_shared_live_fixture() {
 }
 
 #[test]
-fn encode_live_rejects_titles_and_locations() {
-    let titled = children_patch("fixture-target", "Ready").title("Nope");
-    assert_eq!(
-        titled.encode_live().unwrap_err().kind(),
-        crate::PatchBuildErrorKind::InvalidLiveEnvelope
-    );
-    let mut located = children_patch("fixture-target", "Ready");
-    located.replace_location("/items").unwrap();
-    assert_eq!(
-        located.encode_live().unwrap_err().kind(),
-        crate::PatchBuildErrorKind::InvalidLiveEnvelope
-    );
+fn named_conformance_cases_have_consumers_and_closed_expectations() {
+    let mut names = HashSet::new();
+    for case in protocol_fixture()["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        assert!(names.insert(name.to_owned()), "{name}");
+        assert!(!case["consumers"].as_array().unwrap().is_empty(), "{name}");
+        let expectation = case["expectation"].as_str().unwrap();
+        assert!(
+            matches!(expectation, "accept" | "protocol"),
+            "{name}: {expectation}"
+        );
+    }
+    assert!(!names.is_empty());
+}
+
+#[test]
+fn consumes_named_control_conformance_cases() {
+    use super::codec::parse_control;
+    let cases = protocol_cases("rust-control");
+    assert!(!cases.is_empty());
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let parsed = parse_control(&control_text(&case));
+        match case["expectation"].as_str().unwrap() {
+            "accept" => assert!(parsed.is_ok(), "{name}"),
+            "protocol" => assert!(parsed.is_err(), "{name}"),
+            other => panic!("{name}: {other}"),
+        }
+    }
+}
+
+#[test]
+fn consumes_named_live_envelope_conformance_cases() {
+    let cases = protocol_cases("rust-live");
+    assert!(!cases.is_empty());
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let expectation = case["expectation"].as_str().unwrap();
+        if !case["builder"].is_null() {
+            let patches = case_builder_patch(&case);
+            match expectation {
+                "accept" => {
+                    let html = patches.encode_live().unwrap();
+                    if let Some(envelope) = case["envelope"].as_str() {
+                        assert_eq!(html, envelope, "{name}");
+                    }
+                }
+                "protocol" => {
+                    assert_eq!(
+                        patches.encode_live().unwrap_err().kind(),
+                        crate::PatchBuildErrorKind::InvalidLiveEnvelope,
+                        "{name}"
+                    );
+                }
+                other => panic!("{name}: {other}"),
+            }
+        }
+        if let Some(envelope) = case["envelope"].as_str() {
+            let decoded = decode_live_envelope(envelope);
+            match expectation {
+                "accept" => assert!(decoded.is_ok(), "{name}"),
+                "protocol" => assert!(decoded.is_err(), "{name}"),
+                other => panic!("{name}: {other}"),
+            }
+        }
+    }
 }
 
 #[test]
@@ -594,26 +704,6 @@ async fn real_upgrade_selects_only_the_live_subprotocol() {
     server.abort();
 }
 
-#[test]
-fn control_parser_enforces_bounds_and_local_urls() {
-    use super::codec::parse_control;
-    assert!(parse_control(r#"{"v":"1","type":"subscribe","id":1,"url":"/items"}"#).is_ok());
-    assert!(parse_control(r#"{"v":"1","type":"subscribe","id":0,"url":"/items"}"#).is_err());
-    assert!(
-        parse_control(r#"{"v":"1","type":"subscribe","id":1,"url":"https://example.test/items"}"#)
-            .is_err()
-    );
-    assert!(parse_control(r#"{"v":"1","type":"subscribe","id":1,"url":"/items#x"}"#).is_err());
-    let huge_url = format!(
-        "{{\"v\":\"1\",\"type\":\"subscribe\",\"id\":1,\"url\":\"/{}\"}}",
-        "a".repeat(MAX_PROJECTION_URL_BYTES),
-    );
-    assert!(parse_control(&huge_url).is_err());
-    let huge = "x".repeat(MAX_CONTROL_MESSAGE_BYTES + 1);
-    assert!(parse_control(&huge).is_err());
-    assert!(parse_control(r#"{"v":"1","type":"terminal","id":1}"#).is_err());
-}
-
 struct FakeSocket {
     incoming: mpsc::UnboundedReceiver<super::socket::Incoming>,
     outgoing: mpsc::UnboundedSender<FakeOut>,
@@ -687,6 +777,44 @@ fn session_pair() -> (
         in_tx,
         out_rx,
     )
+}
+
+#[tokio::test]
+async fn consumes_named_socket_conformance_cases() {
+    let cases = protocol_cases("rust-socket");
+    assert!(!cases.is_empty());
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let router = std::sync::Arc::new(LiveRouter::new());
+        let (socket, incoming, mut outgoing) = session_pair();
+        let session = tokio::spawn(super::socket::run_session(
+            socket,
+            (),
+            router,
+            UnitGuard,
+            LiveSocketConfig::default(),
+            axum::http::Extensions::new(),
+        ));
+        for control in case["controls"].as_array().unwrap() {
+            incoming
+                .send(super::socket::Incoming::Text(
+                    control.as_str().unwrap().to_owned(),
+                ))
+                .unwrap();
+        }
+        let mut closed = None;
+        while let Some(out) = outgoing.recv().await {
+            if let FakeOut::Close(class) = out {
+                closed = Some(class);
+                break;
+            }
+        }
+        match case["expectation"].as_str().unwrap() {
+            "protocol" => assert_eq!(closed, Some(CloseClass::Protocol), "{name}"),
+            other => panic!("{name}: {other}"),
+        }
+        session.await.unwrap();
+    }
 }
 
 #[tokio::test(start_paused = true)]

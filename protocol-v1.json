@@ -114,5 +114,214 @@
     "representativeLivePatch": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
     "representativeSubscribe": "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":1,\"url\":\"/items?fixture=one\"}",
     "representativeUnsubscribe": "{\"v\":\"1\",\"type\":\"unsubscribe\",\"id\":1}",
-    "representativeTerminal": "{\"v\":\"1\",\"type\":\"terminal\"}"
+    "representativeTerminal": "{\"v\":\"1\",\"type\":\"terminal\"}",
+    "cases": [
+        {
+            "name": "control-subscribe-local-url",
+            "consumers": ["rust-control", "browser-control"],
+            "expectation": "accept",
+            "control": "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":1,\"url\":\"/items?fixture=one\"}"
+        },
+        {
+            "name": "control-unsubscribe",
+            "consumers": ["rust-control", "browser-control"],
+            "expectation": "accept",
+            "control": "{\"v\":\"1\",\"type\":\"unsubscribe\",\"id\":1}"
+        },
+        {
+            "name": "control-terminal",
+            "consumers": ["rust-control", "browser-control"],
+            "expectation": "accept",
+            "control": "{\"v\":\"1\",\"type\":\"terminal\"}"
+        },
+        {
+            "name": "control-subscribe-unknown-field",
+            "consumers": ["rust-control"],
+            "expectation": "protocol",
+            "control": "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":1,\"url\":\"/items\",\"extra\":true}"
+        },
+        {
+            "name": "control-unsubscribe-unknown-field",
+            "consumers": ["rust-control"],
+            "expectation": "protocol",
+            "control": "{\"v\":\"1\",\"type\":\"unsubscribe\",\"id\":1,\"extra\":true}"
+        },
+        {
+            "name": "control-terminal-unknown-field",
+            "consumers": ["rust-control"],
+            "expectation": "protocol",
+            "control": "{\"v\":\"1\",\"type\":\"terminal\",\"id\":1}"
+        },
+        {
+            "name": "control-unknown-type",
+            "consumers": ["rust-control"],
+            "expectation": "protocol",
+            "control": "{\"v\":\"1\",\"type\":\"ping\"}"
+        },
+        {
+            "name": "control-subscribe-missing-url",
+            "consumers": ["rust-control"],
+            "expectation": "protocol",
+            "control": "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":1}"
+        },
+        {
+            "name": "control-subscribe-id-zero",
+            "consumers": ["rust-control"],
+            "expectation": "protocol",
+            "control": "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":0,\"url\":\"/items\"}"
+        },
+        {
+            "name": "control-unsubscribe-id-zero",
+            "consumers": ["rust-control"],
+            "expectation": "protocol",
+            "control": "{\"v\":\"1\",\"type\":\"unsubscribe\",\"id\":0}"
+        },
+        {
+            "name": "control-subscribe-id-string",
+            "consumers": ["rust-control"],
+            "expectation": "protocol",
+            "control": "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":\"1\",\"url\":\"/items\"}"
+        },
+        {
+            "name": "control-subscribe-https-url",
+            "consumers": ["rust-control"],
+            "expectation": "protocol",
+            "control": "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":1,\"url\":\"https://example.test/items\"}"
+        },
+        {
+            "name": "control-subscribe-fragment-url",
+            "consumers": ["rust-control"],
+            "expectation": "protocol",
+            "control": "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":1,\"url\":\"/items#x\"}"
+        },
+        {
+            "name": "control-subscribe-url-at-byte-limit",
+            "consumers": ["rust-control"],
+            "expectation": "accept",
+            "urlByteLength": 8192
+        },
+        {
+            "name": "control-subscribe-url-over-byte-limit",
+            "consumers": ["rust-control"],
+            "expectation": "protocol",
+            "urlByteLength": 8193
+        },
+        {
+            "name": "control-message-at-byte-limit",
+            "consumers": ["rust-control"],
+            "expectation": "accept",
+            "controlByteLength": 16384
+        },
+        {
+            "name": "control-message-over-byte-limit",
+            "consumers": ["rust-control"],
+            "expectation": "protocol",
+            "controlByteLength": 16385
+        },
+        {
+            "name": "subscription-id-reuse",
+            "consumers": ["rust-socket"],
+            "expectation": "protocol",
+            "controls": [
+                "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":1,\"url\":\"/items\"}",
+                "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":1,\"url\":\"/items\"}"
+            ]
+        },
+        {
+            "name": "subscription-id-reuse-after-unsubscribe",
+            "consumers": ["rust-socket"],
+            "expectation": "protocol",
+            "controls": [
+                "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":1,\"url\":\"/items\"}",
+                "{\"v\":\"1\",\"type\":\"unsubscribe\",\"id\":1}",
+                "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":1,\"url\":\"/items\"}"
+            ]
+        },
+        {
+            "name": "complete-envelope-children",
+            "consumers": ["browser-preflight"],
+            "expectation": "accept",
+            "envelope": "<graft-patch-set version=\"1\" title=\"Fixture &amp; title\" location=\"/items?fixture=one&amp;other=two\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>"
+        },
+        {
+            "name": "live-envelope-children",
+            "consumers": ["rust-live", "browser-preflight-live"],
+            "expectation": "accept",
+            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+            "builder": {
+                "operation": "children",
+                "target": "fixture-target",
+                "content": "Ready"
+            }
+        },
+        {
+            "name": "live-envelope-title",
+            "consumers": ["rust-live", "browser-preflight-live"],
+            "expectation": "protocol",
+            "envelope": "<graft-patch-set version=\"1\" title=\"Nope\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+            "builder": {
+                "operation": "children",
+                "target": "fixture-target",
+                "content": "Ready",
+                "title": "Nope"
+            }
+        },
+        {
+            "name": "live-envelope-location",
+            "consumers": ["rust-live", "browser-preflight-live"],
+            "expectation": "protocol",
+            "envelope": "<graft-patch-set version=\"1\" location=\"/items\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+            "builder": {
+                "operation": "children",
+                "target": "fixture-target",
+                "content": "Ready",
+                "location": "/items"
+            }
+        },
+        {
+            "name": "live-envelope-navigate",
+            "consumers": ["rust-live", "browser-preflight-live"],
+            "expectation": "protocol",
+            "envelope": "<graft-patch-set version=\"1\" navigate=\"/items\"></graft-patch-set>"
+        },
+        {
+            "name": "stream-envelope-location-progress",
+            "consumers": ["rust-response", "browser-preflight-frame"],
+            "expectation": "protocol",
+            "envelope": "<graft-patch-set version=\"1\" phase=\"progress\" location=\"/items\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+            "builder": {
+                "operation": "append",
+                "target": "fixture-target",
+                "content": "Ready",
+                "location": "/items",
+                "phase": "progress"
+            }
+        },
+        {
+            "name": "stream-envelope-location-final",
+            "consumers": ["rust-response", "browser-preflight-frame"],
+            "expectation": "protocol",
+            "envelope": "<graft-patch-set version=\"1\" phase=\"final\" location=\"/items\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+            "builder": {
+                "operation": "append",
+                "target": "fixture-target",
+                "content": "Ready",
+                "location": "/items",
+                "phase": "final"
+            }
+        },
+        {
+            "name": "dom-id-at-byte-limit",
+            "consumers": ["rust-response", "browser-preflight"],
+            "expectation": "accept",
+            "idByteLength": 128
+        },
+        {
+            "name": "dom-id-over-byte-limit",
+            "consumers": ["rust-response", "browser-preflight"],
+            "expectation": "protocol",
+            "idByteLength": 129,
+            "browserReason": "target-content"
+        }
+    ]
 }

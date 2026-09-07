@@ -139,9 +139,29 @@ fn rejects_duplicate_and_seventeenth_targets_before_rendering() {
     assert!(PatchSet::new().respond(PatchStatus::Ok).is_err());
 }
 
+fn protocol_fixture() -> Value {
+    serde_json::from_str(include_str!("../../protocol-v1.json")).unwrap()
+}
+
+fn protocol_cases(consumer: &str) -> Vec<Value> {
+    protocol_fixture()["cases"]
+        .as_array()
+        .expect("cases")
+        .iter()
+        .filter(|case| {
+            case["consumers"]
+                .as_array()
+                .expect("consumers")
+                .iter()
+                .any(|value| value.as_str() == Some(consumer))
+        })
+        .cloned()
+        .collect()
+}
+
 #[tokio::test]
 async fn matches_the_shared_version_one_fixture() {
-    let fixture: Value = serde_json::from_str(include_str!("../../protocol-v1.json")).unwrap();
+    let fixture = protocol_fixture();
     assert_eq!(fixture["version"], VERSION);
     assert_eq!(fixture["mediaType"], MEDIA_TYPE);
     assert_eq!(
@@ -218,6 +238,59 @@ async fn matches_the_shared_version_one_fixture() {
         String::from_utf8(progress.into_bytes()).unwrap(),
         fixture["representativeStreamFrame"]
     );
+}
+
+#[test]
+fn consumes_named_response_conformance_cases() {
+    let cases = protocol_cases("rust-response");
+    assert!(!cases.is_empty());
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let expectation = case["expectation"].as_str().unwrap();
+        if let Some(len) = case["idByteLength"].as_u64() {
+            let id = "a".repeat(len as usize);
+            match expectation {
+                "accept" => assert!(DomId::new(id).is_ok(), "{name}"),
+                "protocol" => assert!(DomId::new(id).is_err(), "{name}"),
+                other => panic!("{name}: {other}"),
+            }
+            continue;
+        }
+        let builder = &case["builder"];
+        let target = builder["target"].as_str().unwrap();
+        let content = builder["content"].as_str().unwrap();
+        let mut patches = match builder["operation"].as_str().unwrap() {
+            "append" => PatchSet::new()
+                .with_append(DomId::new(target).unwrap(), &Content { value: content })
+                .unwrap(),
+            "children" => PatchSet::new()
+                .with_children(DomId::new(target).unwrap(), &Content { value: content })
+                .unwrap(),
+            other => panic!("{name}: {other}"),
+        };
+        if let Some(title) = builder["title"].as_str() {
+            patches = patches.title(title);
+        }
+        if let Some(location) = builder["location"].as_str() {
+            patches.replace_location(location).unwrap();
+        }
+        let result = match builder["phase"].as_str() {
+            Some("progress") => patches.encode_progress().map(|_| ()),
+            Some("final") => patches.encode_final(PatchStatus::Ok).map(|_| ()),
+            _ => patches.respond(PatchStatus::Ok).map(|_| ()),
+        };
+        match expectation {
+            "accept" => assert!(result.is_ok(), "{name}"),
+            "protocol" => {
+                assert_eq!(
+                    result.unwrap_err().kind(),
+                    PatchBuildErrorKind::InvalidLocation,
+                    "{name}"
+                );
+            }
+            other => panic!("{name}: {other}"),
+        }
+    }
 }
 
 fn escaped_navigation_len(destination: &str) -> usize {
@@ -342,7 +415,7 @@ async fn stream_response_rejects_an_incomplete_or_overlong_frame_sequence() {
 }
 
 fn protocol_limits() -> (usize, usize, usize) {
-    let fixture: Value = serde_json::from_str(include_str!("../../protocol-v1.json")).unwrap();
+    let fixture = protocol_fixture();
     (
         fixture["limits"]["streamFrames"].as_u64().unwrap() as usize,
         fixture["limits"]["streamBytes"].as_u64().unwrap() as usize,

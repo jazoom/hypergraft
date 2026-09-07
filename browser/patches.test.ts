@@ -23,6 +23,21 @@ import {
     STREAM_STATUSES,
 } from "./patches";
 
+type ProtocolCase = {
+    name: string;
+    consumers: string[];
+    expectation: "accept" | "protocol";
+    envelope?: string;
+    idByteLength?: number;
+    browserReason?: "target-content";
+};
+
+function protocolCases(consumer: string): ProtocolCase[] {
+    return (fixture as { cases: ProtocolCase[] }).cases.filter((item) =>
+        item.consumers.includes(consumer),
+    );
+}
+
 function response(body: string, status = 200, type = MEDIA_TYPE) {
     const headers: Record<string, string> = { "content-type": type };
     if (status === 429) headers["retry-after"] = "60";
@@ -85,6 +100,48 @@ test("matches the shared version one fixture", () => {
     });
     expect(() => preflightLive(fixture.representativePatch)).toThrow();
     expect(() => preflightLive(fixture.representativeNavigation)).toThrow();
+});
+
+test("consumes named envelope conformance cases", () => {
+    document.body.innerHTML = '<main id="fixture-target"></main>';
+    const consumers = [
+        "browser-preflight",
+        "browser-preflight-live",
+        "browser-preflight-frame",
+    ] as const;
+    let count = 0;
+    for (const consumer of consumers) {
+        const cases = protocolCases(consumer);
+        count += cases.length;
+        for (const item of cases) {
+            let envelope = item.envelope;
+            if (item.idByteLength !== undefined) {
+                const id = "a".repeat(item.idByteLength);
+                document.body.innerHTML = `<main id="${id}"></main>`;
+                envelope = `<graft-patch-set version="1"><graft-patch operation="children" target="${id}"><template><p>Ready</p></template></graft-patch></graft-patch-set>`;
+            } else {
+                document.body.innerHTML = '<main id="fixture-target"></main>';
+            }
+            expect(envelope, item.name).toBeTypeOf("string");
+            const run = () => {
+                if (consumer === "browser-preflight")
+                    return preflight(response(envelope!)[0], envelope!);
+                if (consumer === "browser-preflight-live")
+                    return preflightLive(envelope!);
+                return preflightFrame(envelope!);
+            };
+            if (item.expectation === "accept") {
+                expect(run, item.name).not.toThrow();
+            } else {
+                expect(run, item.name).toThrowError(
+                    expect.objectContaining({
+                        reason: item.browserReason ?? item.expectation,
+                    }),
+                );
+            }
+        }
+    }
+    expect(count).toBeGreaterThan(0);
 });
 
 test("preflights and applies a children batch", () => {

@@ -72,6 +72,19 @@ class MockSocket extends EventTarget {
     }
 }
 
+type ProtocolCase = {
+    name: string;
+    consumers: string[];
+    expectation: "accept" | "protocol";
+    control?: string;
+};
+
+function protocolCases(consumer: string): ProtocolCase[] {
+    return (fixture as { cases: ProtocolCase[] }).cases.filter((item) =>
+        item.consumers.includes(consumer),
+    );
+}
+
 function envelope(target: string, content: string) {
     return `<graft-patch-set version="1"><graft-patch operation="children" target="${target}"><template>${content}</template></graft-patch></graft-patch-set>`;
 }
@@ -151,6 +164,37 @@ test("matches the shared live fixture", () => {
     expect(LIVE_CLOSE).toEqual(fixture.live.close);
     expect(fixture.request.kinds).toEqual(["navigation", "patch"]);
     expect(fixture.transfer.kinds).toEqual(["complete", "stream"]);
+});
+
+test("produces accepted control messages from the protocol fixture", async () => {
+    const cases = protocolCases("browser-control");
+    expect(cases.length).toBeGreaterThan(0);
+    const form = liveForm("one", "/items", "item-results");
+    form.insertAdjacentHTML(
+        "afterbegin",
+        '<input type="hidden" name="fixture" value="one">',
+    );
+    cleanup = startHypergraft();
+    await vi.waitFor(() => expect(MockSocket.instances).toHaveLength(1));
+    const socket = MockSocket.instances[0]!;
+    await vi.waitFor(() => expect(socket.sent).toHaveLength(1));
+    form.remove();
+    await vi.waitFor(() =>
+        expect(socket.sent.some((value) => value.includes("unsubscribe"))).toBe(
+            true,
+        ),
+    );
+    await vi.waitFor(() =>
+        expect(socket.sent.some((value) => value.includes("terminal"))).toBe(
+            true,
+        ),
+    );
+    const sent = socket.sent.map((value) => JSON.parse(value) as unknown);
+    for (const item of cases) {
+        expect(item.expectation, item.name).toBe("accept");
+        expect(item.control, item.name).toBeTypeOf("string");
+        expect(sent, item.name).toContainEqual(JSON.parse(item.control!));
+    }
 });
 
 test("opens one socket and applies the first live patch", async () => {
