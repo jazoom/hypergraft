@@ -6,7 +6,7 @@ Ordinary Axum pages already serve documents, links and forms. Hypergraft adds en
 
 JavaScript is required for live projections and command patches. HTTP still serves each initial document, deep link, reload and canonical GET page. Real links and forms define navigation, queries and commands. A native POST without patch metadata receives a no-store 400 before domain work.
 
-Hypergraft is not a drop-in htmx substitute. htmx supports backend-independent HTML swaps with attributes that select targets and swap behaviour. Hypergraft is a closed protocol for Axum and Askama. It owns request classification, bounded envelopes, one live socket and a JavaScript-required runtime. Commands are patch-only. The version 1 Rust host does not add a second adapter.
+Hypergraft has different goals to htmx. htmx supports backend-independent HTML swaps with attributes that select targets and swap behaviour. Hypergraft is a closed protocol for Axum and Askama. It owns request classification, bounded envelopes, one live socket and a JavaScript-required runtime. Commands are patch-only.
 
 The source-preview Rust API and browser API remain experimental. Protocol version 1 is the versioned wire contract.
 

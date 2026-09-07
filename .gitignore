@@ -4,6 +4,7 @@
 /coverage
 /playwright-report
 /test-results
+/.vitest-attachments/
 /browser/__screenshots__
 /examples/reference/dist
 
