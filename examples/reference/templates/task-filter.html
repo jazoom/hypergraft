@@ -1,0 +1,26 @@
+<p>
+    <label for="task-search">Search</label>
+    <input
+        id="task-search"
+        name="q"
+        type="search"
+        value="{{ search }}"
+        maxlength="120"
+        autocomplete="off"
+    />
+</p>
+<p>
+    <label for="task-status">Status</label>
+    <select id="task-status" name="status">
+        <option value="all"{% if status.is_all() %} selected{% endif %}>All</option>
+        <option value="open"{% if status.is_open() %} selected{% endif %}>
+            Open
+        </option>
+        <option value="done"{% if status.is_done() %} selected{% endif %}>
+            Done
+        </option>
+    </select>
+</p>
+<p>
+    <button type="submit" aria-disabled="false">Filter</button>
+</p>

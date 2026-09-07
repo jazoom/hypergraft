@@ -402,6 +402,7 @@ version = "0.0.1"
 dependencies = [
  "askama",
  "axum",
+ "form_urlencoded",
  "hypergraft",
  "tokio",
 ]

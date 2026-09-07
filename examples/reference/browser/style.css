@@ -65,7 +65,46 @@ a {
     color: var(--link);
 }
 
+form {
+    border-bottom: 1px solid var(--line);
+    display: grid;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    padding-bottom: 1rem;
+}
+
+form p {
+    margin: 0;
+}
+
+label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+input,
+select,
+button {
+    color: inherit;
+    font: inherit;
+}
+
+input[type="search"],
+select {
+    max-width: 24rem;
+    width: 100%;
+}
+
+button {
+    padding: 0.35rem 0.75rem;
+    width: max-content;
+}
+
 a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
 main:focus {
     outline: 3px solid var(--focus);
     outline-offset: 3px;
