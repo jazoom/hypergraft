@@ -1,14 +1,33 @@
+use std::sync::OnceLock;
+
 use axum::{
     extract::Request,
     http::{HeaderValue, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use hypergraft::live::LiveEndpoint;
 
 pub const PUBLIC_ORIGIN: &str = "http://127.0.0.1:3000";
 pub const BIND_ADDR: &str = "127.0.0.1:3000";
 
-const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self' ws://127.0.0.1:3000; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types hypergraft";
+pub fn live_endpoint() -> LiveEndpoint {
+    LiveEndpoint::with_default_path(PUBLIC_ORIGIN)
+        .expect("loopback origin is a valid live endpoint")
+}
+
+fn content_security_policy() -> HeaderValue {
+    static CSP: OnceLock<HeaderValue> = OnceLock::new();
+    CSP.get_or_init(|| {
+        let endpoint = live_endpoint();
+        let connect = endpoint.csp_connect_src();
+        HeaderValue::from_str(&format!(
+            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self' {connect}; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types hypergraft"
+        ))
+        .expect("csp is a valid header")
+    })
+    .clone()
+}
 
 pub async fn security_headers(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
@@ -16,10 +35,7 @@ pub async fn security_headers(request: Request, next: Next) -> Response {
     headers
         .entry(header::CACHE_CONTROL)
         .or_insert(HeaderValue::from_static("no-store"));
-    headers.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(CSP),
-    );
+    headers.insert(header::CONTENT_SECURITY_POLICY, content_security_policy());
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),

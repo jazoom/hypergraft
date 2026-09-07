@@ -15,4 +15,5 @@ askama = "0.16.0"
 axum = "0.8.9"
 form_urlencoded = "1.2.2"
 hypergraft = { path = "../.." }
-tokio = { version = "1.53.1", features = ["macros", "net", "rt"] }
+tokio = { version = "1.53.1", features = ["macros", "net", "rt", "sync"] }
+tracing-subscriber = "0.3.23"

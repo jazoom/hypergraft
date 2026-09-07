@@ -58,6 +58,14 @@ h2 {
     margin: 0 0 0.75rem;
 }
 
+#live-status {
+    margin: 0 0 1.25rem;
+}
+
+body:has([data-graft-feedback-uncertain]:not([hidden])) #live-status {
+    display: none;
+}
+
 [role="alert"] {
     font-weight: 650;
 }

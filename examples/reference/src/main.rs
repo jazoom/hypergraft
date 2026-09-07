@@ -1,4 +1,5 @@
 mod commands;
+mod live;
 mod pages;
 mod security;
 mod state;
@@ -35,6 +36,7 @@ pub(crate) struct AppState {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    tracing_subscriber::fmt().init();
     let assets = match load_assets() {
         Ok(assets) => assets,
         Err(error) => {
@@ -61,6 +63,7 @@ async fn main() {
     let app = Router::new()
         .merge(browser)
         .merge(assets)
+        .merge(live::service())
         .route("/", get(home))
         .fallback(security::not_found)
         .layer(middleware::from_fn(security::security_headers))

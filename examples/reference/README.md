@@ -281,3 +281,104 @@ An unknown task identifier receives a no-store 404 response.
 6. Make sure that the second tab shows the conflict feedback.
 7. Make sure that the second tab now shows Done and Reopen.
 8. Make sure that the command does not retry by itself.
+
+## Watch live updates
+
+The list filter form is a live projection. JavaScript is required for live updates.
+
+The server patches `task-results` after a successful create or status change. The filter form and the create form stay outside that target.
+
+The live status region sits outside `main`. It presents a disconnected state and a terminal stop. It does not run a second retry timer. A live patch event means a projection applied. An open socket does not prove that the list is current.
+
+Unsafe uncertainty feedback stays in front of this connection text.
+
+A command suspends live work. No subscription starts during the command. After a known create result, live work resumes with the command query. That query comes from the hidden filter fields. The resumed subscription uses that same query. The filter controls, the results and the browser URL use it too.
+
+A server restart restores the seed data. It does not keep tasks from the previous process. After a retryable disconnection, the browser reconnects when the process returns. A terminal stop requires a page reload.
+
+The anonymous guard allows eight concurrent sockets across the process. Each connection owns an admission permit until the socket session ends.
+
+Subscription URLs include every filter control, including an empty `q` and the default `status=all`. The browser URL omits these defaults. Both URLs describe the same normalised query.
+
+### See a change in two list tabs
+
+1. Open `http://127.0.0.1:3000/tasks?status=open` in two tabs.
+2. Make sure that both tabs show Write the weekly notes.
+3. Open Write the weekly notes in a third tab.
+4. Press Complete.
+5. Make sure that both list tabs remove that task without a reload.
+6. Make sure that the live status reports that the list updated.
+
+### Resume live work after a pending filter GET
+
+1. Open `http://127.0.0.1:3000/tasks`.
+2. Open the developer tools. Watch the WebSocket frames.
+3. Throttle the network.
+4. Choose Done in Status.
+5. Press Filter.
+6. Before the filter response arrives, enter `Live command query` in Title.
+7. Press Create.
+8. Make sure that no subscribe frame is sent during the command.
+9. Make sure that Search is empty and Status is All.
+10. Make sure that the URL is `/tasks`.
+11. Make sure that the new task is in the results.
+12. Make sure that the next subscribe URL is `/tasks?q=&status=all`.
+13. Reload the page.
+14. Make sure that the same filter controls and results remain.
+
+Repeat the steps with a blank title instead of a valid title.
+
+1. Choose Open in Status.
+2. Press Filter. Wait for the results.
+3. Throttle the network.
+4. Choose Done in Status.
+5. Press Filter.
+6. Before the filter response arrives, enter only spaces in Title.
+7. Press Create.
+8. Make sure that no subscribe frame is sent during the command.
+9. Make sure that Search is empty and Status is Open.
+10. Make sure that the URL is `/tasks?status=open`.
+11. Make sure that the rejection adds no task.
+12. Make sure that the next subscribe URL is `/tasks?q=&status=open`.
+13. Reload the page.
+14. Make sure that the same filter controls and results remain.
+
+### Resume live work after an unsubmitted filter edit
+
+1. Open `http://127.0.0.1:3000/tasks`.
+2. Choose Open in Status.
+3. Press Filter.
+4. Enter `zzzz` in Search. Do not press Filter.
+5. Enter `Query from hidden fields` in Title.
+6. Press Create.
+7. Make sure that no subscribe frame is sent during the command.
+8. Make sure that Search is empty and Status is Open.
+9. Make sure that the URL is `/tasks?status=open`.
+10. Make sure that the next subscribe URL is `/tasks?q=&status=open`.
+11. Reload the page.
+12. Make sure that the same filter controls and results remain.
+
+Repeat the steps with a blank title instead of a valid title.
+
+1. Choose Done in Status.
+2. Press Filter.
+3. Enter `zzzz` in Search. Do not press Filter.
+4. Enter only spaces in Title.
+5. Press Create.
+6. Make sure that no subscribe frame is sent during the command.
+7. Make sure that Search is empty and Status is Done.
+8. Make sure that the URL is `/tasks?status=done`.
+9. Make sure that the rejection adds no task.
+10. Make sure that the next subscribe URL is `/tasks?q=&status=done`.
+11. Reload the page.
+12. Make sure that the same filter controls and results remain.
+
+### Restart the server
+
+1. Create a task named `Must not survive restart`.
+2. Stop the server process.
+3. Make sure that the live status shows a disconnected or stopped state.
+4. Start the server again with `mise run example`.
+5. If live updates stopped permanently, reload the page.
+6. Make sure that the created task disappears from the results.
+7. Make sure that the seed tasks are back.

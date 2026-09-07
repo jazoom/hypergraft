@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use tokio::sync::broadcast;
+
 pub(crate) const MAX_TASKS: usize = 100;
 pub(crate) const MAX_TITLE_SCALARS: usize = 120;
 
@@ -33,10 +35,12 @@ pub(crate) enum StatusError {
 #[derive(Clone)]
 pub struct Store {
     inner: Arc<Mutex<Vec<Task>>>,
+    invalidations: broadcast::Sender<()>,
 }
 
 impl Store {
     pub fn seeded() -> Self {
+        let (invalidations, _) = broadcast::channel(16);
         Self {
             inner: Arc::new(Mutex::new(vec![
                 Task {
@@ -58,7 +62,12 @@ impl Store {
                     revision: 1,
                 },
             ])),
+            invalidations,
         }
+    }
+
+    pub(crate) fn subscribe(&self) -> broadcast::Receiver<()> {
+        self.invalidations.subscribe()
     }
 
     pub fn list(&self) -> Vec<Task> {
@@ -77,18 +86,22 @@ impl Store {
         if title.chars().count() > MAX_TITLE_SCALARS {
             return Err(CreateError::TooLong);
         }
-        let mut tasks = self.lock();
-        if tasks.len() >= MAX_TASKS {
-            return Err(CreateError::Full);
-        }
-        let id = tasks.iter().map(|task| task.id).max().unwrap_or(0) + 1;
-        let task = Task {
-            id,
-            title: title.to_owned(),
-            done: false,
-            revision: 1,
+        let task = {
+            let mut tasks = self.lock();
+            if tasks.len() >= MAX_TASKS {
+                return Err(CreateError::Full);
+            }
+            let id = tasks.iter().map(|task| task.id).max().unwrap_or(0) + 1;
+            let task = Task {
+                id,
+                title: title.to_owned(),
+                done: false,
+                revision: 1,
+            };
+            tasks.push(task.clone());
+            task
         };
-        tasks.push(task.clone());
+        self.notify();
         Ok(task)
     }
 
@@ -98,22 +111,30 @@ impl Store {
         expected_revision: u64,
         action: StatusAction,
     ) -> Result<Task, StatusError> {
-        let mut tasks = self.lock();
-        let Some(task) = tasks.iter_mut().find(|task| task.id == id) else {
-            return Err(StatusError::NotFound);
+        let task = {
+            let mut tasks = self.lock();
+            let Some(task) = tasks.iter_mut().find(|task| task.id == id) else {
+                return Err(StatusError::NotFound);
+            };
+            // The expected revision and the state transition share this lock.
+            // A later check can miss a write from another command.
+            if task.revision != expected_revision {
+                return Err(StatusError::Conflict(task.clone()));
+            }
+            let done = matches!(action, StatusAction::Complete);
+            if task.done == done {
+                return Err(StatusError::Conflict(task.clone()));
+            }
+            task.done = done;
+            task.revision += 1;
+            task.clone()
         };
-        // The expected revision and the state transition share this lock.
-        // A later check can miss a write from another command.
-        if task.revision != expected_revision {
-            return Err(StatusError::Conflict(task.clone()));
-        }
-        let done = matches!(action, StatusAction::Complete);
-        if task.done == done {
-            return Err(StatusError::Conflict(task.clone()));
-        }
-        task.done = done;
-        task.revision += 1;
-        Ok(task.clone())
+        self.notify();
+        Ok(task)
+    }
+
+    fn notify(&self) {
+        let _ = self.invalidations.send(());
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Task>> {
