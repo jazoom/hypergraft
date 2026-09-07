@@ -5,7 +5,30 @@ import { fileURLToPath } from "node:url";
 import type { Plugin } from "vite";
 import { defineConfig } from "vitest/config";
 
+const BROWSER_ENGINES = ["chromium", "firefox", "webkit"] as const;
+type BrowserEngine = (typeof BROWSER_ENGINES)[number];
+
+function selectedBrowserEngine(): BrowserEngine {
+    const value = process.env.HYPERGRAFT_BROWSER?.trim() || "chromium";
+    if (!BROWSER_ENGINES.includes(value as BrowserEngine)) {
+        throw new Error(
+            `HYPERGRAFT_BROWSER must be one of: ${BROWSER_ENGINES.join(", ")}`,
+        );
+    }
+    return value as BrowserEngine;
+}
+
+const browserEngine = selectedBrowserEngine();
 const executablePath = process.env.BROWSER_EXECUTABLE_PATH;
+const launchOptions =
+    browserEngine === "chromium" && executablePath ? { executablePath } : {};
+const instances = (
+    [
+        { browser: "chromium" },
+        { browser: "firefox" },
+        { browser: "webkit" },
+    ] as const
+).filter((instance) => instance.browser === browserEngine);
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const cspHtmlPath = path.join(rootDir, "browser/fixtures/csp.html");
 const CSP_HTML_PATH = "/browser/fixtures/csp.html";
@@ -67,11 +90,9 @@ export default defineConfig({
         include: ["browser/**/*.browser.test.ts"],
         browser: {
             enabled: true,
-            provider: playwright({
-                launchOptions: executablePath ? { executablePath } : {},
-            }),
+            provider: playwright({ launchOptions }),
             headless: true,
-            instances: [{ browser: "chromium" }],
+            instances: [...instances],
         },
     },
 });

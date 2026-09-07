@@ -30,7 +30,7 @@ run = [
 ]
 
 [tasks."test:browser"]
-description = "Run the focused Hypergraft Chromium contract suite"
+description = "Run the focused browser contracts for HYPERGRAFT_BROWSER"
 run = "pnpm test:browser"
 
 [tasks.example]

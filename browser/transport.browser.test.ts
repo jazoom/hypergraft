@@ -55,9 +55,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    // Clear the unsafe guard before the production stop function. A final stop
+    // reloads when a command is pending or uncertain. That reload leaves the
+    // Firefox and WebKit testers without a document.
+    resetHypergraftForTests();
     cleanup?.();
     cleanup = undefined;
-    resetHypergraftForTests();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
 });

@@ -414,7 +414,7 @@ The host must provide trusted server rendering, authentication, authorisation, u
 
 ## Development setup
 
-Hypergraft uses mise to pin Rust, Node.js and pnpm. Playwright uses its managed Chromium installation by default.
+Hypergraft uses mise to pin Rust, Node.js and pnpm. Playwright uses its managed Chromium installation by default. Set `HYPERGRAFT_BROWSER` to `firefox` or `webkit` to run that engine after you install it.
 
 Prepare a fresh clone:
 
@@ -424,13 +424,15 @@ pnpm install --frozen-lockfile
 pnpm exec playwright install chromium
 ```
 
-`BROWSER_EXECUTABLE_PATH` selects another Chromium-compatible executable when the variable is present.
+`BROWSER_EXECUTABLE_PATH` selects another Chromium executable when the variable is present. It has no effect on Firefox or WebKit.
 
 On Linux, this command also installs required system packages when the host grants system access:
 
 ```sh
 pnpm exec playwright install --with-deps chromium
 ```
+
+Read [Compatibility](docs/compatibility.md) for the tested engine matrix.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before you propose a change. Report security issues through [SECURITY.md](SECURITY.md).
 
@@ -468,6 +470,6 @@ Run one test suite when you need a narrower result:
 
 - `cargo test --all-features`
 - `pnpm test`
-- `pnpm test:browser`
+- `pnpm test:browser` (set `HYPERGRAFT_BROWSER` to select Chromium, Firefox or WebKit)
 
 Rust integration is in `src/`. The runtime is in `browser/`. `protocol-v1.json` is the shared conformance fixture.

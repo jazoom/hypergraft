@@ -1,0 +1,62 @@
+name: CI
+
+on:
+    pull_request:
+    push:
+        branches: [main]
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@v4
+            - uses: jdx/mise-action@v2
+            - name: Install JavaScript dependencies
+              run: pnpm install --frozen-lockfile
+            - name: Check formatting
+              run: |
+                  taplo format --check
+                  pnpm prettier --check --cache --log-level warn .
+                  cargo fmt --all -- --check
+            - name: Run static checks
+              run: |
+                  pnpm check
+                  cargo clippy --locked --workspace --all-targets --all-features -- --deny warnings
+            - name: Run Rust workspace tests
+              run: cargo test --locked --workspace --all-features --quiet
+            - name: Run browser unit tests
+              run: pnpm test
+            - name: Build the reference application
+              run: |
+                  pnpm example:build
+                  cargo build --locked -p hypergraft-reference
+
+    browser:
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        strategy:
+            fail-fast: false
+            matrix:
+                browser: [chromium, firefox, webkit]
+        steps:
+            - uses: actions/checkout@v4
+            - uses: jdx/mise-action@v2
+            - name: Install JavaScript dependencies
+              run: pnpm install --frozen-lockfile
+            - name: Install the selected Playwright browser
+              run: pnpm exec playwright install --with-deps ${{ matrix.browser }}
+            - name: Run focused browser contracts
+              run: pnpm test:browser
+              env:
+                  HYPERGRAFT_BROWSER: ${{ matrix.browser }}

@@ -20,7 +20,10 @@ pnpm install --frozen-lockfile
 pnpm exec playwright install chromium
 ```
 
-Set `BROWSER_EXECUTABLE_PATH` only when you need another Chromium-compatible executable.
+Set `HYPERGRAFT_BROWSER` to `firefox` or `webkit` to run that engine.
+Install that Playwright browser first.
+Set `BROWSER_EXECUTABLE_PATH` only for Chromium.
+Read [Compatibility](docs/compatibility.md) for the tested engine matrix.
 
 ## Quality requirements
 
