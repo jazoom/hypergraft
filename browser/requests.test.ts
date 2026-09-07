@@ -1005,6 +1005,7 @@ test("a superseded safe GET restores pending state and emits no settled event", 
 });
 
 test("a replacement request on the same form owns and restores pending state", async () => {
+    const diagnostics = collectDiagnostics();
     let resolveOld!: (response: Response) => void;
     let resolveLatest!: (response: Response) => void;
     vi.mocked(fetch)
@@ -1040,6 +1041,7 @@ test("a replacement request on the same form owns and restores pending state", a
     expect(details[0]!.outcome).toBe("applied-patch");
     expect(document.body.textContent).toContain("Latest");
     expect(document.body.textContent).not.toContain("Stale");
+    expect(diagnostics).toEqual([]);
 });
 
 test("safe recovery waits for every connected failed GET form", async () => {
@@ -1637,6 +1639,7 @@ test("teardown during a debounce does not start a later request", async () => {
 });
 
 test("teardown during a safe fetch does not patch or settle", async () => {
+    const diagnostics = collectDiagnostics();
     let resolve!: (response: Response) => void;
     vi.mocked(fetch).mockReturnValue(
         new Promise((done) => {
@@ -1659,6 +1662,8 @@ test("teardown during a safe fetch does not patch or settle", async () => {
     await flush();
     expect(document.getElementById("late")).toBeNull();
     expect(details).toHaveLength(0);
+    expect(element.hasAttribute("data-graft-pending")).toBe(false);
+    expect(diagnostics).toEqual([]);
 });
 
 test("teardown during navigation does not apply a later patch", async () => {

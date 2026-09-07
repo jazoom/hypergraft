@@ -42,8 +42,8 @@ type Subscription = {
 
 export type LiveController = {
     reconcile(): void;
-    retireForm(form: HTMLFormElement): void;
-    restoreForm(form: HTMLFormElement): void;
+    retireForm(form: HTMLFormElement, sequence: number): void;
+    restoreForm(form: HTMLFormElement, sequence: number): void;
     suspend(): void;
     resume(): void;
     stop(): void;
@@ -184,7 +184,8 @@ export function createLiveController(
     let reportedInvalidEndpoint = false;
     const subs = new Map<HTMLFormElement, Subscription>();
     const byId = new Map<number, Subscription>();
-    const retiredForms = new Set<HTMLFormElement>();
+    // Retirement must not retain detached forms after request cancellation.
+    let retiredForms = new WeakMap<HTMLFormElement, number>();
 
     const clearRetry = () => {
         if (retryTimer !== undefined) clearTimeout(retryTimer);
@@ -608,16 +609,17 @@ export function createLiveController(
 
     return {
         reconcile,
-        retireForm(form) {
-            retiredForms.add(form);
+        retireForm(form, sequence) {
+            retiredForms.set(form, sequence);
             unsubscribe(form, true);
-            if (subs.size === 0) {
+            if (subs.size === 0 && mode !== "suspended" && mode !== "stopped") {
                 clearRetry();
                 if (socket) abandonSocket();
                 mode = "idle";
             }
         },
-        restoreForm(form) {
+        restoreForm(form, sequence) {
+            if (retiredForms.get(form) !== sequence) return;
             retiredForms.delete(form);
             reconcile();
         },
@@ -640,7 +642,7 @@ export function createLiveController(
             abandonSocket();
             for (const form of [...subs.keys()]) unsubscribe(form, false);
             byId.clear();
-            retiredForms.clear();
+            retiredForms = new WeakMap();
         },
     };
 }

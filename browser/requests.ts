@@ -582,8 +582,8 @@ async function navigate(
     )
         return;
     runtime.navigationPending = true;
-    cancelActiveSafeForms(runtime);
     runtime.live.suspend();
+    cancelActiveSafeForms(runtime);
     const sequence = ++runtime.navigationLane.sequence;
     runtime.navigationLane.controller?.abort();
     runtime.navigationLane.controller = new AbortController();
@@ -700,11 +700,12 @@ async function submitSafe(
         return;
     }
     const url = getFormUrl(form, submitter);
-    if (form.hasAttribute("data-graft-live")) runtime.live.retireForm(form);
     const button = submitterControl(submitter);
     const lane = runtime.formLanes.get(form) ?? { sequence: 0, error: false };
     runtime.formLanes.set(form, lane);
     const sequence = ++lane.sequence;
+    if (form.hasAttribute("data-graft-live"))
+        runtime.live.retireForm(form, sequence);
     lane.controller?.abort();
     // A replacement request owns a fresh pending snapshot. Restore the old
     // one before taking it, otherwise the replacement can preserve a stale
@@ -714,7 +715,10 @@ async function submitSafe(
     lane.controller = new AbortController();
     runtime.activeSafeFormLanes.add(lane);
     const restorePending = pendingState(form, button);
-    lane.cancelPending = restorePending;
+    lane.cancelPending = () => {
+        restorePending();
+        runtime.live.restoreForm(form, sequence);
+    };
     // The effective request URL: the response URL once a response was
     // received, otherwise the attempted request URL.
     const responseUrl: { current?: string } = {};
@@ -779,7 +783,7 @@ async function submitSafe(
                     ...settlement,
                 });
             }
-            runtime.live.restoreForm(form);
+            runtime.live.restoreForm(form, sequence);
         }
     }
 }
@@ -919,8 +923,8 @@ async function submitUnsafe(
         runtime.navigationPending
     )
         return;
-    cancelActiveSafeForms(runtime);
     runtime.live.suspend();
+    cancelActiveSafeForms(runtime);
     documentUnsafe = { kind: "pending", form };
     const restorePending = pendingState(form, prepared.submitter);
     const outcome = await unsafeRequest(runtime, form, prepared);
@@ -1110,6 +1114,7 @@ function createRuntime(options: HypergraftOptions): Runtime {
         disposed: () => runtime.disposed,
         validateContent: options.validateContent,
     });
+    if (documentUnsafe.kind !== "idle") runtime.live.suspend();
     history.replaceState({ ...(history.state ?? {}), hypergraft: true }, "");
     const onClick = (event: MouseEvent) => {
         if (runtime.disposed || event.defaultPrevented) return;

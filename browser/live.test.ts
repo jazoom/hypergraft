@@ -350,6 +350,186 @@ test("leaves live mode suspended after an uncertain unsafe result", async () => 
     expect(MockSocket.instances).toHaveLength(1);
 });
 
+test.each(["command", "navigation"])(
+    "releases a cancelled GET without a reconnect during %s",
+    async (kind) => {
+        vi.useFakeTimers();
+        const form = liveForm("one", "/items", "item-results");
+        document.body.insertAdjacentHTML(
+            "beforeend",
+            '<form id="command" data-graft method="post" action="/save"></form><a id="next" data-graft href="/next">Next</a>',
+        );
+        cleanup = startHypergraft();
+        await vi.advanceTimersByTimeAsync(0);
+        const old = MockSocket.instances[0]!;
+        const settled = vi.fn();
+        const diagnostic = vi.fn();
+        document.addEventListener("hypergraft:requestsettled", settled);
+        document.addEventListener("hypergraft:diagnostic", diagnostic);
+        let resolveGet!: (response: Response) => void;
+        let resolveNext!: (response: Response) => void;
+        vi.mocked(fetch)
+            .mockReturnValueOnce(
+                new Promise((resolve) => {
+                    resolveGet = resolve;
+                }),
+            )
+            .mockReturnValueOnce(
+                new Promise((resolve) => {
+                    resolveNext = resolve;
+                }),
+            );
+        form.dispatchEvent(
+            new SubmitEvent("submit", { bubbles: true, cancelable: true }),
+        );
+        if (kind === "command")
+            document
+                .getElementById("command")!
+                .dispatchEvent(
+                    new SubmitEvent("submit", {
+                        bubbles: true,
+                        cancelable: true,
+                    }),
+                );
+        else document.getElementById("next")!.click();
+        expect(form.hasAttribute("data-graft-pending")).toBe(false);
+        resolveGet(
+            new Response(envelope("item-results", "Stale"), {
+                headers: { "content-type": MEDIA_TYPE },
+            }),
+        );
+        document.body.append(document.createElement("div"));
+        old.receive(1, envelope("item-results", "Late socket"));
+        old.dispatchEvent(
+            new CloseEvent("close", { code: LIVE_CLOSE.retryable }),
+        );
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(MockSocket.instances).toHaveLength(1);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(document.getElementById("item-results")!.textContent).toBe("");
+        expect(settled).not.toHaveBeenCalled();
+        expect(diagnostic).not.toHaveBeenCalled();
+        resolveNext(
+            new Response(envelope("item-results", "Current"), {
+                headers: { "content-type": MEDIA_TYPE },
+            }),
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        expect(MockSocket.instances).toHaveLength(2);
+        expect(JSON.parse(MockSocket.instances[1]!.sent[0]!)).toMatchObject({
+            type: "subscribe",
+            url: "/items",
+        });
+        document.removeEventListener("hypergraft:requestsettled", settled);
+        document.removeEventListener("hypergraft:diagnostic", diagnostic);
+    },
+);
+
+test.each(["pending", "uncertain"])(
+    "a replacement inherits %s suspension until reload",
+    async (state) => {
+        vi.useFakeTimers();
+        const reload = vi
+            .spyOn(location, "reload")
+            .mockImplementation(() => {});
+        liveForm("one", "/items", "item-results");
+        document.body.insertAdjacentHTML(
+            "beforeend",
+            '<form id="command" data-graft method="post" action="/save"></form>',
+        );
+        cleanup = startHypergraft();
+        await vi.advanceTimersByTimeAsync(0);
+        const old = MockSocket.instances[0]!;
+        let resolve!: (response: Response) => void;
+        let reject!: (error: Error) => void;
+        vi.mocked(fetch).mockReturnValue(
+            new Promise((done, fail) => {
+                resolve = done;
+                reject = fail;
+            }),
+        );
+        document
+            .getElementById("command")!
+            .dispatchEvent(
+                new SubmitEvent("submit", { bubbles: true, cancelable: true }),
+            );
+        if (state === "uncertain") {
+            reject(new TypeError("network failed"));
+            await vi.advanceTimersByTimeAsync(0);
+        }
+        cleanup = startHypergraft();
+        liveForm("two", "/other", "other-results");
+        old.receive(1, envelope("item-results", "Late"));
+        old.dispatchEvent(new Event("open"));
+        old.dispatchEvent(
+            new CloseEvent("close", { code: LIVE_CLOSE.retryable }),
+        );
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(MockSocket.instances).toHaveLength(1);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(document.getElementById("item-results")!.textContent).toBe("");
+        if (state === "pending") {
+            resolve(
+                new Response(envelope("item-results", "Disposed"), {
+                    headers: { "content-type": MEDIA_TYPE },
+                }),
+            );
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(reload).toHaveBeenCalledOnce();
+            expect(document.getElementById("item-results")!.textContent).toBe(
+                "",
+            );
+            expect(MockSocket.instances).toHaveLength(1);
+            expect(vi.getTimerCount()).toBe(0);
+        }
+        cleanup();
+        cleanup = undefined;
+        expect(reload).toHaveBeenCalled();
+    },
+);
+
+test("an older GET cannot release its replacement's live retirement", async () => {
+    vi.useFakeTimers();
+    const form = liveForm("one", "/items", "item-results");
+    cleanup = startHypergraft();
+    await vi.advanceTimersByTimeAsync(0);
+    let resolveOld!: (response: Response) => void;
+    let resolveNew!: (response: Response) => void;
+    vi.mocked(fetch)
+        .mockReturnValueOnce(
+            new Promise((resolve) => {
+                resolveOld = resolve;
+            }),
+        )
+        .mockReturnValueOnce(
+            new Promise((resolve) => {
+                resolveNew = resolve;
+            }),
+        );
+    for (let index = 0; index < 2; index++)
+        form.dispatchEvent(
+            new SubmitEvent("submit", { bubbles: true, cancelable: true }),
+        );
+    resolveOld(
+        new Response(envelope("item-results", "Stale"), {
+            headers: { "content-type": MEDIA_TYPE },
+        }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(MockSocket.instances).toHaveLength(1);
+    expect(form.hasAttribute("data-graft-pending")).toBe(true);
+    resolveNew(
+        new Response(envelope("item-results", "Current"), {
+            headers: { "content-type": MEDIA_TYPE },
+        }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(MockSocket.instances).toHaveLength(2);
+    expect(document.getElementById("item-results")!.textContent).toBe(
+        "Current",
+    );
+});
+
 test("keeps the socket while visibility changes", async () => {
     liveForm("one", "/items", "item-results");
     cleanup = startHypergraft();
