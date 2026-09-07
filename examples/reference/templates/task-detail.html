@@ -1,0 +1,41 @@
+<h1>{{ task.title }}</h1>
+<p>
+    Status:
+    {% if task.done %}
+    Done
+    {% else %}
+    Open
+    {% endif %}
+</p>
+<div id="task-detail-feedback">
+    {% if let Some(message) = error %}
+    <p role="alert">{{ message }}</p>
+    {% endif %}
+</div>
+{% if task.done %}
+<form
+    method="post"
+    action="/tasks/{{ task.id }}/status"
+    data-graft
+    aria-describedby="task-detail-feedback"
+>
+    <input type="hidden" name="action" value="reopen" />
+    <input type="hidden" name="revision" value="{{ task.revision }}" />
+    <p>
+        <button type="submit">Reopen</button>
+    </p>
+</form>
+{% else %}
+<form
+    method="post"
+    action="/tasks/{{ task.id }}/status"
+    data-graft
+    aria-describedby="task-detail-feedback"
+>
+    <input type="hidden" name="action" value="complete" />
+    <input type="hidden" name="revision" value="{{ task.revision }}" />
+    <p>
+        <button type="submit">Complete</button>
+    </p>
+</form>
+{% endif %}

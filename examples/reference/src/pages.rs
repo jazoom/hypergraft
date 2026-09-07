@@ -182,6 +182,14 @@ pub(crate) struct TaskCreateFeedback<'a> {
 #[template(path = "task.html")]
 struct TaskPage<'a> {
     task: &'a Task,
+    error: Option<&'a str>,
+}
+
+#[derive(Template)]
+#[template(path = "task-detail.html")]
+pub(crate) struct TaskDetail<'a> {
+    pub(crate) task: &'a Task,
+    pub(crate) error: Option<&'a str>,
 }
 
 pub enum AppError {
@@ -260,7 +268,10 @@ pub async fn task(
     let id = raw_id.parse::<u64>().map_err(|_| AppError::NotFound)?;
     let task = state.store.get(id).ok_or(AppError::NotFound)?;
     let title = task.title.clone();
-    let page = TaskPage { task: &task };
+    let page = TaskPage {
+        task: &task,
+        error: None,
+    };
     match graft {
         PageGraft::Document => document(&title, &page),
         PageGraft::Navigation => Ok(outcome::page_patch(title, "main", &page)?),

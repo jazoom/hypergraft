@@ -1,16 +1,19 @@
 use axum::{
-    extract::{DefaultBodyLimit, RawForm, State, rejection::RawFormRejection},
+    extract::{
+        DefaultBodyLimit, Path, RawForm, State,
+        rejection::{PathRejection, RawFormRejection},
+    },
     response::Response,
 };
-use hypergraft::{PatchBuildError, PatchGraft, PatchSet, PatchStatus};
+use hypergraft::{PatchBuildError, PatchGraft, PatchSet, PatchStatus, outcome};
 
 use crate::{
     AppState,
     pages::{
-        AppError, TaskCreate, TaskCreateFeedback, TaskCreateFilters, TaskFilter, TaskQuery,
-        TaskResults,
+        AppError, TaskCreate, TaskCreateFeedback, TaskCreateFilters, TaskDetail, TaskFilter,
+        TaskQuery, TaskResults,
     },
-    state::{CreateError, Task},
+    state::{CreateError, StatusAction, StatusError, Task},
 };
 
 // Two 120-scalar fields need at most 2880 percent-encoded bytes.
@@ -21,6 +24,8 @@ const TITLE_BLANK: &str = "Enter a title.";
 const TITLE_TOO_LONG: &str = "Title must be 120 characters or fewer.";
 const LIST_FULL: &str = "The list is full.";
 const BODY_REJECTED: &str = "The request is invalid. The filter was reset to all tasks.";
+const STATUS_INVALID: &str = "The request is invalid.";
+const STATUS_CONFLICT: &str = "This task changed. The form shows the current state.";
 
 pub(crate) fn command_body_limit() -> DefaultBodyLimit {
     DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)
@@ -66,6 +71,32 @@ pub async fn create(
     }
 }
 
+pub async fn status(
+    State(state): State<AppState>,
+    _graft: PatchGraft,
+    path: Result<Path<String>, PathRejection>,
+    form: Result<RawForm, RawFormRejection>,
+) -> Result<Response, AppError> {
+    let Path(raw_id) = path.map_err(|_| AppError::NotFound)?;
+    let id = raw_id.parse::<u64>().map_err(|_| AppError::NotFound)?;
+    let parsed = form.ok().and_then(|RawForm(body)| parse_status_form(&body));
+    let Some((action, revision)) = parsed else {
+        let task = state.store.get(id).ok_or(AppError::NotFound)?;
+        return status_patch(
+            PatchStatus::UnprocessableEntity,
+            &task,
+            Some(STATUS_INVALID),
+        );
+    };
+    match state.store.set_status(id, revision, action) {
+        Ok(task) => status_patch(PatchStatus::Ok, &task, None),
+        Err(StatusError::NotFound) => Err(AppError::NotFound),
+        Err(StatusError::Conflict(task)) => {
+            status_patch(PatchStatus::Conflict, &task, Some(STATUS_CONFLICT))
+        }
+    }
+}
+
 fn parse_create_form(body: &[u8]) -> Option<(String, TaskQuery)> {
     let mut title = String::new();
     let mut query = TaskQuery::unfiltered();
@@ -100,6 +131,42 @@ fn decode_field(mut bytes: &[u8]) -> Option<String> {
         });
     }
     String::from_utf8(decoded).ok()
+}
+
+fn parse_status_form(body: &[u8]) -> Option<(StatusAction, u64)> {
+    let mut action = None;
+    let mut revision = None;
+    for field in body.split(|byte| *byte == b'&') {
+        let mut parts = field.splitn(2, |byte| *byte == b'=');
+        let key = decode_field(parts.next()?)?;
+        let value = decode_field(parts.next().unwrap_or_default())?;
+        match key.as_str() {
+            "action" if action.is_none() => action = Some(parse_status_action(&value)?),
+            "revision" if revision.is_none() => revision = Some(value.parse().ok()?),
+            _ => return None,
+        }
+    }
+    Some((action?, revision?))
+}
+
+fn parse_status_action(value: &str) -> Option<StatusAction> {
+    match value {
+        "complete" => Some(StatusAction::Complete),
+        "reopen" => Some(StatusAction::Reopen),
+        _ => None,
+    }
+}
+
+fn status_patch(
+    status: PatchStatus,
+    task: &Task,
+    error: Option<&str>,
+) -> Result<Response, AppError> {
+    Ok(outcome::children_patch(
+        status,
+        "task-detail",
+        &TaskDetail { task, error },
+    )?)
 }
 
 fn matching_tasks(state: &AppState, query: &TaskQuery) -> Vec<Task> {

@@ -243,3 +243,41 @@ curl -sS -D - -H "Origin: http://example.com" \
 ```
 
 The status is 403. Reload the list. The title is absent.
+
+## Complete and reopen a task
+
+The detail page contains a command form. JavaScript is required for the command.
+
+The form sends the expected revision in a hidden field. The server compares that revision and applies the status change in one store lock. A successful complete or reopen increments the revision. The response replaces the children of `task-detail` with the current task.
+
+A revision mismatch or an incompatible transition returns a 409 patch. The patch contains the current task and conflict feedback. The runtime does not retry the command.
+
+Status commands use the same 4096-byte body limit as creation. Oversized or malformed bodies receive a 422 patch with the current task. Duplicate or unknown fields also receive a 422 patch. The store does not change. The response does not echo the body.
+
+An unknown task identifier receives a no-store 404 response.
+
+### Complete a task
+
+1. Open `http://127.0.0.1:3000/tasks`.
+2. Open Write the weekly notes.
+3. Press Complete.
+4. Make sure that the status is Done.
+5. Make sure that the form is Reopen.
+
+### Reopen a task
+
+1. Stay on that detail page.
+2. Press Reopen.
+3. Make sure that the status is Open.
+4. Make sure that the form is Complete.
+
+### Show a revision conflict in two tabs
+
+1. Open Write the weekly notes in two tabs.
+2. Make sure that both tabs show Open and Complete.
+3. In the first tab, press Complete.
+4. Make sure that the first tab shows Done and Reopen.
+5. In the second tab, press Complete.
+6. Make sure that the second tab shows the conflict feedback.
+7. Make sure that the second tab now shows Done and Reopen.
+8. Make sure that the command does not retry by itself.

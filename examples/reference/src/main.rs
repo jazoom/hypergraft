@@ -12,7 +12,7 @@ use axum::{
     http::{HeaderValue, header},
     middleware,
     response::{IntoResponse, Redirect, Response},
-    routing::get,
+    routing::{get, post},
 };
 use tokio::net::TcpListener;
 
@@ -51,6 +51,7 @@ async fn main() {
     let browser = Router::new()
         .route("/tasks", get(pages::tasks).post(commands::create))
         .route("/tasks/{id}", get(pages::task))
+        .route("/tasks/{id}/status", post(commands::status))
         .layer(commands::command_body_limit())
         .layer(middleware::from_fn(security::enforce_origin))
         .layer(middleware::from_fn(hypergraft::middleware::classify));

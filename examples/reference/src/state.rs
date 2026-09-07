@@ -8,6 +8,7 @@ pub struct Task {
     pub id: u64,
     pub title: String,
     pub done: bool,
+    pub revision: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -15,6 +16,18 @@ pub(crate) enum CreateError {
     Blank,
     TooLong,
     Full,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StatusAction {
+    Complete,
+    Reopen,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum StatusError {
+    NotFound,
+    Conflict(Task),
 }
 
 #[derive(Clone)]
@@ -30,16 +43,19 @@ impl Store {
                     id: 1,
                     title: "Review the protocol bounds".to_owned(),
                     done: true,
+                    revision: 1,
                 },
                 Task {
                     id: 2,
                     title: "Write the weekly notes".to_owned(),
                     done: false,
+                    revision: 1,
                 },
                 Task {
                     id: 3,
                     title: "Prepare the public preview".to_owned(),
                     done: false,
+                    revision: 1,
                 },
             ])),
         }
@@ -70,9 +86,34 @@ impl Store {
             id,
             title: title.to_owned(),
             done: false,
+            revision: 1,
         };
         tasks.push(task.clone());
         Ok(task)
+    }
+
+    pub(crate) fn set_status(
+        &self,
+        id: u64,
+        expected_revision: u64,
+        action: StatusAction,
+    ) -> Result<Task, StatusError> {
+        let mut tasks = self.lock();
+        let Some(task) = tasks.iter_mut().find(|task| task.id == id) else {
+            return Err(StatusError::NotFound);
+        };
+        // The expected revision and the state transition share this lock.
+        // A later check can miss a write from another command.
+        if task.revision != expected_revision {
+            return Err(StatusError::Conflict(task.clone()));
+        }
+        let done = matches!(action, StatusAction::Complete);
+        if task.done == done {
+            return Err(StatusError::Conflict(task.clone()));
+        }
+        task.done = done;
+        task.revision += 1;
+        Ok(task.clone())
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Task>> {
