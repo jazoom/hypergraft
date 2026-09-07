@@ -69,5 +69,6 @@ Do not add host product tests or tests that restate a trivial map or match.
 - Keep each pull request narrow.
 - Explain the protocol or security effect.
 - Update documentation when a public contract changes.
+- Update the [agent integration guide](docs/agent-guide.md) when public APIs or integration constraints change.
 - Include test results in the pull request description.
 - Report security defects through `SECURITY.md`.

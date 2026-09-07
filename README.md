@@ -51,6 +51,7 @@ The example README has longer walkthroughs:
 
 ## What to read next
 
+- [Agent integration guide](docs/agent-guide.md): a compact, self-contained reference for host applications.
 - [Anonymous task list](examples/reference/README.md)
 - [Protocol version 1](docs/protocol-v1.md) and [`protocol-v1.json`](protocol-v1.json)
 - [Host integration](docs/host-integration.md)
