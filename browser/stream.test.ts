@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { expect, test, vi } from "vitest";
-import { MAX_STREAM_FRAMES } from "./patches";
+import { MAX_RESPONSE_BYTES, MAX_STREAM_FRAMES } from "./patches";
 import { readStreamFrames } from "./stream";
 
 function response(
@@ -34,12 +34,22 @@ test("reads frame headers and UTF-8 content across chunk boundaries", async () =
 test("rejects an overlong frame header and cancels the body", async () => {
     const cancel = vi.fn();
     const reply = response(
-        [new TextEncoder().encode("12345678")],
+        [
+            new TextEncoder().encode(
+                "1".repeat(String(MAX_RESPONSE_BYTES).length + 1),
+            ),
+        ],
         cancel,
         false,
     );
     await expect(collect(reply)).rejects.toThrow("stream");
     expect(cancel).toHaveBeenCalledOnce();
+});
+
+test("reads an eight-digit frame length within the envelope budget", async () => {
+    const text = "x".repeat(10_000_000);
+    const bytes = new TextEncoder().encode(`${text.length}\n${text}`);
+    await expect(collect(response([bytes]))).resolves.toEqual([text]);
 });
 
 test("rejects a frame after the stream frame limit", async () => {

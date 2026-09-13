@@ -21,13 +21,13 @@ use axum::{
 
 pub const MEDIA_TYPE: &str = "text/vnd.hypergraft.patches+html";
 pub const VERSION: &str = "1";
-pub const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+pub const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_PATCHES: usize = 16;
-pub const MAX_INSERTED_NODES: usize = 10_000;
+pub const MAX_INSERTED_NODES: usize = 1_000_000;
 pub const MAX_NESTING_DEPTH: usize = 64;
 pub const MAX_DOM_ID_BYTES: usize = 128;
 pub const MAX_STREAM_FRAMES: usize = 256;
-pub const MAX_STREAM_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_STREAM_BYTES: usize = 256 * 1024 * 1024;
 pub const VARY_VALUE: &str = "Graft-Request, Accept";
 
 /// Merge protocol variance into `Vary` without duplicates.

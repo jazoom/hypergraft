@@ -268,7 +268,8 @@ Live hosts also need the explicit WebSocket source from `LiveEndpoint::csp_conne
 - Target identifiers are global document IDs, not CSS selectors. Each target must exist and targets must not overlap.
 - `children` retains its target and morphs its contents. `append` retains its target and adds last children.
 - Every final document ID must match `^[A-Za-z][A-Za-z0-9_.:-]{0,127}$` and be unique, even outside patch targets.
-- A batch contains 1–16 patches and at most 1048576 envelope bytes. Browser limits are 10000 inserted nodes and nesting depth 64.
+- A batch contains 1–16 patches and at most 67108864 envelope bytes. Browser limits are 1000000 inserted nodes and nesting depth 64.
+- Deploy the Rust crate and browser bundle from the same fixture revision. Older bundles retain the smaller content budgets.
 - Patches cannot contain script elements.
 - A title updates `document.title`, not the document head.
 - Version 1 does not restore history scroll positions.

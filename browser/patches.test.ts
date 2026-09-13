@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import fixture from "../protocol-v1.json";
 import {
     apply,
@@ -308,19 +308,43 @@ test("retains bounds and ID guarantees across mixed namespaces", () => {
     expect(() => preflight(response(deepText)[0], deepText)).toThrow(
         "depth bound exceeded",
     );
+});
 
-    const nodes = "<mi>x</mi>".repeat(10001);
-    const nodeText = `<graft-patch-set version="1"><graft-patch operation="children" target="patient-results"><template><math>${nodes}</math></template></graft-patch></graft-patch-set>`;
-    expect(() => preflight(response(nodeText)[0], nodeText)).toThrow(
-        "node bound exceeded",
-    );
+test("rejects content above the node budget", () => {
+    // A virtual sibling list exercises the full budget without a million DOM allocations.
+    const fragment = document.createDocumentFragment();
+    const node = document.createTextNode("x");
+    Object.defineProperty(fragment, "childNodes", {
+        value: {
+            *[Symbol.iterator]() {
+                for (let i = 0; i <= MAX_INSERTED_NODES; i++) yield node;
+            },
+        },
+    });
+    const clone = vi
+        .spyOn(DocumentFragment.prototype, "cloneNode")
+        .mockReturnValueOnce(fragment);
+    const text = `<graft-patch-set version="1"><graft-patch operation="children" target="patient-results"><template></template></graft-patch></graft-patch-set>`;
+    try {
+        expect(() => preflight(response(text)[0], text)).toThrow(
+            "node bound exceeded",
+        );
+    } finally {
+        clone.mockRestore();
+    }
 });
 
 test("rejects responses above the byte bound before parsing", () => {
-    const text = `<graft-patch-set version="1"><graft-patch operation="children" target="patient-results"><template>${"x".repeat(1024 * 1024)}</template></graft-patch></graft-patch-set>`;
+    const text = `<graft-patch-set version="1"><graft-patch operation="children" target="patient-results"><template>${"x".repeat(MAX_RESPONSE_BYTES)}</template></graft-patch></graft-patch-set>`;
     expect(() => preflight(response(text)[0], text)).toThrow(
         "size bound exceeded",
     );
+});
+
+test("accepts large HTML within the content budgets", () => {
+    const content = `<p>${"&amp;".repeat(400_000)}</p>${"<p>Row</p>".repeat(20_000)}`;
+    const text = `<graft-patch-set version="1"><graft-patch operation="children" target="patient-results"><template>${content}</template></graft-patch></graft-patch-set>`;
+    expect(preflight(response(text)[0], text).kind).toBe("patches");
 });
 
 test("prepares a same-origin full navigation", () => {

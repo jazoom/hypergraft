@@ -43,10 +43,10 @@ It is at most 128 bytes.
 
 The fixture publishes these numerical bounds:
 
-- Response envelope: 1048576 bytes
+- Response envelope: 67108864 bytes
 - Patch count: 16
 - Stream frames: 256
-- Stream bytes: 16777216
+- Stream bytes: 268435456
 - Live subscriptions: 64
 - Projection URL: 8192 bytes
 - Control message: 16384 bytes
@@ -55,6 +55,14 @@ The fixture publishes these numerical bounds:
 - Outbound bytes: 134217728
 - Lease: 300 seconds
 - Heartbeat: 15 seconds
+
+The content budgets allow large HTML patches without document redirects or text truncation.
+Byte and node budgets still bound resource use.
+Hosts retain request-body limits and domain validation.
+
+The Rust crate and browser bundle must use the same fixture revision.
+Older browser bundles reject envelopes above their previous content budgets.
+The expanded budgets change no envelope fields or status rules.
 
 Exact URL and identifier lengths are accept cases.
 One extra byte is a `protocol` rejection.
@@ -86,7 +94,7 @@ It does not count inserted nodes or nesting depth.
 
 The browser validates a complete batch before any mutation.
 Preflight checks document targets, overlap and final identifier uniqueness.
-It enforces a maximum of 10000 inserted nodes and a nesting depth of 64.
+It enforces a maximum of 1000000 inserted nodes and a nesting depth of 64.
 These limits require DOM inspection, not just wire parsing.
 The browser rejects a script element.
 The browser rejects unknown envelope attributes.
@@ -116,7 +124,7 @@ Uncertain results leave live work suspended.
 
 A host can send `Graft-Transfer: stream` with HTTP 200.
 Each frame starts with its UTF-8 envelope byte length as ASCII decimal digits, then a newline.
-The envelope follows immediately and is at most 1 MiB.
+The envelope follows immediately and is at most 64 MiB.
 The stream byte limit includes length prefixes.
 A progress frame has `phase="progress"` and applies without settlement.
 The last frame has `phase="final"` and can carry `status="200|401|409|422"`.
@@ -206,6 +214,13 @@ Expiry cancels pending asynchronous bind, factory and revalidation work.
 The deadline cannot interrupt host code that does not yield.
 Pending factories count against subscription admission.
 Unsubscribe and session termination cancel them and discard late results.
+
+The Rust runtime reserves capacity for a maximum-size frame before each refresh.
+Pending reservations, queued frames and the active socket write share a 128 MiB byte budget.
+After frame encoding, the reservation shrinks to the actual frame size.
+Cancellation, frame disposal or socket write completion releases the reservation.
+This admission budget is separate from the cumulative outbound byte limit for the session.
+Temporary host and encoding allocations are outside this budget.
 
 Fresh guard context precedes factory dispatch and every refresh.
 The server sends a ping every 15 seconds and requires a pong.

@@ -193,9 +193,9 @@ async fn matches_the_shared_version_one_fixture() {
         fixture["streamStatuses"],
         serde_json::json!([200, 401, 409, 422])
     );
-    assert_eq!(fixture["limits"]["responseBytes"], 1024 * 1024);
+    assert_eq!(fixture["limits"]["responseBytes"], MAX_RESPONSE_BYTES);
     assert_eq!(fixture["limits"]["patchCount"], MAX_PATCHES);
-    assert_eq!(fixture["limits"]["insertedNodes"], 10_000);
+    assert_eq!(fixture["limits"]["insertedNodes"], MAX_INSERTED_NODES);
     assert_eq!(fixture["limits"]["nestingDepth"], 64);
     assert_eq!(fixture["limits"]["streamFrames"], MAX_STREAM_FRAMES);
     assert_eq!(fixture["limits"]["streamBytes"], MAX_STREAM_BYTES);

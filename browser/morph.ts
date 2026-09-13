@@ -7,7 +7,7 @@ export function morphChildren(
     consumeOwned?: (element: Element) => void,
 ): void {
     const source = target.cloneNode(false) as HTMLElement;
-    source.append(...nodes);
+    for (const node of nodes) source.appendChild(node);
     morphInner(target, source, {
         preserveChanges: false,
         afterNodeVisited: consumeOwned
@@ -20,5 +20,8 @@ export function morphChildren(
 
 /** Append preflighted nodes as the last children of a retained live target. */
 export function appendChildren(target: HTMLElement, nodes: Node[]): void {
-    target.append(...nodes);
+    // Valid large batches can exceed the JavaScript argument-count limit.
+    const fragment = target.ownerDocument.createDocumentFragment();
+    for (const node of nodes) fragment.appendChild(node);
+    target.appendChild(fragment);
 }

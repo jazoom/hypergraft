@@ -25,12 +25,12 @@
     "operations": ["children", "append"],
     "phases": ["progress", "final"],
     "limits": {
-        "responseBytes": 1048576,
+        "responseBytes": 67108864,
         "patchCount": 16,
-        "insertedNodes": 10000,
+        "insertedNodes": 1000000,
         "nestingDepth": 64,
         "streamFrames": 256,
-        "streamBytes": 16777216
+        "streamBytes": 268435456
     },
     "id": {
         "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$",
@@ -69,7 +69,7 @@
             "headerEndian": "big",
             "idOffset": 0,
             "envelopeOffset": 4,
-            "maxEnvelopeBytes": 1048576,
+            "maxEnvelopeBytes": 67108864,
             "allowedEnvelopeAttributes": ["version"]
         },
         "limits": {

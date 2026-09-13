@@ -17,16 +17,16 @@ use axum::{
     routing::get,
 };
 use tokio::{
-    sync::{Semaphore, mpsc, oneshot},
+    sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot},
     time::{MissedTickBehavior, Sleep, interval_at},
 };
 
 use crate::{
-    PatchBuildErrorKind,
+    MAX_RESPONSE_BYTES, PatchBuildErrorKind,
     live::{
         CloseClass, InstantiateError, LiveEndpoint, LiveGuard, LiveProjection, LiveRouter,
         LiveSocketConfig, MAX_CONTROL_MESSAGE_BYTES, MAX_INBOUND_CONTROLS, MAX_OUTBOUND_BYTES,
-        MAX_OUTBOUND_MESSAGES, ProjectionError, SUBPROTOCOL,
+        MAX_OUTBOUND_MESSAGES, ProjectionError, SUBPROTOCOL, SUBSCRIPTION_HEADER_BYTES,
         codec::{ControlError, ControlMessage, parse_control},
         endpoint::offered_subprotocol,
     },
@@ -152,8 +152,17 @@ impl FrameSocket for WebSocket {
     }
 }
 
+const MAX_FRAME_BYTES: usize = MAX_RESPONSE_BYTES + SUBSCRIPTION_HEADER_BYTES;
+
 struct OutboundPatch {
     bytes: Vec<u8>,
+    _permit: OwnedSemaphorePermit,
+}
+
+#[derive(Clone)]
+struct OutboundQueue {
+    tx: mpsc::Sender<OutboundPatch>,
+    bytes: Arc<Semaphore>,
 }
 
 struct SubscriptionTask {
@@ -400,6 +409,10 @@ pub(crate) async fn run_session<S, G, Sock>(
     heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<OutboundPatch>(config.max_subscriptions);
+    let outbound = OutboundQueue {
+        tx: outbound_tx,
+        bytes: Arc::new(Semaphore::new(MAX_OUTBOUND_BYTES)),
+    };
     let (termination, mut close_rx) = Termination::pair();
     let (retired_tx, mut retired_rx) = mpsc::unbounded_channel::<u32>();
     let (revalidate_tx, mut revalidate_rx) = mpsc::unbounded_channel::<Result<(), SessionClose>>();
@@ -505,6 +518,8 @@ pub(crate) async fn run_session<S, G, Sock>(
                 {
                     break end;
                 }
+                // The in-flight frame retains its byte reservation until the write completes.
+                drop(patch._permit);
             }
             incoming = socket.recv() => {
                 match incoming {
@@ -571,7 +586,7 @@ pub(crate) async fn run_session<S, G, Sock>(
                                     extensions: upgrade_extensions.clone(),
                                     connection: connection.clone(),
                                     refreshes: refreshes.clone(),
-                                    outbound: outbound_tx.clone(),
+                                    outbound: outbound.clone(),
                                     termination: termination.clone(),
                                     retired: retired_tx.clone(),
                                 });
@@ -612,7 +627,7 @@ enum SubscribeStart {
 struct ProjectionRuntime<C> {
     connection: Arc<C>,
     refreshes: Arc<Semaphore>,
-    outbound: mpsc::Sender<OutboundPatch>,
+    outbound: OutboundQueue,
     termination: Termination,
     retired: mpsc::UnboundedSender<u32>,
 }
@@ -626,7 +641,7 @@ struct SpawnRequest<S, G: LiveGuard> {
     extensions: Extensions,
     connection: Arc<G::Connection>,
     refreshes: Arc<Semaphore>,
-    outbound: mpsc::Sender<OutboundPatch>,
+    outbound: OutboundQueue,
     termination: Termination,
     retired: mpsc::UnboundedSender<u32>,
 }
@@ -841,7 +856,7 @@ async fn refresh_once<C, G>(
     guard: &G,
     connection: &G::Connection,
     refreshes: &Semaphore,
-    outbound: &mpsc::Sender<OutboundPatch>,
+    outbound: &OutboundQueue,
     cancel: &mut oneshot::Receiver<()>,
 ) -> Result<bool, SessionClose>
 where
@@ -862,6 +877,14 @@ where
                 return Err(SessionClose::new(failure.close_class(), CloseReason::Guard));
             }
         },
+    };
+    // Reserve the largest frame before refresh work so blocked producers retain no rendered patches.
+    let mut byte_permit = tokio::select! {
+        biased;
+        _ = &mut *cancel => return Ok(true),
+        permit = outbound.bytes.clone().acquire_many_owned(MAX_FRAME_BYTES as u32) => permit.map_err(|_| {
+            SessionClose::new(CloseClass::Retryable, CloseReason::Transport)
+        })?,
     };
     let patch = tokio::select! {
         _ = &mut *cancel => return Ok(true),
@@ -891,11 +914,16 @@ where
             CloseReason::Resynchronisation,
         )
     })?;
+    drop(html);
+    drop(byte_permit.split(MAX_FRAME_BYTES - bytes.len()));
     tokio::select! {
         _ = &mut *cancel => Ok(true),
-        sent = outbound.send(OutboundPatch { bytes }) => {
+        sent = outbound.tx.send(OutboundPatch { bytes, _permit: byte_permit }) => {
             sent.map_err(|_| SessionClose::new(CloseClass::Retryable, CloseReason::Transport))?;
             Ok(false)
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

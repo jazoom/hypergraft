@@ -72,7 +72,7 @@ export async function* readStreamFrames(
                 digits.push(byte);
             }
             const line = String.fromCharCode(...digits);
-            if (!/^[1-9][0-9]{0,6}$/.test(line))
+            if (!/^[1-9][0-9]*$/.test(line))
                 throw new HypergraftError(
                     "protocol",
                     "Invalid Hypergraft stream",
