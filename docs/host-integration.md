@@ -83,6 +83,56 @@ A body limit alone does not produce a known patch rejection. The reference handl
 
 Patch construction failures become secret-safe no-store 500 responses. The browser treats an unsafe failure as uncertain and does not retry the command.
 
+## Page-local blocks
+
+Page-local fragments belong in named Askama blocks within their page template. Separate files suit fragments with independent reuse across pages.
+
+A block-specific Rust type needs only the fields referenced by that block. A live projection therefore does not need unrelated page data.
+
+For example, `templates/items.html` contains both the page and its results block:
+
+```html
+<h1>{{ heading }}</h1>
+<section id="item-results">
+    {% block item_results %}
+    <ul>
+        {% for item in items %}
+        <li>{{ item }}</li>
+        {% endfor %}
+    </ul>
+    {% endblock %}
+</section>
+```
+
+The retained `item-results` wrapper sits outside the block. A `children` patch contains only that wrapper's children.
+
+```rust
+use askama::Template;
+
+#[derive(Template)]
+#[template(path = "items.html", blocks = ["item_results"])]
+struct ItemPage<'a> {
+    heading: &'a str,
+    items: &'a [String],
+}
+
+#[derive(Template)]
+#[template(path = "items.html", block = "item_results")]
+struct ItemResults<'a> {
+    items: &'a [String],
+}
+```
+
+`ItemResults` selects only `item_results`. It does not need `heading`. `PatchSet::children` and `outcome::children_patch` accept this type like any other Askama template.
+
+An existing `ItemPage` also exposes `page.as_item_results()` through its `blocks` declaration. That accessor avoids another data structure when the complete page value already exists.
+
+Blocks can nest in the source. A parent block then contains its nested blocks, while each nested block can also render independently.
+
+Source nesting does not permit overlapping patch targets. One batch cannot patch a parent target and its descendant together.
+
+The reference keeps its list blocks in [`tasks.html`](../examples/reference/templates/tasks.html) and its detail block in [`task.html`](../examples/reference/templates/task.html). Their narrow Rust types remain in [`pages.rs`](../examples/reference/src/pages.rs).
+
 ## Page navigation as a titled `main` patch
 
 ```html
@@ -128,7 +178,7 @@ async fn item_index(
         GraftRequest::Patch => Ok(outcome::children_patch(
             PatchStatus::Ok,
             "item-results",
-            &page.results,
+            &page.as_item_results(),
         )?),
     }
 }

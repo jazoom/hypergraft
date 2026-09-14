@@ -72,9 +72,9 @@ A settlement listener can synchronously submit another command. Live work remain
 
 Temporary pending state is not the latest authoritative form state.
 
-While a request is in flight, the runtime sets `aria-busy` on the form. It disables the submitter. Progress frames keep that transport presentation. Final cleanup uses the latest Morphlex snapshot for owned controls. That snapshot includes an explicit attribute removal.
+While a request is in flight, the runtime sets `aria-busy` on the form. It disables the submitter. Progress frames keep that transport presentation. Final cleanup uses the latest preflighted source attributes for owned controls. An absent attribute records an authoritative removal.
 
-A DOM comparison alone cannot distinguish an authored `disabled` attribute from the temporary overlay. Cleanup therefore consumes ownership during apply. It preserves an authored `disabled` value even when it equals the pending overlay. It respects server-authored removal of `disabled`. It respects changes to `aria-disabled` and `aria-busy`.
+The morphed live DOM can still contain temporary attributes. Cleanup therefore reads the preflighted source for each retained control. It preserves an authored `disabled` value even when it equals the pending overlay. It respects server-authored removal of `disabled`. It respects changes to `aria-disabled` and `aria-busy`.
 
 If no authoritative patch changed the control, failure restores the original state. After an incomplete stream, cleanup still respects the latest applied frame. It does not restore an obsolete snapshot.
 

@@ -12,10 +12,94 @@
     role="search"
     aria-label="Filter tasks"
 >
-    {% include "task-filter.html" %}
+    {% block task_filter %}
+    <p>
+        <label for="task-search">Search</label>
+        <input
+            id="task-search"
+            name="q"
+            type="search"
+            value="{{ search }}"
+            maxlength="120"
+            autocomplete="off"
+        />
+    </p>
+    <p>
+        <label for="task-status">Status</label>
+        <select id="task-status" name="status">
+            <option value="all"{% if status.is_all() %} selected{% endif %}>All</option>
+            <option value="open"{% if status.is_open() %} selected{% endif %}>
+                Open
+            </option>
+            <option value="done"{% if status.is_done() %} selected{% endif %}>
+                Done
+            </option>
+        </select>
+    </p>
+    <p>
+        <button type="submit" aria-disabled="false">Filter</button>
+    </p>
+    {% endblock %}
 </form>
 <h2>Create a task</h2>
 <form id="task-create" method="post" action="/tasks" data-graft>
-    {% include "task-create.html" %}
+    {% block task_create %}
+    <div id="task-create-filters">
+        {% block task_create_filters %}
+        <input type="hidden" name="q" value="{{ search }}" />
+        <input type="hidden" name="status" value="{{ status.as_str() }}" />
+        {% endblock %}
+    </div>
+    <p>
+        <label for="task-title">Title</label>
+        <input
+            id="task-title"
+            name="title"
+            type="text"
+            value=""
+            autocomplete="off"
+            aria-describedby="task-create-feedback"
+        />
+    </p>
+    <div id="task-create-feedback">
+        {% block task_create_feedback %}
+        {% if let Some(message) = error %}
+        <p role="alert">{{ message }}</p>
+        {% else %}
+            {% if let Some(task) = created %}
+            <p role="status">
+                Created
+                <a href="/tasks/{{ task.id }}" data-graft>{{ task.title }}</a>.
+                {% if hidden_by_filter %}
+                This filter hides the new task.
+                {% endif %}
+            </p>
+            {% endif %}
+        {% endif %}
+        {% endblock %}
+    </div>
+    <p>
+        <button type="submit" aria-disabled="false">Create</button>
+    </p>
+    {% endblock %}
 </form>
-<section id="task-results">{% include "task-results.html" %}</section>
+<section id="task-results">
+    {% block task_results %}
+    {% if tasks.is_empty() %}
+    <p>No tasks match this filter.</p>
+    {% else %}
+    <ul>
+        {% for task in tasks %}
+        <li>
+            <a href="/tasks/{{ task.id }}" data-graft>{{ task.title }}</a>
+            {% if task.done %}
+            <span>Done</span>
+            {% else %}
+            <span>Open</span>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+    {% endblock %}
+</section>

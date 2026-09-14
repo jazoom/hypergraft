@@ -141,20 +141,20 @@ struct TasksPage<'a> {
 }
 
 #[derive(Template)]
-#[template(path = "task-filter.html")]
+#[template(path = "tasks.html", block = "task_filter")]
 pub(crate) struct TaskFilter<'a> {
     pub(crate) search: &'a str,
     pub(crate) status: StatusFilter,
 }
 
 #[derive(Template)]
-#[template(path = "task-results.html")]
+#[template(path = "tasks.html", block = "task_results")]
 pub(crate) struct TaskResults<'a> {
     pub(crate) tasks: &'a [Task],
 }
 
 #[derive(Template)]
-#[template(path = "task-create.html")]
+#[template(path = "tasks.html", block = "task_create")]
 pub(crate) struct TaskCreate<'a> {
     pub(crate) search: &'a str,
     pub(crate) status: StatusFilter,
@@ -164,14 +164,14 @@ pub(crate) struct TaskCreate<'a> {
 }
 
 #[derive(Template)]
-#[template(path = "task-create-filters.html")]
+#[template(path = "tasks.html", block = "task_create_filters")]
 pub(crate) struct TaskCreateFilters<'a> {
     pub(crate) search: &'a str,
     pub(crate) status: StatusFilter,
 }
 
 #[derive(Template)]
-#[template(path = "task-create-feedback.html")]
+#[template(path = "tasks.html", block = "task_create_feedback")]
 pub(crate) struct TaskCreateFeedback<'a> {
     pub(crate) error: Option<&'a str>,
     pub(crate) created: Option<&'a Task>,
@@ -186,7 +186,7 @@ struct TaskPage<'a> {
 }
 
 #[derive(Template)]
-#[template(path = "task-detail.html")]
+#[template(path = "task.html", block = "task_detail")]
 pub(crate) struct TaskDetail<'a> {
     pub(crate) task: &'a Task,
     pub(crate) error: Option<&'a str>,

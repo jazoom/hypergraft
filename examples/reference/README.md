@@ -8,6 +8,31 @@ The process stores tasks in memory. A restart restores the seed data.
 
 The server listens on `127.0.0.1:3000`. Origin checks and the content security policy still apply.
 
+## Template organisation
+
+Page-local fragments live in named Askama blocks within their page template. The initial page and its patches use the same source markup.
+
+| Template                             | Block                  | Retained target        |
+| ------------------------------------ | ---------------------- | ---------------------- |
+| [`tasks.html`](templates/tasks.html) | `task_filter`          | `task-filter`          |
+| [`tasks.html`](templates/tasks.html) | `task_results`         | `task-results`         |
+| [`tasks.html`](templates/tasks.html) | `task_create`          | `task-create`          |
+| [`tasks.html`](templates/tasks.html) | `task_create_filters`  | `task-create-filters`  |
+| [`tasks.html`](templates/tasks.html) | `task_create_feedback` | `task-create-feedback` |
+| [`task.html`](templates/task.html)   | `task_detail`          | `task-detail`          |
+
+Each target wrapper stays outside the block that supplies its children. Block-specific types in [`pages.rs`](src/pages.rs) select those blocks through `#[template(path = "tasks.html", block = "task_results")]` or the corresponding detail selector.
+
+A block-specific type needs only its referenced fields. For example, `TaskResults` takes only the task list, even though its source file also contains forms.
+
+The create block contains nested filter and feedback blocks. A create rejection can patch those smaller targets without replacement of the draft title control.
+
+Block nesting does not permit overlapping targets in one batch. The response selects either the parent target or its disjoint descendants.
+
+[`document.html`](templates/document.html) remains the shared document shell. Separate files suit independently reused templates rather than every page-local fragment.
+
+The [host guide](../../docs/host-integration.md#page-local-blocks) describes both block-specific types and accessors on a complete page value.
+
 ## Launch the example
 
 Install the pinned tools:

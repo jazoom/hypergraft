@@ -301,7 +301,7 @@ type ConsumeOutcome =
     | { kind: "stale" };
 
 type PendingSession = {
-    consumeOwned(element: Element): void;
+    consumeOwned(element: Element, source: Element): void;
     retainTransport(): void;
     restore(): void;
 };
@@ -315,7 +315,9 @@ async function consumeEnhanced(
     pending?: PendingSession,
 ): Promise<ConsumeOutcome> {
     const consumeOwned =
-        pending && ((element: Element) => pending.consumeOwned(element));
+        pending &&
+        ((element: Element, source: Element) =>
+            pending.consumeOwned(element, source));
     let transfer: "complete" | "stream";
     try {
         transfer = transferKind(response);
@@ -695,7 +697,7 @@ function pendingState(
         submitter?.hasAttribute("data-graft-submitter-pending") ?? false;
     let restored = false;
     // undefined means no applied patch authored this control. null or a value
-    // is the latest Morphlex snapshot, including explicit removal.
+    // comes from the latest source, not leftover transport attributes in the DOM.
     let authoredBusy: string | null | undefined;
     let authoredDisabled: boolean | undefined;
     let authoredAriaDisabled: string | null | undefined;
@@ -709,12 +711,13 @@ function pendingState(
     };
     overlay();
     return {
-        consumeOwned(element) {
+        consumeOwned(element, source) {
             if (restored) return;
-            if (element === form) authoredBusy = form.getAttribute("aria-busy");
+            if (element === form)
+                authoredBusy = source.getAttribute("aria-busy");
             else if (element === submitter && submitter.isConnected) {
-                authoredDisabled = submitter.disabled;
-                authoredAriaDisabled = submitter.getAttribute("aria-disabled");
+                authoredDisabled = source.hasAttribute("disabled");
+                authoredAriaDisabled = source.getAttribute("aria-disabled");
             }
         },
         retainTransport() {

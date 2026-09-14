@@ -394,10 +394,9 @@ function parseEnvelope(
 
 export function apply(
     batch: PreparedBatch,
-    // Cleanup consumes this immediately. Morphlex can leave an authored
-    // disabled value identical to the pending overlay, so ownership cannot
-    // be inferred from the live DOM after apply.
-    consumeOwned?: (element: Element) => void,
+    // The source distinguishes authored attributes from the pending overlay.
+    // The live DOM alone cannot establish ownership, even after a morph.
+    consumeOwned?: (element: Element, source: Element) => void,
 ) {
     const active = document.activeElement as
         HTMLInputElement | HTMLTextAreaElement | null;

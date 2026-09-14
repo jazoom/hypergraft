@@ -11,15 +11,16 @@ function appendNodeBatch(parent: HTMLElement, nodes: Node[]): void {
 export function morphChildren(
     target: HTMLElement,
     nodes: Node[],
-    consumeOwned?: (element: Element) => void,
+    consumeOwned?: (element: Element, source: Element) => void,
 ): void {
     const source = target.cloneNode(false) as HTMLElement;
     appendNodeBatch(source, nodes);
     morphInner(target, source, {
         preserveChanges: false,
         afterNodeVisited: consumeOwned
-            ? (from) => {
-                  if (from instanceof Element) consumeOwned(from);
+            ? (from, to) => {
+                  if (from instanceof Element && to instanceof Element)
+                      consumeOwned(from, to);
               }
             : undefined,
     });

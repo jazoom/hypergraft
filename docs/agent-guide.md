@@ -76,6 +76,12 @@ This example edits one value at `/settings`. The host supplies persistence and s
 
 ### Templates
 
+Keep page-local fragments in named Askama blocks within their page template.
+
+Keep each retained target outside the block that supplies its children.
+
+Use separate files for fragments with independent reuse across pages.
+
 Create `templates/document.html` with this shell:
 
 ```html
@@ -98,11 +104,15 @@ Create `templates/settings.html` with the contents of `main`, not another `main`
 
 ```html
 <h1>Settings</h1>
-<form method="post" action="/settings" data-graft>
-    <label>Value <input name="value" value="{{ value }}" required /></label>
-    <p role="alert">{{ error }}</p>
-    <button type="submit">Save</button>
-</form>
+<section id="settings-form">
+    {% block settings_form %}
+    <form method="post" action="/settings" data-graft>
+        <label>Value <input name="value" value="{{ value }}" required /></label>
+        <p role="alert">{{ error }}</p>
+        <button type="submit">Save</button>
+    </form>
+    {% endblock %}
+</section>
 ```
 
 ### Handlers
@@ -128,6 +138,13 @@ struct Document {
 #[derive(Template)]
 #[template(path = "settings.html")]
 struct Settings {
+    value: String,
+    error: &'static str,
+}
+
+#[derive(Template)]
+#[template(path = "settings.html", block = "settings_form")]
+struct SettingsForm {
     value: String,
     error: &'static str,
 }
@@ -170,8 +187,8 @@ async fn save_settings(
         _ => {
             return outcome::children_patch(
                 PatchStatus::UnprocessableEntity,
-                "main",
-                &Settings {
+                "settings-form",
+                &SettingsForm {
                     value: String::new(),
                     error: "Enter a non-empty value within the form limit.",
                 },
@@ -183,6 +200,8 @@ async fn save_settings(
     outcome::command_navigation("/settings").map_err(internal)
 }
 ```
+
+`SettingsForm` selects the page-local `settings_form` block. It needs only fields referenced by that block, not unrelated page data. The rejection patch retains `settings-form` and excludes its wrapper from the payload.
 
 Only rendered Askama output supplies `body|safe`. The field values still receive HTML escaping. Extraction failures return bounded 422 patches before mutation. A plain `Form<Input>` extractor instead returns Axum's default rejection, not a known patch outcome.
 
@@ -316,6 +335,7 @@ Leave these components to Hypergraft:
 | Task                                                   | Additional reference                                                               |
 | ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
 | Run the reference application                          | [`examples/reference/README.md`](../examples/reference/README.md)                  |
+| Organise page-local fragments                          | [Page-local blocks](host-integration.md#page-local-blocks)                         |
 | Add GET query patches or command location replacements | [Host integration](host-integration.md)                                            |
 | Add live projections                                   | [Live GET recipe](host-integration.md#live-get-projection), then [Live](live.md)   |
 | Add streamed progress                                  | [Streamed command recipe](host-integration.md#streamed-command-recipe)             |

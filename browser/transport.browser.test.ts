@@ -257,6 +257,51 @@ test("multi-target preflight restores focus by stable ID", () => {
     expect(document.getElementById("other-result")).not.toBeNull();
 });
 
+test.each(["get", "post"])(
+    "an applied %s patch clears pending ARIA before settlement",
+    async (method) => {
+        const form = commandForm();
+        form.method = method;
+        const button = form.querySelector("button")!;
+        vi.mocked(fetch).mockResolvedValue(
+            envelope(
+                "command",
+                `<form method="${method}" action="/command" data-graft><input name="credential" value="wrong"><button type="submit">Next</button></form>`,
+            ),
+        );
+        const observed: {
+            disabled: boolean;
+            ariaDisabled: string | null;
+            busy: string | null;
+            pending: boolean;
+        }[] = [];
+        addEventListener(
+            "hypergraft:requestsettled",
+            () => {
+                observed.push({
+                    disabled: button.disabled,
+                    ariaDisabled: button.getAttribute("aria-disabled"),
+                    busy: form.getAttribute("aria-busy"),
+                    pending:
+                        form.hasAttribute("data-graft-pending") ||
+                        button.hasAttribute("data-graft-submitter-pending"),
+                });
+            },
+            { once: true },
+        );
+
+        submit(form, button);
+        await vi.waitFor(() => expect(observed).toHaveLength(1));
+
+        expect(document.querySelector("#command form")).toBe(form);
+        expect(form.querySelector("button")).toBe(button);
+        expect(button.textContent).toBe("Next");
+        expect(observed).toEqual([
+            { disabled: false, ariaDisabled: null, busy: null, pending: false },
+        ]);
+    },
+);
+
 test("an applied command keeps a server-disabled submitter disabled", async () => {
     const form = commandForm();
     const button = form.querySelector("button")!;
