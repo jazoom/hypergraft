@@ -4,6 +4,8 @@ pub mod middleware;
 pub mod outcome;
 mod request;
 mod response;
+pub mod template;
+pub use template::{GraftTemplate, TemplateError};
 
 pub mod live;
 

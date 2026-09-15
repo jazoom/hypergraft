@@ -22,6 +22,12 @@ impl LiveGuard for UnitGuard {
 #[template(source = "row", ext = "html")]
 struct Content;
 
+impl crate::GraftTemplate for Content {
+    fn render_into(&self, output: &mut String) -> Result<(), crate::TemplateError> {
+        askama::Template::render_into(self, output).map_err(|_| crate::TemplateError::Rendering)
+    }
+}
+
 #[tokio::test]
 async fn outbound_admission_precedes_refresh_and_releases_bytes_on_cancel_and_drop() {
     let (tx, mut rx) = mpsc::channel(1);

@@ -32,6 +32,73 @@ struct Content<'a> {
     value: &'a str,
 }
 
+impl crate::GraftTemplate for Content<'_> {
+    fn render_into(&self, output: &mut String) -> Result<(), crate::TemplateError> {
+        askama::Template::render_into(self, output).map_err(|_| crate::TemplateError::Rendering)
+    }
+}
+
+#[tokio::test]
+async fn template_failure_is_secret_safe_at_live_boundary() {
+    struct Failure;
+    impl crate::GraftTemplate for Failure {
+        fn render_into(&self, output: &mut String) -> Result<(), crate::TemplateError> {
+            output.push_str(LIVE_SECRET);
+            Err(crate::TemplateError::Rendering)
+        }
+    }
+    async fn projection() -> LiveProjection<()> {
+        LiveProjection::new(futures_util::stream::pending(), |()| async {
+            let mut patches = PatchSet::new();
+            let error = patches.children("main", &Failure).unwrap_err();
+            assert_eq!(error.kind(), crate::PatchBuildErrorKind::Rendering);
+            assert_eq!(error.to_string(), "patch rendering failed");
+            assert!(!format!("{error:?}").contains(LIVE_SECRET));
+            assert_eq!(
+                patches.encode_live().unwrap_err().kind(),
+                crate::PatchBuildErrorKind::EmptyBatch
+            );
+            Err(super::ProjectionError::Retire)
+        })
+    }
+    let capture = Capture::default();
+    let _guard = tracing::subscriber::set_default(capture.subscriber());
+    let (socket, incoming, mut outgoing) = session_pair();
+    let session = tokio::spawn(super::socket::run_session(
+        socket,
+        (),
+        std::sync::Arc::new(LiveRouter::new().route("/failure", projection).unwrap()),
+        UnitGuard,
+        LiveSocketConfig::default(),
+        axum::http::Extensions::new(),
+    ));
+    incoming
+        .send(super::socket::Incoming::Text(format!(
+            r#"{{"v":"1","type":"subscribe","id":1,"url":"/failure?token={LIVE_SECRET}"}}"#
+        )))
+        .unwrap();
+    let retired = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Some(event) = capture
+                .events()
+                .into_iter()
+                .find(|event| event.message == "live subscription retired")
+            {
+                break event;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    incoming.send(super::socket::Incoming::Close).unwrap();
+    session.await.unwrap();
+    let retired = retired.expect("template failure must retire the subscription");
+    assert_eq!(retired.level, tracing::Level::DEBUG);
+    assert_eq!(field_value(&retired, "reason"), Some("projection"));
+    assert!(outgoing.try_recv().is_err());
+    assert_secret_safe(&capture.events(), &[LIVE_SECRET, "/failure", "main"]);
+}
+
 #[derive(Clone)]
 struct UnitGuard;
 

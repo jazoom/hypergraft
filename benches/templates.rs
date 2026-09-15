@@ -16,14 +16,31 @@ struct Fragment {
     rows: Vec<usize>,
 }
 
-fn measure<T: Template>(name: &str, template: &T, append: bool) -> serde_json::Value {
+macro_rules! legacy_template {
+    ($($name:ident),+) => {$ (
+        impl hypergraft::GraftTemplate for $name {
+            fn render_into(&self, output: &mut String) -> Result<(), hypergraft::TemplateError> {
+                askama::Template::render_into(self, output)
+                    .map_err(|_| hypergraft::TemplateError::Rendering)
+            }
+        }
+    )+};
+}
+
+legacy_template!(List, Fragment);
+
+fn measure<T: Template + hypergraft::GraftTemplate>(
+    name: &str,
+    template: &T,
+    append: bool,
+) -> serde_json::Value {
     let mut render = Vec::new();
     let mut encode = Vec::new();
     let mut html_bytes = 0;
     let mut envelope_bytes = 0;
     for index in 0..120 {
         let start = Instant::now();
-        let html = black_box(template).render().unwrap();
+        let html = askama::Template::render(black_box(template)).unwrap();
         let render_ns = start.elapsed().as_nanos() as u64;
         html_bytes = black_box(html).len();
         // Patch construction renders again outside the isolated encoding interval.

@@ -1,6 +1,6 @@
 # Host integration
 
-Version 1 of the Rust crate targets Axum and Askama. A second host adapter is outside protocol version 1.
+Version 1 of the Rust crate targets Axum with the owned `GraftTemplate` interface. A second host adapter is outside protocol version 1.
 
 The [anonymous task list](../examples/reference/README.md) is the runnable composition. The snippets below omit application-specific types and domain work.
 
@@ -69,9 +69,9 @@ Hypergraft does not require authentication for anonymous public data.
 
 Handlers must extract the narrowest accepted representation. Use `PageGraft` for a document-or-navigation page. Use `PatchGraft` for a patch-only command. Use `GraftRequest` when one route serves documents, navigation and form patches.
 
-Build bounded responses with `PatchSet`, checked string targets, Askama templates, `PatchStatus` and `RetryAfter`.
+`PatchSet` accepts templates through `GraftTemplate`, independently of Askama.
 
-`outcome::page_patch` builds a titled, single-target page patch. `outcome::children_patch` builds one retained-target patch from an Askama template. It accepts any patch status. `PatchSet::append` adds nodes to a retained target. `PatchSet::replace_location` adds a canonical location replacement to a complete command patch. `PatchSet::encode_live` rejects titles and locations.
+`outcome::page_patch` builds a titled, single-target page patch. `outcome::children_patch` builds one retained-target patch from a `GraftTemplate` value. It accepts any patch status. `PatchSet::append` adds nodes to a retained target. `PatchSet::replace_location` adds a canonical location replacement to a complete command patch. `PatchSet::encode_live` rejects titles and locations.
 
 `PatchSet::encode_progress` and `encode_final` reject location replacements. `outcome::stream_response` validates frame and byte limits. It requires one final frame. It wraps the frame stream as `Graft-Transfer: stream`. `outcome::command_navigation` builds a validated navigation envelope for patch-only commands. `outcome::page_redirect` selects a native 303 response or a navigation envelope after destination validation.
 
@@ -82,6 +82,16 @@ Command handlers extract `PatchGraft` before the form body and before domain mut
 A body limit alone does not produce a known patch rejection. The reference handles `Result<RawForm, RawFormRejection>` after its 4096-byte limit. It converts extraction and decoding failures into bounded 422 patches before mutation. It omits rejected body text and extractor diagnostics.
 
 Patch construction failures become secret-safe no-store 500 responses. The browser treats an unsafe failure as uncertain and does not retry the command.
+
+## Owned template boundary
+
+`GraftTemplate::render_into` writes directly to a `String`. An error can leave partial output in that string. `GraftTemplate::render` returns complete HTML or discards the failed output.
+
+`PatchSet` validates targets before template evaluation. It adds output only after a successful render. `PatchBuildError::Rendering` contains `TemplateError`, with no HTML or underlying engine error. Its classification remains `PatchBuildErrorKind::Rendering`.
+
+The reference retains private adapters for its Askama page and fragment types during compiler migration. Its document helper accepts `GraftTemplate`. The legacy document shell still calls `askama::Template::render` explicitly and needs no adapter.
+
+Response tests, live tests and benchmarks also retain private adapters until their compiler migration. The benchmark keeps Askama as its baseline renderer. Hypergraft provides no blanket Askama implementation or engine-selection API.
 
 ## Page-local blocks
 
@@ -123,9 +133,25 @@ struct ItemResults<'a> {
 }
 ```
 
-`ItemResults` selects only `item_results`. It does not need `heading`. `PatchSet::children` and `outcome::children_patch` accept this type like any other Askama template.
+`ItemResults` selects only `item_results`. It does not need `heading`. During migration, each concrete page or fragment type needs a private adapter:
 
-An existing `ItemPage` also exposes `page.as_item_results()` through its `blocks` declaration. That accessor avoids another data structure when the complete page value already exists.
+```rust
+impl hypergraft::GraftTemplate for ItemResults<'_> {
+    fn render_into(&self, output: &mut String) -> Result<(), hypergraft::TemplateError> {
+        askama::Template::render_into(self, output)
+            .map_err(|_| hypergraft::TemplateError::Rendering)
+    }
+}
+
+impl hypergraft::GraftTemplate for ItemPage<'_> {
+    fn render_into(&self, output: &mut String) -> Result<(), hypergraft::TemplateError> {
+        askama::Template::render_into(self, output)
+            .map_err(|_| hypergraft::TemplateError::Rendering)
+    }
+}
+```
+
+`PatchSet::children` and `outcome::children_patch` accept these adapted types. Askama block accessors alone do not implement the owned interface.
 
 Blocks can nest in the source. A parent block then contains its nested blocks, while each nested block can also render independently.
 
@@ -178,7 +204,7 @@ async fn item_index(
         GraftRequest::Patch => Ok(outcome::children_patch(
             PatchStatus::Ok,
             "item-results",
-            &page.as_item_results(),
+            &ItemResults { items: page.items },
         )?),
     }
 }

@@ -192,6 +192,28 @@ pub(crate) struct TaskDetail<'a> {
     pub(crate) error: Option<&'a str>,
 }
 
+macro_rules! legacy_template {
+    ($($name:ident),+ $(,)?) => {$ (
+        impl hypergraft::GraftTemplate for $name<'_> {
+            fn render_into(&self, output: &mut String) -> Result<(), hypergraft::TemplateError> {
+                askama::Template::render_into(self, output)
+                    .map_err(|_| hypergraft::TemplateError::Rendering)
+            }
+        }
+    )+};
+}
+
+legacy_template!(
+    TasksPage,
+    TaskFilter,
+    TaskResults,
+    TaskCreate,
+    TaskCreateFilters,
+    TaskCreateFeedback,
+    TaskPage,
+    TaskDetail
+);
+
 pub enum AppError {
     NotFound,
     Internal,
@@ -278,10 +300,9 @@ pub async fn task(
     }
 }
 
-fn document(title: &str, page: &impl Template) -> Result<Response, AppError> {
-    let body = page.render().map_err(|_| AppError::Internal)?;
-    let markup = Document { title, body: &body }
-        .render()
+fn document(title: &str, page: &impl hypergraft::GraftTemplate) -> Result<Response, AppError> {
+    let body = hypergraft::GraftTemplate::render(page).map_err(|_| AppError::Internal)?;
+    let markup = askama::Template::render(&Document { title, body: &body })
         .map_err(|_| AppError::Internal)?;
     let mut response = Html(markup).into_response();
     response

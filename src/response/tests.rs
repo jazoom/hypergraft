@@ -24,6 +24,76 @@ struct Content<'a> {
     value: &'a str,
 }
 
+impl GraftTemplate for Content<'_> {
+    fn render_into(&self, output: &mut String) -> Result<(), TemplateError> {
+        askama::Template::render_into(self, output).map_err(|_| TemplateError::Rendering)
+    }
+}
+
+#[test]
+fn failed_output_is_discarded_and_targets_precede_evaluation() {
+    struct Failure;
+    impl GraftTemplate for Failure {
+        fn render_into(&self, output: &mut String) -> Result<(), TemplateError> {
+            output.push_str("secret partial HTML");
+            Err(TemplateError::Rendering)
+        }
+    }
+    struct Unevaluated;
+    impl GraftTemplate for Unevaluated {
+        fn render_into(&self, _: &mut String) -> Result<(), TemplateError> {
+            panic!("invalid target evaluated a template")
+        }
+    }
+    assert_eq!(Failure.render(), Err(TemplateError::Rendering));
+    let mut patches = PatchSet::new();
+    patches
+        .append("existing", &Content { value: "retained" })
+        .unwrap();
+    for error in [
+        patches.children("main", &Failure).unwrap_err(),
+        patches.append("main", &Failure).unwrap_err(),
+    ] {
+        assert_eq!(error.kind(), PatchBuildErrorKind::Rendering);
+        assert!(!format!("{error:?} {error}").contains("secret"));
+        let source = std::error::Error::source(&error).unwrap();
+        assert_eq!(source.to_string(), "template rendering failed");
+        assert!(!format!("{source:?}").contains("secret"));
+        assert!(source.source().is_none());
+    }
+    patches
+        .children("main", &Content { value: "complete" })
+        .unwrap();
+    assert_eq!(
+        patches.append("main", &Unevaluated).unwrap_err().kind(),
+        PatchBuildErrorKind::DuplicateTarget
+    );
+    assert_eq!(
+        patches
+            .children("bad target", &Unevaluated)
+            .unwrap_err()
+            .kind(),
+        PatchBuildErrorKind::InvalidTarget
+    );
+    for index in 2..MAX_PATCHES {
+        patches
+            .children(format!("target-{index}"), &Content { value: "complete" })
+            .unwrap();
+    }
+    assert_eq!(
+        patches.append("overflow", &Unevaluated).unwrap_err().kind(),
+        PatchBuildErrorKind::PatchLimit
+    );
+    let html = patches.encode_live().unwrap();
+    assert!(!html.contains("secret"));
+    let decoded = live::decode_live_envelope(&html).unwrap();
+    assert_eq!(decoded.targets.len(), MAX_PATCHES);
+    assert_eq!(decoded.targets[0].target, "existing");
+    assert_eq!(decoded.targets[0].html, "<p>retained</p>");
+    assert_eq!(decoded.targets[1].target, "main");
+    assert_eq!(decoded.targets[1].html, "<p>complete</p>");
+}
+
 async fn body(response: Response) -> String {
     String::from_utf8(
         to_bytes(response.into_body(), usize::MAX)
