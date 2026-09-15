@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import fixture from "../protocol-v1.json";
+import templates from "./fixtures/templates.json";
 import {
     LIVE_PATCH_EVENT,
     listenForLiveStateChanges,
@@ -195,6 +196,20 @@ test("produces accepted control messages from the protocol fixture", async () =>
         expect(item.control, item.name).toBeTypeOf("string");
         expect(sent, item.name).toContainEqual(JSON.parse(item.control!));
     }
+});
+
+test("repeated compiled snapshots retain live node identity", async () => {
+    liveForm("compiled", "/items", "item-results");
+    cleanup = startHypergraft();
+    await vi.waitFor(() => expect(MockSocket.instances).toHaveLength(1));
+    const socket = MockSocket.instances[0]!;
+    await vi.waitFor(() => expect(socket.sent).toHaveLength(1));
+    socket.receive(1, envelope("item-results", templates.results));
+    const row = document.getElementById("row-1")!;
+    const child = row.firstElementChild;
+    socket.receive(1, envelope("item-results", templates.reordered));
+    expect(document.getElementById("row-1")).toBe(row);
+    expect(row.firstElementChild).toBe(child);
 });
 
 test("opens one socket and applies the first live patch", async () => {

@@ -65,6 +65,64 @@ test("compiled page and narrow blocks share keys and pass preflight", () => {
     }
 });
 
+test("compiled snapshots and blocks retain actual keyed nodes", () => {
+    document.body.innerHTML = templates.page + '<div id="append"></div>';
+    const row = document.getElementById("row-1")!;
+    const contents = row.firstElementChild;
+    apply(preflightLive(templates.rowPatch));
+    expect(document.getElementById("row-1")).toBe(row);
+    expect(row.firstElementChild).toBe(contents);
+    apply(
+        preflightLive(
+            `<graft-patch-set version="1"><graft-patch operation="children" target="results"><template>${templates.reordered}</template></graft-patch></graft-patch-set>`,
+        ),
+    );
+    expect(document.getElementById("row-1")).toBe(row);
+    expect(row.firstElementChild).toBe(contents);
+    const appended: Node[] = [];
+    for (const fragment of templates.append) {
+        apply(preflightLive(fragment.envelope));
+        for (const node of appended) expect(node.isConnected).toBe(true);
+        appended.push(document.getElementById("append")!.lastChild!);
+    }
+    apply(
+        preflightLive(
+            `<graft-patch-set version="1"><graft-patch operation="children" target="append"><template>${templates.siblings}</template></graft-patch></graft-patch-set>`,
+        ),
+    );
+    expect(Array.from(document.getElementById("append")!.childNodes)).toEqual(
+        appended,
+    );
+    const status = row.querySelector("aside")!;
+    const previous = status.firstElementChild;
+    status.id = "status";
+    apply(
+        preflightLive(
+            `<graft-patch-set version="1"><graft-patch operation="children" target="status"><template>${templates.alternative}</template></graft-patch></graft-patch-set>`,
+        ),
+    );
+    expect(status.firstElementChild).not.toBe(previous);
+    expect(previous!.isConnected).toBe(false);
+    expect(status.textContent).toBe("Inactive");
+});
+
+test.each(["children", "append"])(
+    "native template targets reject %s key collisions before any mutation",
+    (operation) => {
+        const marker = '<b data-graft-key="u:61"></b>';
+        document.body.innerHTML = `<div id="earlier">old</div><template id="native">${marker}${operation === "children" ? marker : ""}</template>`;
+        const before = document.body.innerHTML;
+        const title = document.title;
+        expect(() =>
+            preflightLive(
+                `<graft-patch-set version="1" title="changed"><graft-patch operation="children" target="earlier"><template>new</template></graft-patch><graft-patch operation="${operation}" target="native"><template>${marker}</template></graft-patch></graft-patch-set>`,
+            ),
+        ).toThrow();
+        expect(document.body.innerHTML).toBe(before);
+        expect(document.title).toBe(title);
+    },
+);
+
 type ProtocolCase = {
     initialDocument?: string;
     keyInput?: string | { prefix: string; repeat: string; count: number };

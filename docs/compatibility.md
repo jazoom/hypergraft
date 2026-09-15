@@ -23,7 +23,11 @@ Deployment must replace cached browser bundles with the matching runtime before 
 
 Existing authored markers must satisfy the new encoding before key validation becomes active. Current-subtree validation also rejects invalid markers in contents that a patch replaces. Such documents need a full reload with valid markup, not a repair patch.
 
-Morphlex remains the correspondence engine. The later reconciler replacement records observable differences before it becomes supported behaviour. These include positional unkeyed correspondence and authoritative control properties.
+The owned reconciler replaces Morphlex. Unkeyed correspondence now uses sibling-local ordinals, including whitespace text and comments. It never searches for similar descendants.
+
+An incompatible ancestor ends descendant identity. Different effective input types require replacement. Authoritative snapshots supersede dirty control properties, even when attributes remain equal.
+
+Native moves preserve platform state when applicable. Fallback moves retain object identity but can trigger custom-element connection callbacks.
 
 If implementation reveals a wire incompatibility beyond this coordinated metadata contract, dependent work must stop until explicit approval of a protocol version change.
 

@@ -1,6 +1,6 @@
 import { validateSiblingKeys } from "./identity";
 import { HypergraftError } from "./diagnostics";
-import { appendChildren, morphChildren } from "./morph";
+import { appendChildren, morphChildren, captureControls } from "./morph";
 
 export const PROTOCOL_VERSION = "1";
 export const MEDIA_TYPE = "text/vnd.hypergraft.patches+html";
@@ -371,13 +371,14 @@ function parseEnvelope(
             fail("target-content", "node bound exceeded", patch.targetId);
         patch.nodes = [...fragment.childNodes];
         try {
+            const current =
+                patch.target instanceof HTMLTemplateElement
+                    ? patch.target.content.childNodes
+                    : patch.target.childNodes;
             if (patch.operation === "append")
-                validateSiblingKeys([
-                    ...patch.target.childNodes,
-                    ...patch.nodes,
-                ]);
+                validateSiblingKeys([...current, ...patch.nodes]);
             else {
-                validateSiblingKeys(patch.target.childNodes);
+                validateSiblingKeys(current);
                 validateSiblingKeys(patch.nodes);
             }
         } catch {
@@ -453,11 +454,36 @@ export function apply(
               direction: active.selectionDirection,
           }
         : null;
+    const controlRoots: Node[] = [];
+    const retainedSources: [Node, Node][] = [];
+    for (const patch of batch.patches) {
+        if (
+            patch.operation === "children" &&
+            (patch.target instanceof HTMLSelectElement ||
+                patch.target instanceof HTMLTextAreaElement)
+        ) {
+            const source = patch.target.cloneNode(false) as
+                HTMLSelectElement | HTMLTextAreaElement;
+            for (const node of patch.nodes) source.appendChild(node);
+            // A shallow textarea clone retains its dirty value, not source text.
+            if (source instanceof HTMLTextAreaElement)
+                source.value = source.defaultValue;
+            patch.nodes = Array.from(source.childNodes);
+            controlRoots.push(source);
+            retainedSources.push([source, patch.target]);
+        } else for (const node of patch.nodes) controlRoots.push(node);
+    }
+    const controls = captureControls(controlRoots, retainedSources);
     for (const patch of batch.patches) {
         if (patch.operation === "append")
             appendChildren(patch.target, patch.nodes);
-        else morphChildren(patch.target, patch.nodes, consumeOwned);
+        else
+            morphChildren(patch.target, patch.nodes, (element, source) => {
+                controls.retain(element, source);
+                consumeOwned?.(element, source);
+            });
     }
+    controls.restore();
     if (batch.title !== undefined) document.title = batch.title;
     const finalControl = active?.isConnected
         ? active

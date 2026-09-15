@@ -8,11 +8,14 @@ import { createServer } from "vite";
 
 const directory = "benchmarks/results";
 await mkdir(directory, { recursive: true });
-const server = JSON.parse(
-    execFileSync("cargo", ["bench", "--bench", "templates", "--quiet"], {
-        encoding: "utf8",
-    }),
-);
+const reconciler = process.argv.includes("--reconciler");
+const server = reconciler
+    ? undefined
+    : JSON.parse(
+          execFileSync("cargo", ["bench", "--bench", "templates", "--quiet"], {
+              encoding: "utf8",
+          }),
+      );
 // HEAD does not identify uncommitted benchmark sources or production edits.
 const sourcePaths = [
     "benches/templates.rs",
@@ -100,6 +103,39 @@ try {
             const measurements = await page.evaluate(() =>
                 window.runBenchmarks(),
             );
+            const fallback = reconciler
+                ? await page.evaluate(async () => {
+                      const prototypes = [
+                          Element.prototype,
+                          DocumentFragment.prototype,
+                      ];
+                      const descriptors = prototypes.map((prototype) =>
+                          Object.getOwnPropertyDescriptor(
+                              prototype,
+                              "moveBefore",
+                          ),
+                      );
+                      try {
+                          for (const prototype of prototypes)
+                              Object.defineProperty(prototype, "moveBefore", {
+                                  configurable: true,
+                                  value: undefined,
+                              });
+                          return await window.runBenchmarks();
+                      } finally {
+                          prototypes.forEach((prototype, index) => {
+                              const descriptor = descriptors[index];
+                              if (descriptor)
+                                  Object.defineProperty(
+                                      prototype,
+                                      "moveBefore",
+                                      descriptor,
+                                  );
+                              else delete prototype.moveBefore;
+                          });
+                      }
+                  })
+                : undefined;
             let trace = {
                 available: false,
                 reason: "This recorder supports Chromium CDP trace categories only.",
@@ -120,7 +156,7 @@ try {
                 );
                 await session.send("Tracing.end");
                 await finished;
-                const path = `${directory}/chromium-current.trace.json.gz`;
+                const path = `${directory}/chromium-${reconciler ? "owned" : "current"}.trace.json.gz`;
                 await writeFile(
                     path,
                     gzipSync(JSON.stringify({ traceEvents: events })),
@@ -175,6 +211,7 @@ try {
                 name,
                 version: browser.version(),
                 measurements,
+                fallback,
                 trace,
                 errors,
             });
@@ -189,6 +226,6 @@ try {
     await vite.close();
 }
 await writeFile(
-    `${directory}/current-pipeline.json`,
+    `${directory}/${reconciler ? "owned-reconciler" : "current-pipeline"}.json`,
     JSON.stringify({ metadata, server, browsers }, null, 2) + "\n",
 );

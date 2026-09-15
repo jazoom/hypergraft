@@ -269,4 +269,8 @@ All host content callbacks finish before the final fragment inspection. Key fail
 
 Compiler and runtime deployments require the same reconciliation fixture revision before generated markers enter production output. Protocol version, operations and transport limits remain unchanged.
 
-Morphlex remains the correspondence engine. This validation does not provide the specified sibling-local reconciliation behaviour.
+The owned reconciler matches keys only among direct siblings. Unkeyed nodes correspond by ordinal among unkeyed siblings, including text and comments.
+
+Incompatible candidates receive replacement without descendant reuse. Compatible elements retain object identity and receive authoritative attributes and control properties.
+
+Native `moveBefore` preserves platform state when its preconditions hold. Ordinary DOM moves preserve object identity but can trigger custom-element connection callbacks.

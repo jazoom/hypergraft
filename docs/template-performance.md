@@ -35,7 +35,7 @@ The server measures only the small target output, not the external document. Ser
 
 These definitions remain the shared comparison workloads for the compiler and reconciler replacements. Both engines recognise public IDs. The unkeyed comparison must retain identical hand-authored HTML.
 
-Browser workloads with compiler-generated markers remain a separate future category. Different identity semantics cannot establish an engine speed improvement.
+The owned reconciler adds a separate compiler-marker workload from `browser/fixtures/templates.json`. Different identity semantics cannot establish an engine speed improvement.
 
 ## Measurement boundaries
 
@@ -61,7 +61,11 @@ Trace totals cover the whole traced run, including setup and warm-up. The record
 
 These totals are event durations, not exclusive CPU time or per-patch latency. The compressed trace retains timestamps for further inspection.
 
-The final document-wide ID scan remains inside preflight. The small-target workload exposes its surrounding-document cost but does not isolate that scan from other validation.
+The final document-wide ID scan remains inside preflight. The current benchmark also records its exact loop duration through benchmark-only timers.
+
+`benchmarks/vite.config.ts` inserts those timers around the production loop. It fails if the source boundaries change. No production hook or duplicate validator exists.
+
+`finalIdScanMs` includes the document query and collision checks. It excludes parsing and key validation. Preflight samples include timer overhead, unlike the historical baseline.
 
 ## Reproduction
 
@@ -183,4 +187,74 @@ Added bytes comprise generated metadata and one trailing source newline. Append 
 
 These server results show higher output cost and larger payloads, not an engine speed improvement. The browser benchmark still uses identical hand-authored comparison HTML.
 
-This run measures no browser parsing, reconciliation, layout or paint. The earlier trace remains historical evidence only. Scheduler noise and uncontrolled CPU frequency limit comparisons.
+This server run measures no browser parsing, reconciliation, layout or paint. The earlier trace remains historical evidence only. Scheduler noise and uncontrolled CPU frequency limit comparisons.
+
+## Owned reconciler measurements
+
+`benchmarks/results/owned-reconciler.json` contains raw native and forced-fallback Chromium and Firefox samples. The artefact includes source hashes, machine metadata and the source revision.
+
+The shared ID-keyed and unkeyed workloads retain their original HTML. The separate compiled-marker workload reconciles `templates.results` with `templates.reordered` from the compiler fixture.
+
+The run uses headless Chromium 151.0.7922.34 and Firefox 153.0 on the same processor as the baseline. Both engines support native moves.
+
+The following table contains Chromium medians.
+
+| Workload                       | Native preflight, ms | Native apply, ms | Fallback preflight, ms | Fallback apply, ms |
+| ------------------------------ | -------------------: | ---------------: | ---------------------: | -----------------: |
+| ID unchanged                   |                 5.60 |             4.50 |                   5.00 |               4.05 |
+| ID insertion                   |                 5.10 |             4.30 |                   5.00 |               4.05 |
+| ID reorder                     |                 5.05 |             4.70 |                   5.15 |               4.50 |
+| Unkeyed unchanged              |                 4.00 |             3.20 |                   4.05 |               3.20 |
+| Unkeyed insertion              |                 3.95 |             3.30 |                   4.10 |               3.30 |
+| Unkeyed reorder                |                 3.90 |             3.30 |                   4.20 |               3.30 |
+| Small target in large document |                 7.00 |             0.00 |                   7.00 |               0.00 |
+| Append                         |                 1.40 |             0.10 |                   1.40 |               0.10 |
+| Compiled-marker reorder        |                 0.10 |             0.10 |                   0.10 |               0.05 |
+
+ID reorder application falls from the historical 10.10 ms median to 4.70 ms. Unchanged unkeyed application rises from 1.00 ms to 3.20 ms.
+
+These results show workload-dependent costs, not a general speed improvement. The owned runtime includes key validation that the baseline excludes.
+
+Sequential runs and uncontrolled CPU frequency limit comparisons. Zero samples indicate timer resolution, not free operations. The compiler-marker workload contains only two rows.
+
+### Final ID scan cost
+
+| Workload                       | Chromium native scan, ms | Chromium fallback scan, ms |
+| ------------------------------ | -----------------------: | -------------------------: |
+| ID unchanged                   |                     0.15 |                       0.10 |
+| ID insertion                   |                     0.20 |                       0.10 |
+| ID reorder                     |                     0.10 |                       0.10 |
+| Unkeyed unchanged              |                     0.00 |                       0.00 |
+| Unkeyed insertion              |                     0.00 |                       0.00 |
+| Unkeyed reorder                |                     0.00 |                       0.00 |
+| Small target in large document |                     6.80 |                       6.70 |
+| Append                         |                     0.10 |                       0.10 |
+| Compiled-marker reorder        |                     0.00 |                       0.00 |
+
+The small-target native scan consumes 6.80 ms of the 7.00 ms median Chromium preflight interval. Firefox records a 6.00 ms scan and 6.50 ms preflight median.
+
+These samples measure the existing full scan, not a cached-validity candidate. The runtime retains its full validation rules.
+
+### Layout and paint
+
+`benchmarks/results/chromium-owned.trace.json.gz` contains a separate native Chromium trace with 450 application intervals. All 451 layout events occur outside application and total 1,152.412 ms.
+
+All 645 paint events occur outside application and total 160.036 ms. Style updates outside application total 453.116 ms.
+
+These totals include setup and warm-up. They are not exclusive CPU time or per-patch latency. No fallback, Firefox or WebKit trace accompanies this run.
+
+Chromium and Firefox pass the focused browser contracts. WebKit cannot start because required host libraries are absent. No WebKit performance or correctness claim follows.
+
+### Native and fallback reproduction
+
+Run the recorder for native and forced-fallback samples.
+
+```sh
+mise exec -- pnpm bench:record --reconciler
+```
+
+This command replaces `owned-reconciler.json` and `chromium-owned.trace.json.gz`. It leaves historical baselines and server results unchanged.
+
+The recorder disables `moveBefore` on element and fragment prototypes for each fallback run. It restores their descriptors in `finally`.
+
+This override exists only in the measurement session. The production runtime exposes no fallback configuration.

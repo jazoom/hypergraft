@@ -139,16 +139,27 @@ export function observeIslands(
     };
     scan(document);
     const observer = new MutationObserver((records) => {
-        for (const record of records)
+        for (const record of records) {
+            if (
+                record.type === "attributes" &&
+                record.target instanceof HTMLElement
+            )
+                scan(record.target);
             for (const node of record.addedNodes)
                 if (node instanceof HTMLElement) scan(node);
-        // Cleaning after all additions preserves roots moved within the document.
+        }
+        // Cleanup after all additions preserves roots moved within the document.
         clean();
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["data-island"],
+    });
     const settled = (event: Event) => {
         const detail = (event as CustomEvent<RequestSettledDetail>).detail;
-        // Applied targets are authoritative and may contain newly rendered roots.
+        // Events precede observer delivery, so new roots need an immediate scan.
         if (detail.outcome === "applied-patch")
             for (const id of detail.targetIds) {
                 const target = document.getElementById(id);
@@ -157,8 +168,7 @@ export function observeIslands(
         reconcile({ cause: "patch", detail });
     };
     const location = (event: Event) => {
-        // Navigation has no target list. Morph may author data-island onto a
-        // retained node, which childList observation cannot see.
+        // Navigation supplies no target list for the synchronous scan.
         scan(document);
         reconcile({
             cause: "location",

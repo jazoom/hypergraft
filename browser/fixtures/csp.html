@@ -8,7 +8,12 @@
         <main id="main" tabindex="-1">
             <div id="command">
                 <p id="original">Original</p>
-                <form method="post" action="/command" data-graft>
+                <form
+                    id="command-form"
+                    method="post"
+                    action="/command"
+                    data-graft
+                >
                     <input name="credential" value="wrong" />
                     <button id="save" type="submit">Save</button>
                 </form>

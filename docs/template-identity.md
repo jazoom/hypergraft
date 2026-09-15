@@ -4,7 +4,7 @@
 
 This normative target contract accompanies [Template language](template-language.md). Browser preflight enforces its key validation rules.
 
-The compiler emits revision-safe keys and supports scoped typed composition and semantically keyed loops. Independent block selection retains those keys. The correspondence rules remain future work. Morphlex does not implement the target correspondence contract.
+The compiler emits revision-safe keys and supports scoped typed composition and semantically keyed loops. Independent block selection retains those keys. The owned browser reconciler implements sibling-local correspondence and authoritative control state.
 
 Complete `children` output describes authoritative contents of a retained target. `append` remains cumulative. Neither endpoint retains a previous DOM snapshot or per-client baseline.
 

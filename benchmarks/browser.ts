@@ -1,4 +1,5 @@
 import { apply, MEDIA_TYPE, preflight } from "../browser/patches";
+import templates from "../browser/fixtures/templates.json";
 
 const warmup = 5;
 const samples = 20;
@@ -46,9 +47,11 @@ async function measureBenchmarks() {
         ),
         { name: "small-large-document", keyed: true, operation: "small" },
         { name: "append", keyed: true, operation: "append" },
+        { name: "compiled-marker-reorder", keyed: true, operation: "compiled" },
     ];
     for (const workload of workloads) {
         const parsePreflightMs: number[] = [];
+        const finalIdScanMs: number[] = [];
         const applyMs: number[] = [];
         const bytes: number[] = [];
         for (let trial = -warmup; trial < samples; trial++) {
@@ -69,6 +72,8 @@ async function measureBenchmarks() {
                           sequence(workload.operation === "small" ? 1 : 1000),
                           workload.keyed,
                       );
+            if (workload.operation === "compiled")
+                target.innerHTML = templates.results;
             host.append(target);
             const count = workload.operation === "append" ? 10 : 1;
             for (let batch = 0; batch < count; batch++) {
@@ -78,7 +83,9 @@ async function measureBenchmarks() {
                 if (workload.operation === "append")
                     ids = sequence(100, batch * 100);
                 const text = envelope(
-                    rows(ids, workload.keyed),
+                    workload.operation === "compiled"
+                        ? templates.reordered
+                        : rows(ids, workload.keyed),
                     workload.operation === "append",
                 );
                 performance.mark("graft-preflight-start");
@@ -86,6 +93,15 @@ async function measureBenchmarks() {
                 const prepared = preflight(response, text);
                 const parsed = performance.now();
                 performance.mark("graft-preflight-end");
+                const scans = performance.getEntriesByName(
+                    "graft-final-ids",
+                    "measure",
+                );
+                performance.clearMeasures("graft-final-ids");
+                if (scans.length !== 1)
+                    throw new Error(
+                        "The benchmark requires one final ID scan measurement per patch batch",
+                    );
                 if (prepared.kind !== "patches")
                     throw new Error("Expected a patch batch");
                 performance.mark("graft-apply-start");
@@ -95,6 +111,7 @@ async function measureBenchmarks() {
                 performance.mark("graft-apply-end");
                 if (trial >= 0) {
                     parsePreflightMs.push(parsed - start);
+                    finalIdScanMs.push(scans[0].duration);
                     applyMs.push(applied - applying);
                     bytes.push(new TextEncoder().encode(text).length);
                 }
@@ -109,12 +126,16 @@ async function measureBenchmarks() {
         results.push({
             workload: workload.name,
             parsePreflightMs,
+            finalIdScanMs,
             applyMs,
             envelopeBytes: bytes,
         });
     }
     return {
-        engine: "morphlex 1.4.0",
+        engine: "owned sibling-local reconciler",
+        instrumentation:
+            "Benchmark-only timers surround the production final ID scan. Preflight includes timer overhead.",
+        nativeMoves: typeof Element.prototype.moveBefore === "function",
         userAgent: navigator.userAgent,
         warmup,
         samples,
