@@ -2,7 +2,9 @@
 
 ## Status and boundaries
 
-This normative target contract accompanies [Template language](template-language.md). Browser preflight enforces its key validation rules. The compiler and correspondence rules remain future work, not guarantees of the current Morphlex implementation.
+This normative target contract accompanies [Template language](template-language.md). Browser preflight enforces its key validation rules.
+
+The compiler emits revision-safe keys and supports scoped typed composition. Loops, block selection and the correspondence rules remain future work. Morphlex does not implement the target correspondence contract.
 
 Complete `children` output describes authoritative contents of a retained target. `append` remains cumulative. Neither endpoint retains a previous DOM snapshot or per-client baseline.
 
@@ -107,6 +109,55 @@ Wrapper-free loops and composition retain their accumulated scope until an actua
 Independent output inside wrapper-free repetition needs the exact outstanding semantic scope. Chained `.scoped(a).scoped(b)` appends `a` then `b` in that order. A caller must reproduce those frames when no intervening retained parent resets them.
 
 Explicit markers and IDs are absolute within their sibling domain. The compiler does not rewrite them with semantic scope. Authors therefore own uniqueness of repeated authored identities.
+
+## Executable scoped output
+
+The `GraftTemplate` trait supplies `.scoped(key)`. The wrapper retains the typed fragment and its encoded scope. Invalid metadata fails the render with `TemplateError::InvalidKey`.
+
+```rust
+use hypergraft::{GraftTemplate, PatchSet};
+
+#[derive(GraftTemplate)]
+#[graft(path = "tests/templates/card.graft.html")]
+struct Card;
+
+let mut patches = PatchSet::new();
+patches.append("cards", &Card.scoped(41))?;
+let first = patches.encode_live()?;
+
+let mut patches = PatchSet::new();
+patches.append("cards", &Card.scoped(42))?;
+let second = patches.encode_live()?;
+
+let independent = Card.scoped(2).scoped(7);
+let mut patches = PatchSet::new();
+patches.children("cards", &independent)?;
+```
+
+Each append uses a separate batch. Equal child slots below separate card roots retain equal keys. The explicit scopes distinguish the card roots.
+
+A borrowed scoped fragment retains its frame order, including through a trait object. Explicit composition scope follows the fragment's existing frames.
+
+```rust
+let group = Card.scoped(2);
+let borrowed = (&group).scoped(7);
+assert_eq!(borrowed.render()?, Card.scoped(2).scoped(7).render()?);
+```
+
+Direct output accepts a `template::Scope`. Ordinary callers use its empty default. Generated composition passes the active scope or resets it at an actual parent boundary.
+
+```rust
+use hypergraft::template::Scope;
+
+let mut html = String::new();
+Card.scoped(41).render_into(&mut html, &Scope::default())?;
+```
+
+Literal authored markers receive compiler validation after HTML character-reference decoding. Dynamic authored markers receive validation from the exact escaped start tag through the HTML tokenizer. This permits character references across expression boundaries without another template evaluation.
+
+The runtime rejects reserved authored markers and metadata above its byte bound. Error values contain no HTML or evaluated keys. Generated attributes consume the existing response byte budget.
+
+Private Askama adapters still emit legacy HTML without automatic annotations. Their ignored scope parameter does not promise identity for legacy fragments.
 
 ## Worked identities
 

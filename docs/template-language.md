@@ -4,7 +4,7 @@
 
 This document defines the target compiler contract authorised by [NEXT.md](../NEXT.md). It replaces that plan's illustrative syntax.
 
-The compiler implements external sources, literal HTML and escaped expressions in text, RCDATA and quoted attributes. It rejects all directives and options other than `path`. Composition, control flow, blocks and automatic identity remain future work.
+The compiler implements external sources, escaped expressions and typed composition with optional scope. It emits automatic element identity. Control flow and blocks remain future work. The derive accepts only the `path` option.
 
 [Template identity](template-identity.md) defines the associated identity format. [Compatibility](compatibility.md) defines the rollout boundary. Protocol samples use the fixed authored marker `u:7265616479`. Rust tests compare those samples with production builder output.
 
@@ -194,16 +194,26 @@ Unknown selectors, duplicate block names and duplicate input names produce diagn
 
 `render` writes a value through `GraftTemplate`, not through `Display`. It is valid only at ordinary node-content boundaries. Composition in attributes, RCDATA, raw text or comments is an error.
 
-The runtime spelling for explicit scope is `template.scoped(key)`. The wrapper implements `GraftTemplate` and works with either patch operation. This target API becomes executable in the scoped-identity task.
+The runtime spelling for explicit scope is `template.scoped(key)`. The wrapper implements `GraftTemplate` and works with either patch operation. The API accepts supported semantic values without a general `Display` conversion.
 
 ```rust
-let fragment = card.scoped(card_id);
+use hypergraft::GraftTemplate;
+
+let fragment = (&card).scoped(card_id);
 patches.append("cards", &fragment)?;
+
+let independent = (&card).scoped(group_id).scoped(card_id);
+let mut replacement = hypergraft::PatchSet::new();
+replacement.children("cards", &independent)?;
 ```
 
 `render expression scope(key)` is equivalent to a scoped value at that location. Scope values use the key encoder from [Template identity](template-identity.md). No automatic call counter or call-site scope exists. Repeated sibling instances need distinct explicit or inherited semantic scopes.
 
-`render_into` writes directly to an output destination. Its internal output context carries parent-relative scope when identity support enters the runtime. `render` returns complete HTML or an error. A failed patch discards partial output before batch insertion.
+`render_into(&self, output: &mut String, scope: &template::Scope)` writes directly with parent-relative scope. The compiler resets scope at authored and implied element-parent boundaries. Text and comments retain no keys.
+
+`render` supplies an empty initial scope and returns complete HTML or an error. A failed patch discards partial output before batch insertion.
+
+`.scoped(a).scoped(b)` appends frames in that order. References and trait objects preserve that order. Explicit composition scope also follows any scope that the composed value already contains.
 
 Nested failures propagate through typed composition. Runtime errors expose bounded classifications, not HTML, evaluated keys or arbitrary underlying error text.
 
@@ -221,9 +231,13 @@ Compiler diagnostics attach the normalised path and one-based source position to
 
 Each derive emits an `include_str!` reference relative to `CARGO_MANIFEST_DIR`. Cargo therefore tracks the external source without a build script. Dependency aliases resolve through Cargo metadata. Logical paths exclude absolute checkout locations.
 
-Typed composition now emits direct `GraftTemplate::render_into` calls. Generic fields and borrowed templates retain their Rust bounds without clones. Reference values delegate to their underlying template. Ordinary string interpolation remains escaped, and strings do not implement the template interface. Explicit composition scopes remain a later compiler increment.
+Typed composition emits direct `GraftTemplate::render_into` calls with the active parent-relative scope. Generic fields and borrowed templates retain their Rust bounds without clones. Reference values delegate to their underlying template. Ordinary string interpolation remains escaped, and strings do not implement the template interface.
 
-The isolated consumer test uses a renamed dependency and one separate target directory for successive offline builds. Changes to the direct source and the composed child source each change executable output without Rust source edits.
+The compiler allocates element slots from the complete source before code output. Generated namespaces use the package name, normalised logical path and complete source revision. Rust type names and absolute checkout paths do not affect keys.
+
+Literal authored markers receive compiler diagnostics for malformed, reserved or over-bound values. Evaluated violations return `TemplateError::InvalidKey` without HTML or key data. Unconditional authored IDs suppress automatic markers even when their values require browser validation.
+
+The isolated consumer test uses a renamed dependency and one separate target directory for successive offline builds. Changes to the direct source and the composed child source each change executable output without Rust source edits. A relocated consumer reproduces the same generated keys.
 
 The initial language excludes:
 

@@ -420,6 +420,8 @@ dependencies = [
  "async-stream",
  "axum",
  "futures-util",
+ "html5ever",
+ "hypergraft-template-core",
  "hypergraft-template-macros",
  "matchit",
  "serde",
@@ -452,6 +454,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustc_lexer",
+ "sha2",
  "syn 2.0.119",
 ]
 
@@ -840,6 +843,17 @@ name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures",

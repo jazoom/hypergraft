@@ -19,7 +19,7 @@ struct Fragment {
 macro_rules! legacy_template {
     ($($name:ident),+) => {$ (
         impl hypergraft::GraftTemplate for $name {
-            fn render_into(&self, output: &mut String) -> Result<(), hypergraft::TemplateError> {
+            fn render_into(&self, output: &mut String, _: &hypergraft::template::Scope) -> Result<(), hypergraft::TemplateError> {
                 askama::Template::render_into(self, output)
                     .map_err(|_| hypergraft::TemplateError::Rendering)
             }

@@ -5,10 +5,13 @@ pub enum Part {
     Render {
         expression: Box<syn::Expr>,
         offset: usize,
+        end: usize,
+        scope: Option<Box<syn::Expr>>,
     },
     Expression {
         expression: Box<syn::Expr>,
         offset: usize,
+        end: usize,
     },
 }
 
@@ -52,6 +55,7 @@ fn expression_end(source: &str, delimiter: &str) -> Option<usize> {
 
 pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
     let mut starts = Vec::new();
+    let mut tags = Vec::new();
     let mut replacements = Vec::new();
     let mut expression_marker = "graft_expression_".to_owned();
     while source.contains(&expression_marker) {
@@ -85,7 +89,7 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
                 .strip_prefix("render")
                 .filter(|rest| rest.starts_with(char::is_whitespace))
                 .ok_or_else(|| Diagnostic::new(path, source, i, "unsupported directive"))?;
-            let expression = syn::parse_str(expression.trim()).map_err(|error| {
+            let (expression, scope) = render_expression(expression.trim()).map_err(|error| {
                 Diagnostic::new(
                     path,
                     source,
@@ -97,6 +101,8 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
             parts.push(Part::Render {
                 expression: Box::new(expression),
                 offset: i,
+                end: end + 2,
+                scope: scope.map(Box::new),
             });
             replacements.push((i..end + 2, format!("{expression_marker}{i}_")));
             i = end + 2;
@@ -128,6 +134,7 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
             parts.push(Part::Expression {
                 expression: Box::new(expression),
                 offset: i,
+                end: end + 2,
             });
             replacements.push((i..end + 2, format!("{expression_marker}{i}_")));
             i = end + 2;
@@ -226,6 +233,29 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
                             foreign.truncate(index);
                         }
                     } else {
+                        let marker = token
+                            .attrs
+                            .iter()
+                            .find(|a| a.name.local.as_ref() == "data-graft-key");
+                        let dynamic_marker =
+                            marker.is_some_and(|a| a.value.contains(&expression_marker));
+                        if let Some(marker) = marker.filter(|_| !dynamic_marker)
+                            && !crate::identity::valid_authored(&marker.value)
+                        {
+                            return Err(Diagnostic::new(
+                                path,
+                                source,
+                                tag_start,
+                                "invalid authored reconciliation marker",
+                            ));
+                        }
+                        tags.push(TagOutput {
+                            range: tag_start..i + 1,
+                            insertion: tag_start + 1 + name.len(),
+                            generated: marker.is_none()
+                                && !token.attrs.iter().any(|a| a.name.local.as_ref() == "id"),
+                            dynamic_marker,
+                        });
                         starts.push((tag_start..i + 1, tag_start + 1 + name.len()));
                         if matches!(foreign.last().map(String::as_str), Some("svg" | "math"))
                             && foreign_breakout(&token)
@@ -292,15 +322,30 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
         return Err(Diagnostic::new(path, source, i, "unterminated HTML token"));
     }
     parts.push(Part::Literal(source[start..].into()));
-    let elements = structure(path, source, &starts, replacements)?;
+    let (elements, content_parents) = structure(path, source, &starts, replacements)?;
     Ok(Document {
         parts,
         elements,
+        tags,
+        content_parents,
+        source: source.to_owned(),
         authored: starts.into_iter().map(|(range, _)| range).collect(),
     })
 }
 
+pub struct TagOutput {
+    pub range: std::ops::Range<usize>,
+    pub insertion: usize,
+    pub generated: bool,
+    pub dynamic_marker: bool,
+}
+
+pub type ContentParents = std::collections::HashMap<usize, Option<usize>>;
+
 pub struct Document {
+    pub source: String,
+    pub tags: Vec<TagOutput>,
+    pub content_parents: ContentParents,
     pub authored: Vec<std::ops::Range<usize>>,
     pub parts: Vec<Part>,
     pub elements: Vec<Element>,
@@ -318,7 +363,7 @@ fn structure(
     source: &str,
     starts: &[(std::ops::Range<usize>, usize)],
     mut replacements: Vec<(std::ops::Range<usize>, String)>,
-) -> Result<Vec<Element>, Diagnostic> {
+) -> Result<(Vec<Element>, ContentParents), Diagnostic> {
     use html5ever::tendril::TendrilSink;
     use markup5ever_rcdom::{NodeData, RcDom};
     // This private parse copy never enters output. The marker maps authored tags
@@ -374,6 +419,7 @@ fn structure(
         .one(html)
     };
     let mut elements = Vec::<Element>::new();
+    let mut content_parents = std::collections::HashMap::new();
     let mut pending = vec![(dom.document.clone(), None, false)];
     let mut authored = std::collections::HashSet::new();
     let mut found = std::collections::HashSet::new();
@@ -444,6 +490,7 @@ fn structure(
                             ));
                         }
                         found.insert(*offset);
+                        content_parents.insert(*offset, parent);
                     }
                 }
             }
@@ -463,7 +510,42 @@ fn structure(
             ));
         }
     }
-    Ok(elements)
+    if !document_source {
+        // The fragment parser's synthetic html root is not an output parent.
+        for parent in content_parents
+            .values_mut()
+            .chain(elements.iter_mut().map(|e| &mut e.parent))
+        {
+            if *parent == Some(0) {
+                *parent = None;
+            }
+        }
+    }
+    Ok((elements, content_parents))
+}
+
+fn render_expression(source: &str) -> syn::Result<(syn::Expr, Option<syn::Expr>)> {
+    use syn::parse::Parser;
+    let parser = |input: syn::parse::ParseStream<'_>| {
+        let expression = input.parse::<syn::Expr>()?;
+        let scope = if input.is_empty() {
+            None
+        } else {
+            let keyword = input.parse::<syn::Ident>()?;
+            if keyword != "scope" {
+                return Err(syn::Error::new(keyword.span(), "expected scope"));
+            }
+            let content;
+            syn::parenthesized!(content in input);
+            let value = content.parse::<syn::Expr>()?;
+            if !content.is_empty() {
+                return Err(content.error("unexpected scope tokens"));
+            }
+            Some(value)
+        };
+        Ok((expression, scope))
+    };
+    parser.parse_str(source)
 }
 
 fn tokenise_tag(source: &str) -> Option<html5ever::tokenizer::Tag> {

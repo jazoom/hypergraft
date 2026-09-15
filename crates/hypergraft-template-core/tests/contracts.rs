@@ -1,6 +1,58 @@
 use hypergraft_template_core::parser::parse;
 
 #[test]
+fn namespace_pins_framing_normalisation_and_complete_revision() {
+    use hypergraft_template_core::identity::namespace;
+    let expected = "a5dfbf29613766db56e971452574eea5264736fa390ca94420bb3555c174a99e";
+    let source = "<p>Card</p>";
+    assert_eq!(
+        namespace("example", "templates/card.graft.html", source).unwrap(),
+        expected
+    );
+    assert_eq!(
+        namespace("example", "templates/./discard/../card.graft.html", source).unwrap(),
+        expected
+    );
+    for (package, path, revised) in [
+        ("other", "templates/card.graft.html", source),
+        ("example", "templates/other.graft.html", source),
+        ("example", "templates/card.graft.html", "<p>Card</p>\n"),
+        ("example", "templates/card.graft.html", "<p>Card</p>\r\n"),
+    ] {
+        assert_ne!(namespace(package, path, revised).unwrap(), expected);
+    }
+    assert!(namespace("example", "/checkout/templates/card.graft.html", source).is_err());
+}
+
+#[test]
+fn authored_markers_reject_reserved_malformed_and_over_bound_literals() {
+    for marker in [
+        "",
+        "u:",
+        "u:0",
+        "u:AA",
+        "u:gg",
+        "u:&#32;",
+        &format!("g1:{}:0:", "a".repeat(64)),
+        &format!("u:{}", "aa".repeat(512)),
+    ] {
+        let source = format!("<p id=\"valid\" data-graft-key=\"{marker}\"></p>");
+        let error = parse("marker.graft.html", &source).err().unwrap();
+        assert_eq!(error.offset, 0);
+        assert_eq!(error.message, "invalid authored reconciliation marker");
+    }
+    for marker in ["u:&#54;1", &format!("u:{}", "aa".repeat(511))] {
+        assert!(
+            parse(
+                "marker.graft.html",
+                &format!("<p data-graft-key=\"{marker}\"></p>")
+            )
+            .is_ok()
+        );
+    }
+}
+
+#[test]
 fn html_tree_distinguishes_authored_tags_from_browser_elements() {
     let source = include_str!("fixtures/structure.graft.html");
     let document = parse("structure.graft.html", source).unwrap();

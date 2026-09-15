@@ -28,14 +28,18 @@ struct Content<'a> {
 fn failed_output_is_discarded_and_targets_precede_evaluation() {
     struct Failure;
     impl GraftTemplate for Failure {
-        fn render_into(&self, output: &mut String) -> Result<(), TemplateError> {
+        fn render_into(
+            &self,
+            output: &mut String,
+            _: &template::Scope,
+        ) -> Result<(), TemplateError> {
             output.push_str("secret partial HTML");
             Err(TemplateError::Rendering)
         }
     }
     struct Unevaluated;
     impl GraftTemplate for Unevaluated {
-        fn render_into(&self, _: &mut String) -> Result<(), TemplateError> {
+        fn render_into(&self, _: &mut String, _: &template::Scope) -> Result<(), TemplateError> {
             panic!("invalid target evaluated a template")
         }
     }

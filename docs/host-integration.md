@@ -137,14 +137,14 @@ struct ItemResults<'a> {
 
 ```rust
 impl hypergraft::GraftTemplate for ItemResults<'_> {
-    fn render_into(&self, output: &mut String) -> Result<(), hypergraft::TemplateError> {
+    fn render_into(&self, output: &mut String, _: &hypergraft::template::Scope) -> Result<(), hypergraft::TemplateError> {
         askama::Template::render_into(self, output)
             .map_err(|_| hypergraft::TemplateError::Rendering)
     }
 }
 
 impl hypergraft::GraftTemplate for ItemPage<'_> {
-    fn render_into(&self, output: &mut String) -> Result<(), hypergraft::TemplateError> {
+    fn render_into(&self, output: &mut String, _: &hypergraft::template::Scope) -> Result<(), hypergraft::TemplateError> {
         askama::Template::render_into(self, output)
             .map_err(|_| hypergraft::TemplateError::Rendering)
     }

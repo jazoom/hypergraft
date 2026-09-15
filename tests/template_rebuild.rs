@@ -35,7 +35,7 @@ fn external_sources_rebuild_through_a_renamed_dependency() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let consumer = Consumer(std::env::temp_dir().join(format!(
+    let mut consumer = Consumer(std::env::temp_dir().join(format!(
         "hypergraft-rebuild-{}-{unique}",
         std::process::id()
     )));
@@ -76,14 +76,38 @@ fn main() { print!("{}", Direct { child: &Child }.render().unwrap()); }
     fs::write(&direct, "<main>{% render self.child %}</main>").unwrap();
     fs::write(&child, "<b>first</b>").unwrap();
     // The outer Cargo build supplies the dependency cache. All nested builds stay offline.
-    assert_eq!(consumer.output(), "<main><b>first</b></main>");
+    let expected = |tag: &str, child: &str| {
+        let namespace = |path, source: &str| {
+            hypergraft_template_core::identity::namespace("template-rebuild-consumer", path, source)
+                .unwrap()
+        };
+        let parent_key = namespace(
+            "templates/direct.graft.html",
+            &format!("<{tag}>{{% render self.child %}}</{tag}>"),
+        );
+        let child_key = namespace("templates/child.graft.html", &format!("<b>{child}</b>"));
+        format!(
+            "<{tag} data-graft-key=\"g1:{parent_key}:0:\"><b data-graft-key=\"g1:{child_key}:0:\">{child}</b></{tag}>"
+        )
+    };
+    assert_eq!(consumer.output(), expected("main", "first"));
     fs::write(&direct, "<section>{% render self.child %}</section>").unwrap();
-    assert_eq!(consumer.output(), "<section><b>first</b></section>");
+    assert_eq!(consumer.output(), expected("section", "first"));
     fs::write(&child, "<b>changed child</b>").unwrap();
-    assert_eq!(consumer.output(), "<section><b>changed child</b></section>");
+    let revised = consumer.output();
+    assert_eq!(revised, expected("section", "changed child"));
+
+    let relocated = consumer.0.with_extension("relocated");
+    fs::rename(&consumer.0, &relocated).unwrap();
+    consumer.0 = relocated;
+    assert_eq!(consumer.output(), revised);
 
     // Strings cannot cross the typed HTML boundary.
-    fs::write(&direct, "{% render \"untrusted\" %}").unwrap();
+    fs::write(
+        consumer.0.join("templates/direct.graft.html"),
+        "{% render \"untrusted\" %}",
+    )
+    .unwrap();
     let rejected = consumer.run(&["check", "--offline", "--quiet"]);
     assert!(!rejected.status.success());
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("GraftTemplate"));

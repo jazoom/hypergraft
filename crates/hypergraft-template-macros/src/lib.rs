@@ -44,14 +44,17 @@ fn expand(input: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             }
         };
     let output = syn::Ident::new("__hypergraft_output", proc_macro2::Span::mixed_site());
-    let body = hypergraft_template_core::compile(&logical, &source, &runtime, &output)
-        .map_err(|e| error(&e.to_string()))?;
+    let scope = syn::Ident::new("__hypergraft_scope", proc_macro2::Span::mixed_site());
+    let package = std::env::var("CARGO_PKG_NAME").map_err(|_| error("missing CARGO_PKG_NAME"))?;
+    let body =
+        hypergraft_template_core::compile(&package, &logical, &source, &runtime, &output, &scope)
+            .map_err(|e| error(&e.to_string()))?;
     let name = &input.ident;
     let (implementation, types, constraints) = input.generics.split_for_impl();
     Ok(quote! {
         const _: &str = ::core::include_str!(::core::concat!(::core::env!("CARGO_MANIFEST_DIR"), "/", #logical));
         impl #implementation #runtime::GraftTemplate for #name #types #constraints {
-            fn render_into(&self, #output: &mut ::std::string::String) -> ::std::result::Result<(), #runtime::TemplateError> { #body }
+            fn render_into(&self, #output: &mut ::std::string::String, #scope: &#runtime::template::Scope) -> ::std::result::Result<(), #runtime::TemplateError> { #body }
         }
     })
 }

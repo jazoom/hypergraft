@@ -36,7 +36,11 @@ struct Content<'a> {
 async fn template_failure_is_secret_safe_at_live_boundary() {
     struct Failure;
     impl crate::GraftTemplate for Failure {
-        fn render_into(&self, output: &mut String) -> Result<(), crate::TemplateError> {
+        fn render_into(
+            &self,
+            output: &mut String,
+            _: &crate::template::Scope,
+        ) -> Result<(), crate::TemplateError> {
             output.push_str(LIVE_SECRET);
             Err(crate::TemplateError::Rendering)
         }
