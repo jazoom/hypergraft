@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, expect, test, vi } from "vitest";
 import fixture from "../protocol-v1.json";
+import templates from "./fixtures/templates.json";
 import {
     apply,
     GRAFT_TRANSFER,
@@ -24,6 +25,45 @@ import {
 } from "./patches";
 
 import { RECONCILIATION } from "./identity";
+
+test("compiled page and narrow blocks share keys and pass preflight", () => {
+    document.body.innerHTML = templates.page + '<div id="append"></div>';
+    const results = document.getElementById("results")!;
+    const row = document.getElementById("row-1")!;
+    const keys = (root: ParentNode) =>
+        Array.from(root.querySelectorAll("[data-graft-key]"), (element) =>
+            element.getAttribute("data-graft-key"),
+        );
+    const prepare = (html: string, target: string) => {
+        const patch = preflightLive(
+            `<graft-patch-set version="1"><graft-patch operation="children" target="${target}"><template>${html}</template></graft-patch></graft-patch-set>`,
+        ).patches[0]!;
+        const fragment = document.createDocumentFragment();
+        fragment.append(...patch.nodes);
+        return { fragment };
+    };
+    expect(keys(prepare(templates.results, "results").fragment)).toEqual(
+        keys(results),
+    );
+    expect(keys(prepare(templates.row, "row-1").fragment)).toEqual(keys(row));
+    expect(keys(prepare(templates.status, "append").fragment)).toEqual(
+        keys(row.querySelector("aside")!),
+    );
+    expect(
+        keys(prepare(templates.reordered, "results").fragment).sort(),
+    ).toEqual(keys(results).sort());
+    expect(() => preflightLive(templates.rowPatch)).not.toThrow();
+    expect(() => prepare(templates.siblings, "append")).not.toThrow();
+    expect(keys(prepare(templates.alternative, "append").fragment)).not.toEqual(
+        keys(row.querySelector("aside")!),
+    );
+    const target = document.getElementById("append")!;
+    for (const fragment of templates.append) {
+        expect(() => preflightLive(fragment.envelope)).not.toThrow();
+        target.insertAdjacentHTML("beforeend", fragment.html);
+        expect(() => preflightLive(fragment.envelope)).toThrow();
+    }
+});
 
 type ProtocolCase = {
     initialDocument?: string;

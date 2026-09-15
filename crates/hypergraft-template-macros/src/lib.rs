@@ -11,9 +11,17 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
 fn expand(input: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let mut path = None;
+    let mut block = None;
     for attr in &input.attrs {
         if attr.path().is_ident("graft") {
             attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("block") {
+                    if block.is_some() {
+                        return Err(meta.error("duplicate block selector"));
+                    }
+                    block = Some(meta.value()?.parse::<syn::LitStr>()?);
+                    return Ok(());
+                }
                 if !meta.path.is_ident("path") {
                     return Err(meta.error("unsupported graft option"));
                 }
@@ -46,9 +54,16 @@ fn expand(input: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let output = syn::Ident::new("__hypergraft_output", proc_macro2::Span::mixed_site());
     let scope = syn::Ident::new("__hypergraft_scope", proc_macro2::Span::mixed_site());
     let package = std::env::var("CARGO_PKG_NAME").map_err(|_| error("missing CARGO_PKG_NAME"))?;
-    let body =
-        hypergraft_template_core::compile(&package, &logical, &source, &runtime, &output, &scope)
-            .map_err(|e| error(&e.to_string()))?;
+    let body = hypergraft_template_core::compile_selected(
+        &package,
+        &logical,
+        &source,
+        &runtime,
+        &output,
+        &scope,
+        block.as_ref().map(syn::LitStr::value).as_deref(),
+    )
+    .map_err(|e| error(&e.to_string()))?;
     let name = &input.ident;
     let (implementation, types, constraints) = input.generics.split_for_impl();
     Ok(quote! {

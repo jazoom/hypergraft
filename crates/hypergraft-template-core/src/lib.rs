@@ -1,3 +1,4 @@
+mod blocks;
 pub mod codegen;
 pub mod identity;
 pub mod parser;
@@ -34,12 +35,27 @@ pub fn compile(
     output: &proc_macro2::Ident,
     scope: &proc_macro2::Ident,
 ) -> Result<proc_macro2::TokenStream, source::Diagnostic> {
+    compile_selected(package, path, source, runtime, output, scope, None)
+}
+
+pub fn compile_selected(
+    package: &str,
+    path: &str,
+    source: &str,
+    runtime: &proc_macro2::TokenStream,
+    output: &proc_macro2::Ident,
+    scope: &proc_macro2::Ident,
+    selected: Option<&str>,
+) -> Result<proc_macro2::TokenStream, source::Diagnostic> {
+    let document = parser::parse(path, source)?;
+    blocks::validate(path, &document, selected)?;
     Ok(codegen::generate(
-        &parser::parse(path, source)?,
+        &document,
         &identity::namespace(package, path, source)
             .map_err(|message| source::Diagnostic::new(path, source, 0, message))?,
         runtime,
         output,
         scope,
+        selected,
     ))
 }

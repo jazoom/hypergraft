@@ -64,6 +64,18 @@ Focus tests on these contracts:
 
 Do not add host product tests or tests that restate a trivial map or match.
 
+## Compiled template fixtures
+
+`tests/support/template_fixture_data.rs` owns the shared fixture producer. It calls actual derives from `tests/templates/` through the production template and patch APIs. Rust tests call this producer directly. Browser tests consume `browser/fixtures/templates.json` for preflight and page/block identity contracts. The drift assertion compares parsed JSON and preserves exact embedded HTML bytes.
+
+After a fixture source change, regenerate the artefact:
+
+```sh
+mise run fixtures:templates
+# Equivalent command:
+cargo run --quiet --example template-fixtures > browser/fixtures/templates.json
+```
+
 ## Pull requests
 
 - Keep each pull request narrow.

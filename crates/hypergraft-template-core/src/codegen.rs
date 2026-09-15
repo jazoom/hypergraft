@@ -1,6 +1,7 @@
 use crate::parser::{Control, Document, Part};
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
+use syn::ext::IdentExt;
 
 pub fn generate(
     document: &Document,
@@ -8,19 +9,44 @@ pub fn generate(
     runtime: &TokenStream,
     output: &Ident,
     scope: &Ident,
+    selected: Option<&str>,
 ) -> TokenStream {
+    let selection = selected.map(|name| {
+        let name = name.strip_prefix("r#").unwrap_or(name);
+        document.parts.iter().find(|part| matches!(part, Part::Control { control: Control::Block { name: block, .. }, .. } if block.unraw() == name)).unwrap()
+    });
+    let root_parent = selection.and_then(|part| document.content_parents[&bounds(part).unwrap().0]);
     let generator = Generator {
+        root_parent,
         document,
         namespace,
         runtime,
         output,
         scope,
     };
-    let body = generator.sequence(0..document.source.len(), &[], None);
+    let body = if let Some(part) = selection {
+        let (start, end) = bounds(part).unwrap();
+        let last = generator.closer(start);
+        let Part::Control {
+            control: Control::Block { inputs, .. },
+            ..
+        } = part
+        else {
+            unreachable!()
+        };
+        let bindings = inputs
+            .iter()
+            .map(|(name, _)| quote! { let #name = &self.#name; });
+        let body = generator.sequence(end..bounds(last).unwrap().0, &[], None);
+        quote! { #(#bindings)* #body }
+    } else {
+        generator.sequence(0..document.source.len(), &[], None)
+    };
     quote! { #body ::std::result::Result::Ok(()) }
 }
 
 struct Generator<'a> {
+    root_parent: Option<usize>,
     document: &'a Document,
     namespace: &'a str,
     runtime: &'a TokenStream,
@@ -36,11 +62,38 @@ impl Generator<'_> {
             return quote! { &#scope };
         }
         let Self { runtime, scope, .. } = self;
-        if parent.is_some() {
+        if parent != self.root_parent {
             quote! { &#runtime::template::Scope::default() }
         } else {
             quote! { #scope }
         }
+    }
+
+    fn closer(&self, offset: usize) -> &Part {
+        let mut depth = 0usize;
+        for part in &self.document.parts {
+            if let Part::Control {
+                control,
+                offset: next,
+                ..
+            } = part
+            {
+                if *next <= offset {
+                    continue;
+                }
+                match control {
+                    Control::If(_) | Control::For { .. } | Control::Block { .. } => depth += 1,
+                    Control::EndIf | Control::EndFor | Control::EndBlock => {
+                        if depth == 0 {
+                            return part;
+                        }
+                        depth -= 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        unreachable!()
     }
 
     fn sequence(
@@ -119,6 +172,18 @@ impl Generator<'_> {
                     Part::Control {
                         control, offset, ..
                     } => {
+                        if let Control::Block { inputs, .. } = control {
+                            let last = self.closer(*offset);
+                            let body =
+                                self.sequence(end..bounds(last).unwrap().0, loops, inside_tag);
+                            let names: Vec<_> = inputs.iter().map(|(name, _)| name).collect();
+                            let expressions = inputs.iter().map(|(_, expression)| expression);
+                            result.extend(
+                                quote! {{ let (#(#names,)*) = (#(#expressions,)*); #body }},
+                            );
+                            cursor = bounds(last).unwrap().1;
+                            continue;
+                        }
                         let mut depth = 0usize;
                         let mut separators = Vec::new();
                         for candidate in &document.parts {
@@ -134,11 +199,20 @@ impl Generator<'_> {
                                 continue;
                             }
                             match control {
-                                Control::If(_) | Control::For { .. } => depth += 1,
-                                Control::EndIf | Control::EndFor if depth > 0 => depth -= 1,
+                                Control::If(_) | Control::For { .. } | Control::Block { .. } => {
+                                    depth += 1
+                                }
+                                Control::EndIf | Control::EndFor | Control::EndBlock
+                                    if depth > 0 =>
+                                {
+                                    depth -= 1
+                                }
                                 _ if depth == 0 => {
                                     separators.push(candidate);
-                                    if matches!(control, Control::EndIf | Control::EndFor) {
+                                    if matches!(
+                                        control,
+                                        Control::EndIf | Control::EndFor | Control::EndBlock
+                                    ) {
                                         break;
                                     }
                                 }

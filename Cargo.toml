@@ -20,6 +20,8 @@ include = [
   "/LICENSE-APACHE",
   "/LICENSE-MIT",
   "/protocol-v1.json",
+  "/browser/fixtures/templates.json",
+  "/examples/template-fixtures.rs",
 ]
 
 [[bench]]

@@ -1,5 +1,97 @@
 use hypergraft::GraftTemplate;
 
+#[path = "support/template_fixture_data.rs"]
+mod template_fixture_data;
+
+#[test]
+fn independent_blocks_share_complete_source_keys_and_fixture_bytes() {
+    let fixture = template_fixture_data::produce();
+    let text = |name: &str| fixture[name].as_str().unwrap();
+    assert!(text("page").contains(text("results")));
+    assert!(text("results").contains(text("row")));
+    assert!(text("row").contains(text("status")));
+    assert_ne!(markers(text("status")), markers(text("alternative")));
+    let mut original = markers(text("results"));
+    let mut reordered = markers(text("reordered"));
+    original.sort();
+    reordered.sort();
+    assert_eq!(original, reordered);
+    let sibling_keys = markers(text("siblings"));
+    assert_ne!(sibling_keys[0], sibling_keys[1]);
+    assert_eq!(
+        fixture,
+        serde_json::from_str::<serde_json::Value>(include_str!(
+            "../browser/fixtures/templates.json"
+        ))
+        .unwrap()
+    );
+}
+
+#[test]
+fn block_inputs_execute_once_in_order_and_selection_borrows_fields() {
+    #[derive(GraftTemplate)]
+    #[graft(path = "tests/templates/block-inputs.graft.html")]
+    struct Page {
+        calls: std::cell::Cell<u32>,
+    }
+    impl Page {
+        fn next(&self) -> u32 {
+            let value = self.calls.get();
+            self.calls.set(value + 1);
+            value
+        }
+    }
+    #[derive(GraftTemplate)]
+    #[graft(path = "tests/templates/block-inputs.graft.html", block = "values")]
+    struct Values {
+        first: String,
+        second: String,
+    }
+    let page = Page {
+        calls: std::cell::Cell::new(0),
+    };
+    let values = Values {
+        first: "0".into(),
+        second: "1".into(),
+    };
+    assert_eq!(page.render().unwrap(), values.render().unwrap());
+    assert_eq!(page.calls.get(), 2);
+}
+
+#[test]
+fn wrapper_free_block_selection_requires_the_original_semantic_scope() {
+    #[derive(GraftTemplate)]
+    #[graft(path = "tests/templates/block-wrapper-free.graft.html")]
+    struct Page<'a> {
+        rows: &'a [u32],
+    }
+    #[derive(GraftTemplate)]
+    #[graft(path = "tests/templates/block-wrapper-free.graft.html", block = "item")]
+    struct Item {
+        row: u32,
+    }
+    let page = Page { rows: &[7, 9] }.render().unwrap();
+    let first = Item { row: 7 }.scoped(7u32).render().unwrap();
+    let second = Item { row: 9 }.scoped(9u32).render().unwrap();
+    assert_eq!(page, format!("{first}{second}"));
+    assert!(!page.contains(&Item { row: 7 }.render().unwrap()));
+}
+
+#[test]
+fn standalone_block_does_not_evaluate_surrounding_expressions() {
+    #[derive(GraftTemplate)]
+    #[graft(path = "tests/templates/block-isolation.graft.html", block = "body")]
+    struct Body<'a> {
+        value: &'a str,
+    }
+    assert!(
+        Body { value: "safe" }
+            .render()
+            .unwrap()
+            .contains(">safe</p>")
+    );
+}
+
 fn annotation(name: &str, slot: usize) -> String {
     let path = format!("tests/templates/{name}.graft.html");
     let source =

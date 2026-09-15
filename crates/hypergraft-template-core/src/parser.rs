@@ -1,4 +1,5 @@
 use crate::source::Diagnostic;
+use syn::ext::IdentExt;
 
 pub enum Control {
     If(Box<syn::Expr>),
@@ -11,6 +12,18 @@ pub enum Control {
     },
     EndIf,
     EndFor,
+    Block {
+        name: syn::Ident,
+        inputs: Vec<(syn::Ident, syn::Expr)>,
+    },
+    EndBlock,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ControlKind {
+    Branch,
+    Loop,
+    Block,
 }
 
 pub enum Part {
@@ -88,7 +101,7 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
     let mut tag_start = 0;
     let mut raw_name = String::new();
     let mut foreign = Vec::<String>::new();
-    let mut controls = Vec::<(bool, bool, usize, bool)>::new();
+    let mut controls = Vec::<(ControlKind, bool, usize, bool)>::new();
     let mut text_start = None;
     let mut text_ranges = Vec::new();
     while i < bytes.len() {
@@ -138,12 +151,21 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
                     ));
                 }
                 match &control {
-                    Control::If(_) => controls.push((false, attribute, tag_start, false)),
-                    Control::For { .. } if !attribute => {
-                        controls.push((true, false, tag_start, false))
+                    Control::If(_) => {
+                        controls.push((ControlKind::Branch, attribute, tag_start, false))
                     }
-                    Control::Else | Control::ElseIf(_) | Control::EndIf | Control::EndFor => {
-                        let Some((is_loop, in_tag, opening_tag, had_else)) = controls.last_mut()
+                    Control::For { .. } if !attribute => {
+                        controls.push((ControlKind::Loop, false, tag_start, false))
+                    }
+                    Control::Block { .. } if !attribute => {
+                        controls.push((ControlKind::Block, false, tag_start, false))
+                    }
+                    Control::Else
+                    | Control::ElseIf(_)
+                    | Control::EndIf
+                    | Control::EndFor
+                    | Control::EndBlock => {
+                        let Some((kind, in_tag, opening_tag, had_else)) = controls.last_mut()
                         else {
                             return Err(Diagnostic::new(
                                 path,
@@ -154,7 +176,12 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
                         };
                         if *in_tag != attribute
                             || (attribute && *opening_tag != tag_start)
-                            || *is_loop != matches!(control, Control::EndFor)
+                            || *kind
+                                != match control {
+                                    Control::EndFor => ControlKind::Loop,
+                                    Control::EndBlock => ControlKind::Block,
+                                    _ => ControlKind::Branch,
+                                }
                             || (*had_else && matches!(control, Control::Else | Control::ElseIf(_)))
                         {
                             return Err(Diagnostic::new(
@@ -167,7 +194,10 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
                         if matches!(control, Control::Else) {
                             *had_else = true;
                         }
-                        if matches!(control, Control::EndIf | Control::EndFor) {
+                        if matches!(
+                            control,
+                            Control::EndIf | Control::EndFor | Control::EndBlock
+                        ) {
                             controls.pop();
                         }
                     }
@@ -176,7 +206,7 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
                             path,
                             source,
                             i,
-                            "loops require ordinary node content",
+                            "loops and blocks require ordinary node content",
                         ));
                     }
                 }
@@ -742,7 +772,35 @@ fn parse_control(source: &str) -> syn::Result<Control> {
         "else" => return Ok(Control::Else),
         "endif" => return Ok(Control::EndIf),
         "endfor" => return Ok(Control::EndFor),
+        "endblock" => return Ok(Control::EndBlock),
         _ => {}
+    }
+    if let Some(body) = strip_keyword(source, "block") {
+        return (|input: syn::parse::ParseStream<'_>| {
+            let name = input.parse::<syn::Ident>()?;
+            let mut inputs: Vec<(syn::Ident, syn::Expr)> = Vec::new();
+            if !input.is_empty() {
+                let content;
+                syn::parenthesized!(content in input);
+                while !content.is_empty() {
+                    let binding = content.parse::<syn::Ident>()?;
+                    if inputs
+                        .iter()
+                        .any(|(previous, _)| previous.unraw() == binding.unraw())
+                    {
+                        return Err(content.error("duplicate block input"));
+                    }
+                    content.parse::<syn::Token![=]>()?;
+                    inputs.push((binding, content.parse::<syn::Expr>()?));
+                    if content.is_empty() {
+                        break;
+                    }
+                    content.parse::<syn::Token![,]>()?;
+                }
+            }
+            Ok(Control::Block { name, inputs })
+        })
+        .parse_str(body);
     }
     if let Some(condition) =
         strip_keyword(source, "else").and_then(|rest| strip_keyword(rest, "if"))
@@ -798,7 +856,9 @@ fn validate_control_parents(
         };
         let parent = parents[offset];
         match control {
-            Control::If(_) | Control::For { .. } => stack.push((parent, *end)),
+            Control::If(_) | Control::For { .. } | Control::Block { .. } => {
+                stack.push((parent, *end))
+            }
             _ => {
                 let (expected, start) = *stack.last().unwrap();
                 let belongs_to_body = |mut parent| {
@@ -833,7 +893,10 @@ fn validate_control_parents(
                         "control body must preserve its HTML parent boundary",
                     ));
                 }
-                if matches!(control, Control::EndIf | Control::EndFor) {
+                if matches!(
+                    control,
+                    Control::EndIf | Control::EndFor | Control::EndBlock
+                ) {
                     stack.pop();
                 } else {
                     stack.last_mut().unwrap().1 = *end;

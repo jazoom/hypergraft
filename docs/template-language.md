@@ -4,7 +4,7 @@
 
 This document defines the target compiler contract authorised by [NEXT.md](../NEXT.md). It replaces that plan's illustrative syntax.
 
-The compiler implements external sources, escaped expressions and typed composition with optional scope. It emits automatic element identity. Rust branches, conditional attributes and semantically keyed loops are executable. Named blocks remain future work. The derive accepts only the `path` option.
+The compiler implements external sources, escaped expressions and typed composition with optional scope. It emits automatic element identity. Rust branches, conditional attributes and semantically keyed loops are executable. Named blocks and independent nested selection are executable. The derive accepts `path` and optional `block` options.
 
 [Template identity](template-identity.md) defines the associated identity format. [Compatibility](compatibility.md) defines the rollout boundary. Protocol samples use the fixed authored marker `u:7265616479`. Rust tests compare those samples with production builder output.
 
@@ -179,7 +179,7 @@ A named block contains complete child-node sequences without a synthetic wrapper
 </ul>
 ```
 
-Block syntax is `block name` or `block name(binding = expression, ...)`, with `endblock` as its closer. Names and bindings are Rust identifiers. Block definitions have file-wide unique names.
+Block syntax is `block name` or `block name(binding = expression, ...)`, with `endblock` as its closer. Names and bindings are Rust identifiers. Raw identifier spelling does not distinguish block or input names. Block definitions have file-wide unique names.
 
 In full output, argument expressions execute once each, from left to right, before the body starts. All arguments use the surrounding context, not other inputs from the same declaration. Each resulting binding is a local Rust value within the body. For `task = task`, a borrowed loop item remains borrowed.
 
@@ -197,9 +197,15 @@ A nested block declares every surrounding local that its body requires. Its full
 
 Direct `self.field` access always refers to the selected derive's struct. A block without local inputs can therefore use narrow fields directly, as `task_results` does.
 
-The compiler tracks template-introduced local bindings. A reference to an enclosing local without a declared block input is a compiler-owned error. Locals declared inside Rust expressions follow ordinary Rust rules. Arbitrary application paths remain Rust names, not inferred block captures.
+The compiler tracks template-introduced local bindings. A reference to an enclosing local without a declared block input is a compiler-owned error. Locals declared inside Rust expressions follow ordinary Rust rules. Arbitrary application paths remain Rust names, not inferred block captures. Raw identifier spelling does not change local identity.
+
+Capture diagnostics also inspect Rust macro expressions and standard format-string captures, including width and precision parameters. For opaque macro syntax, an unavailable local identifier requires an explicit block input. The compiler cannot prove local declarations within an unknown macro grammar.
 
 Unknown selectors, duplicate block names and duplicate input names produce diagnostics. Blocks cannot cross element boundaries or appear inside attributes, comments, RCDATA or raw text. Selection retains complete-source namespace and slots.
+
+The shared executable example uses `tests/templates/blocks.graft.html`. `Page` renders the complete source, while `Results` selects `results` with only a `rows` field. `RowContents` selects the nested `row_contents` block with only a `row` field. `Status` independently selects its nested `status` block with the same input. All four types retain complete-source slots.
+
+The retained article establishes the parent boundary for a row patch. A standalone `RowContents` value reproduces the page's child keys without the original loop scope. A block inside wrapper-free repetition instead needs the same explicit instance scope through `.scoped(key)`.
 
 ## Typed composition and scope
 
