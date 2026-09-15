@@ -465,6 +465,206 @@ fn escaped_output_preserves_data_in_text_and_both_attribute_quotes() {
     );
 }
 
+#[derive(GraftTemplate)]
+#[graft(path = "tests/templates/control.graft.html")]
+struct ControlFlow<'a> {
+    show: bool,
+    label: Option<&'a str>,
+    rows: &'a [(u32, &'a str)],
+}
+
+#[derive(GraftTemplate)]
+#[graft(path = "tests/templates/nested-loops.graft.html")]
+struct NestedLoops<'a> {
+    groups: &'a [(u32, &'a [u32])],
+}
+
+#[derive(GraftTemplate)]
+#[graft(path = "tests/templates/loop-duplicates.graft.html")]
+struct DuplicateLoops<'a> {
+    keys: &'a [u32],
+    authored: bool,
+    evaluations: std::cell::Cell<usize>,
+}
+
+#[derive(GraftTemplate)]
+#[graft(path = "tests/templates/control-delimiters.graft.html")]
+struct ControlDelimiters<'a> {
+    value: Option<&'a str>,
+}
+
+#[test]
+fn branches_and_loop_instances_keep_source_slots_and_semantic_identity() {
+    let rows = [(10, "Ten"), (20, "Twenty")];
+    let first = ControlFlow {
+        show: true,
+        label: None,
+        rows: &rows,
+    }
+    .render()
+    .unwrap();
+    let changed = ControlFlow {
+        show: false,
+        label: Some("<&"),
+        rows: &[(30, "Thirty"), rows[1], rows[0]],
+    }
+    .render()
+    .unwrap();
+    let otherwise = ControlFlow {
+        show: false,
+        label: None,
+        rows: &rows,
+    }
+    .render()
+    .unwrap();
+    let a = markers(&first);
+    let b = markers(&changed);
+    let c = markers(&otherwise);
+    assert_ne!(a[0], b[0]);
+    assert_ne!(b[0], c[0]);
+    assert_ne!(a[0], c[0]);
+    assert_eq!(a[1], b[1]);
+    assert_eq!(&a[2..4], &b[6..8]);
+    assert_eq!(&a[4..6], &b[4..6]);
+    assert_ne!(a[2], a[3]);
+    assert_eq!(scopes(&first)[2], scopes(&first)[3]);
+    assert_eq!(a.last(), b.last());
+    assert_eq!(a.last(), Some(&"u:61"));
+    assert!(first.contains(" selected>"));
+    assert!(changed.contains(" disabled>"));
+    assert!(changed.contains("&lt;&amp;"));
+}
+
+#[test]
+fn nested_loop_scope_resets_only_at_element_parent_boundaries() {
+    let html = NestedLoops {
+        groups: &[(10, &[1, 2]), (20, &[1, 2])],
+    }
+    .render()
+    .unwrap();
+    let keys = markers(&html);
+    // Each group has four wrapper-free roots, one section and six descendants.
+    assert_ne!(keys[0], keys[11]);
+    assert_eq!(&keys[5..11], &keys[16..22]);
+    assert_ne!(keys[5], keys[8]);
+    assert_eq!(keys[7], keys[10]);
+    let reversed = NestedLoops {
+        groups: &[(20, &[2, 1]), (10, &[2, 1])],
+    }
+    .render()
+    .unwrap();
+    assert_eq!(keys[0], markers(&reversed)[13]);
+}
+
+#[test]
+fn loop_duplicates_fail_before_body_output_even_without_generated_elements() {
+    for authored in [false, true] {
+        let template = DuplicateLoops {
+            keys: &[42, 42],
+            authored,
+            evaluations: std::cell::Cell::new(0),
+        };
+        assert_eq!(
+            template.render(),
+            Err(hypergraft::TemplateError::DuplicateKey)
+        );
+        assert_eq!(template.evaluations.get(), 2);
+        let error = hypergraft::PatchSet::new()
+            .children("target", &template)
+            .unwrap_err();
+        assert_eq!(error.kind(), hypergraft::PatchBuildErrorKind::Rendering);
+        assert!(!error.to_string().contains("42"));
+    }
+    let template = DuplicateLoops {
+        keys: &[1, 2],
+        authored: false,
+        evaluations: std::cell::Cell::new(0),
+    };
+    assert_eq!(template.render().unwrap(), "\n");
+    assert_eq!(template.evaluations.get(), 2);
+}
+
+#[derive(GraftTemplate)]
+#[graft(path = "tests/templates/attribute-branches.graft.html")]
+struct AttributeBranches {
+    label: Option<String>,
+    busy: bool,
+}
+
+#[test]
+fn conditional_attributes_preserve_element_identity_and_borrowed_pattern_values() {
+    let template = AttributeBranches {
+        label: Some("<&".into()),
+        busy: true,
+    };
+    let labelled = template.render().unwrap();
+    let busy = AttributeBranches {
+        label: None,
+        busy: true,
+    }
+    .render()
+    .unwrap();
+    let idle = AttributeBranches {
+        label: None,
+        busy: false,
+    }
+    .render()
+    .unwrap();
+    assert_eq!(markers(&labelled), markers(&busy));
+    assert_eq!(markers(&busy), markers(&idle));
+    assert!(labelled.contains("title=\"&lt;&amp;\""));
+    assert!(labelled.contains("aria-label=\"&lt;&amp;\""));
+    assert!(!labelled.contains("disabled"));
+    assert!(!busy.contains("aria-label"));
+    assert!(busy.contains("disabled aria-busy=\"true\""));
+    assert!(idle.contains("aria-busy=\"false\""));
+    assert!(busy.contains("title=\"Busy\""));
+    assert!(idle.contains("title=\"Idle\""));
+}
+
+#[derive(GraftTemplate)]
+#[graft(path = "tests/templates/control-structure.graft.html")]
+struct ControlStructure<'a> {
+    show: bool,
+    keys: &'a [u32],
+}
+
+#[test]
+fn complete_control_bodies_keep_implied_parents_and_later_slots() {
+    let visible = ControlStructure {
+        show: true,
+        keys: &[7, 9],
+    }
+    .render()
+    .unwrap();
+    let absent = ControlStructure {
+        show: false,
+        keys: &[7, 7],
+    }
+    .render()
+    .unwrap();
+    let keys = markers(&visible);
+    assert_eq!(markers(&absent), [*keys.last().unwrap()]);
+    assert_ne!(keys[0], keys[3]);
+    assert_eq!(&keys[1..3], &keys[4..6]);
+    assert!(!scopes(&visible)[0].is_empty());
+    assert_eq!(&scopes(&visible)[1..3], &["", ""]);
+    assert!(!visible.contains("<tbody"));
+}
+
+#[test]
+fn control_expressions_keep_rust_delimiters_opaque() {
+    let html = ControlDelimiters {
+        value: Some("%}<&"),
+    }
+    .render()
+    .unwrap();
+    assert!(html.starts_with("%}&lt;&amp;"));
+    assert!(html.contains(">%}</i>"));
+    assert!(html.contains(">key(}</i>"));
+    assert!(html.contains(">}}</i>"));
+}
+
 #[test]
 fn rust_tokens_keep_template_delimiters_inside_literals_and_comments() {
     assert_eq!(

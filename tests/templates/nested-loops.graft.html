@@ -1,0 +1,1 @@
+{% for (group_key, items) in self.groups.iter() key(group_key) %}{% for item in items.iter() key(item) %}<i>{{ item }}</i><b>{{ item }}</b>{% endfor %}<section>{% for item in items.iter() key(item) %}<i>{{ item }}</i><b><em>{{ item }}</em></b>{% endfor %}</section>{% endfor %}

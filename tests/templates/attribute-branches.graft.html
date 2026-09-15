@@ -1,0 +1,1 @@
+<button {% if let Some(label) = self.label.as_ref() %}title="{{ label }}"{% else if self.busy %}disabled aria-busy="true" title="{{ "Busy" }}"{% else %}aria-busy="false" title="{{ "Idle" }}"{% endif %} {% if self.busy %}{% if let Some(label) = self.label.as_ref() %}aria-label="{{ label }}"{% endif %}{% endif %}>Save</button>

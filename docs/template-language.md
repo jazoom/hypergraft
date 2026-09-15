@@ -4,7 +4,7 @@
 
 This document defines the target compiler contract authorised by [NEXT.md](../NEXT.md). It replaces that plan's illustrative syntax.
 
-The compiler implements external sources, escaped expressions and typed composition with optional scope. It emits automatic element identity. Control flow and blocks remain future work. The derive accepts only the `path` option.
+The compiler implements external sources, escaped expressions and typed composition with optional scope. It emits automatic element identity. Rust branches, conditional attributes and semantically keyed loops are executable. Named blocks remain future work. The derive accepts only the `path` option.
 
 [Template identity](template-identity.md) defines the associated identity format. [Compatibility](compatibility.md) defines the rollout boundary. Protocol samples use the fixed authored marker `u:7265616479`. Rust tests compare those samples with production builder output.
 
@@ -128,7 +128,15 @@ For `for`, the separator `in` follows a complete Rust pattern. The final top-lev
 
 `else if let` also follows Rust branch semantics. Branch-local pattern bindings stay within their Rust scope. Every branch closes with `endif`. Every loop closes with `endfor`. A loop has no `else` clause.
 
-Every loop requires a semantic key. The key expression executes once per iteration, after pattern binding and before body output. Duplicate evaluated keys fail the render even when an iteration emits no nodes. [Template identity](template-identity.md) defines supported values and duplicate equality.
+Every loop requires a semantic key. The key expression executes once per iteration, after pattern binding and before body output. Duplicate evaluated keys return `TemplateError::DuplicateKey`, even when an iteration emits no nodes or only authored IDs. [Template identity](template-identity.md) defines supported values and duplicate equality.
+
+The compiler emits Rust control flow directly. Borrowed iterators and pattern bindings require no implicit clones. Rust strings and comments retain opaque delimiter contents within directive expressions.
+
+Every authored alternative receives its source slot before branch evaluation. A false condition does not change later slots. Authored markers retain intentional identity across alternatives.
+
+Wrapper-free nested loops extend the active semantic scope. An element-parent boundary resets inherited scope for its children. Each loop invocation rejects its own duplicate keys independently of other invocations. Final DOM collisions remain a browser preflight constraint.
+
+The HTML parser rejects incompatible control boundaries through a private source copy. Each branch must preserve its parent context, including text and composed output. Complete bodies can contain implied parents, but those parents cannot survive beyond the body.
 
 Iteration positions are not semantic entity keys. Insertions and reorder preserve entity keys only when the application supplies stable values.
 
@@ -141,7 +149,15 @@ Branches within a start tag can emit complete attributes, including boolean attr
 <button {% if self.busy %}disabled aria-busy="true" {% endif %}>Save</button>
 ```
 
-Attribute branches support `if`, `if let`, `else if` and `else`. Loops, blocks and composition within start tags are errors. Directives cannot split names, equals signs or quote boundaries. Attribute declarations that can coexist on one execution path must not duplicate a name. Mutually exclusive alternatives can declare the same non-identity attribute.
+Attribute branches support `if`, `if let`, `else if` and `else`, including nested branches. The compiler requires literal whitespace between declarations on every control path. Loops, blocks and composition within start tags are errors. Directives cannot split names, equals signs or quote boundaries. Attribute declarations that can coexist on one execution path must not duplicate a name. Mutually exclusive alternatives can declare the same non-identity attribute.
+
+Conditional attributes cannot change HTML tree construction. The compiler requires unconditional declarations for these attributes in their affected contexts:
+
+- `encoding` on MathML `annotation-xml` elements.
+- `color`, `face` and `size` on foreign `font` elements outside HTML integration points.
+- `type` on `input` elements directly within table structure.
+
+Controls cannot appear in end tags.
 
 Authored `id` and `data-graft-key` declarations must be unconditional. Their quoted values can contain escaped expressions. Any conditional identity declaration is an error, even when every alternative supplies it. Automatic identity therefore never depends on branch absence.
 

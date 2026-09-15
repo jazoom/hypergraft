@@ -1,6 +1,25 @@
 use crate::source::Diagnostic;
 
+pub enum Control {
+    If(Box<syn::Expr>),
+    ElseIf(Box<syn::Expr>),
+    Else,
+    For {
+        pattern: Box<syn::Pat>,
+        expression: Box<syn::Expr>,
+        key: Box<syn::Expr>,
+    },
+    EndIf,
+    EndFor,
+}
+
 pub enum Part {
+    Control {
+        control: Control,
+        offset: usize,
+        end: usize,
+        attribute: bool,
+    },
     Literal(String),
     Render {
         expression: Box<syn::Expr>,
@@ -69,9 +88,117 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
     let mut tag_start = 0;
     let mut raw_name = String::new();
     let mut foreign = Vec::<String>::new();
+    let mut controls = Vec::<(bool, bool, usize, bool)>::new();
+    let mut text_start = None;
+    let mut text_ranges = Vec::new();
     while i < bytes.len() {
         let rest = &source[i..];
+        if (rest.starts_with("{{") || rest.starts_with("{%"))
+            && let Some(start) = text_start.take()
+        {
+            text_ranges.push(start..i);
+        }
         if rest.starts_with("{%") {
+            if !matches!(state, State::Text | State::Tag) {
+                return Err(Diagnostic::new(
+                    path,
+                    source,
+                    i,
+                    "directives require ordinary node content or complete attribute boundaries",
+                ));
+            }
+            let end = expression_end(&source[i + 2..], "%}")
+                .ok_or_else(|| Diagnostic::new(path, source, i, "unterminated directive"))?
+                + i
+                + 2;
+            let directive = source[i + 2..end].trim();
+            if strip_keyword(directive, "render").is_none() {
+                let control = parse_control(directive).map_err(|error| {
+                    Diagnostic::new(
+                        path,
+                        source,
+                        i,
+                        &format!("invalid control directive: {error}"),
+                    )
+                })?;
+                let attribute = matches!(state, State::Tag);
+                if attribute
+                    && (source[tag_start + 1..].starts_with('/')
+                        || source[tag_start + 1..i].trim().is_empty()
+                        || (matches!(control, Control::If(_))
+                            && !bytes[i - 1].is_ascii_whitespace()
+                            && !matches!(parts.last(), Some(Part::Control { end, attribute: true, .. }) if *end == i))
+                        || source[tag_start..i].trim_end().ends_with('='))
+                {
+                    return Err(Diagnostic::new(
+                        path,
+                        source,
+                        i,
+                        "control directives require complete attribute boundaries",
+                    ));
+                }
+                match &control {
+                    Control::If(_) => controls.push((false, attribute, tag_start, false)),
+                    Control::For { .. } if !attribute => {
+                        controls.push((true, false, tag_start, false))
+                    }
+                    Control::Else | Control::ElseIf(_) | Control::EndIf | Control::EndFor => {
+                        let Some((is_loop, in_tag, opening_tag, had_else)) = controls.last_mut()
+                        else {
+                            return Err(Diagnostic::new(
+                                path,
+                                source,
+                                i,
+                                "unmatched control directive",
+                            ));
+                        };
+                        if *in_tag != attribute
+                            || (attribute && *opening_tag != tag_start)
+                            || *is_loop != matches!(control, Control::EndFor)
+                            || (*had_else && matches!(control, Control::Else | Control::ElseIf(_)))
+                        {
+                            return Err(Diagnostic::new(
+                                path,
+                                source,
+                                i,
+                                "malformed control nesting or HTML boundary",
+                            ));
+                        }
+                        if matches!(control, Control::Else) {
+                            *had_else = true;
+                        }
+                        if matches!(control, Control::EndIf | Control::EndFor) {
+                            controls.pop();
+                        }
+                    }
+                    _ => {
+                        return Err(Diagnostic::new(
+                            path,
+                            source,
+                            i,
+                            "loops require ordinary node content",
+                        ));
+                    }
+                }
+                parts.push(Part::Literal(source[start..i].into()));
+                parts.push(Part::Control {
+                    control,
+                    offset: i,
+                    end: end + 2,
+                    attribute,
+                });
+                replacements.push((
+                    i..end + 2,
+                    if attribute {
+                        " ".into()
+                    } else {
+                        format!("<!--{expression_marker}{i}_-->")
+                    },
+                ));
+                i = end + 2;
+                start = i;
+                continue;
+            }
             if !matches!(state, State::Text) {
                 return Err(Diagnostic::new(
                     path,
@@ -80,11 +207,6 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
                     "composition requires ordinary node content",
                 ));
             }
-            let end = expression_end(&source[i + 2..], "%}")
-                .ok_or_else(|| Diagnostic::new(path, source, i, "unterminated directive"))?
-                + i
-                + 2;
-            let directive = source[i + 2..end].trim();
             let expression = directive
                 .strip_prefix("render")
                 .filter(|rest| rest.starts_with(char::is_whitespace))
@@ -141,6 +263,7 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
             start = i;
             continue;
         }
+        let was_text = matches!(state, State::Text);
         match state {
             State::Text => {
                 if rest.starts_with("<![CDATA[") {
@@ -313,6 +436,14 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
                 }
             }
         }
+        if was_text
+            && matches!(state, State::Text)
+            && controls.iter().any(|(_, attribute, _, _)| !attribute)
+        {
+            text_start.get_or_insert(i);
+        } else if let Some(start) = text_start.take() {
+            text_ranges.push(start..i);
+        }
         i += source[i..].chars().next().unwrap().len_utf8();
     }
     if matches!(
@@ -321,8 +452,37 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
     ) {
         return Err(Diagnostic::new(path, source, i, "unterminated HTML token"));
     }
+    if !controls.is_empty() {
+        return Err(Diagnostic::new(
+            path,
+            source,
+            i,
+            "unterminated control directive",
+        ));
+    }
     parts.push(Part::Literal(source[start..].into()));
+    for tag in &tags {
+        if parts.iter().any(|part| {
+            matches!(part, Part::Control { offset, attribute: true, .. } if tag.range.contains(offset))
+        }) {
+            replacements.push((
+                tag.range.start..tag.range.start,
+                format!("<!--{expression_marker}{}_-->", tag.range.start),
+            ));
+        }
+    }
+    for range in text_ranges {
+        // Whitespace must not acquire a marker that triggers table foster parenting.
+        if text_has_non_whitespace(&source[range.clone()]) {
+            replacements.push((
+                range.start..range.start,
+                format!("{expression_marker}{}_", range.start),
+            ));
+        }
+    }
     let (elements, content_parents) = structure(path, source, &starts, replacements)?;
+    validate_attributes(path, source, &parts, &tags, &elements, &content_parents)?;
+    validate_control_parents(path, source, &parts, &elements, &content_parents)?;
     Ok(Document {
         parts,
         elements,
@@ -356,6 +516,7 @@ pub struct Element {
     pub name: String,
     pub parent: Option<usize>,
     pub source: Option<std::ops::Range<usize>>,
+    html_integration: bool,
 }
 
 fn structure(
@@ -374,6 +535,7 @@ fn structure(
     }
     let expressions: Vec<_> = replacements
         .iter()
+        .filter(|(_, marker)| !marker.trim().is_empty())
         .map(|(range, marker)| (range.start, marker.clone()))
         .collect();
     for (index, (_, end)) in starts.iter().enumerate() {
@@ -466,16 +628,54 @@ fn structure(
                 let range = origin
                     .filter(|index| authored.insert(*index))
                     .map(|index| starts[index].0.clone());
+                let html_integration = match namespace.as_str() {
+                    "http://www.w3.org/2000/svg" => {
+                        matches!(local.as_str(), "foreignObject" | "desc" | "title")
+                    }
+                    "http://www.w3.org/1998/Math/MathML" => {
+                        matches!(local.as_str(), "mi" | "mo" | "mn" | "ms" | "mtext")
+                            || (local == "annotation-xml"
+                                && attrs.borrow().iter().any(|attr| {
+                                    attr.name.local.as_ref() == "encoding"
+                                        && (attr.value.eq_ignore_ascii_case("text/html")
+                                            || attr
+                                                .value
+                                                .eq_ignore_ascii_case("application/xhtml+xml"))
+                                }))
+                    }
+                    _ => false,
+                };
                 let index = elements.len();
                 elements.push(Element {
                     namespace,
                     name: local,
                     parent,
                     source: range,
+                    html_integration,
                 });
                 parent = Some(index);
                 if let Some(contents) = template_contents.borrow().as_ref() {
                     pending.push((contents.clone(), parent, false));
+                }
+            }
+            NodeData::Comment { contents } => {
+                for (offset, expression) in &expressions {
+                    if expression
+                        .strip_prefix("<!--")
+                        .and_then(|s| s.strip_suffix("-->"))
+                        == Some(contents.as_ref())
+                    {
+                        if raw {
+                            return Err(Diagnostic::new(
+                                path,
+                                source,
+                                *offset,
+                                "directives are not supported in raw text",
+                            ));
+                        }
+                        found.insert(*offset);
+                        content_parents.insert(*offset, parent);
+                    }
                 }
             }
             NodeData::Text { contents } => {
@@ -501,7 +701,12 @@ fn structure(
         }
     }
     for (offset, _) in expressions {
-        if !found.contains(&offset) {
+        // The parse copy contains all attribute alternatives. HTML drops later
+        // duplicate names, but the attribute validator proves mutual exclusion.
+        let alternative_attribute = starts
+            .iter()
+            .any(|(range, _)| range.contains(&offset) && source[range.clone()].contains("{%"));
+        if !found.contains(&offset) && !alternative_attribute {
             return Err(Diagnostic::new(
                 path,
                 source,
@@ -522,6 +727,374 @@ fn structure(
         }
     }
     Ok((elements, content_parents))
+}
+
+fn strip_keyword<'a>(source: &'a str, keyword: &str) -> Option<&'a str> {
+    source
+        .strip_prefix(keyword)
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map(str::trim_start)
+}
+
+fn parse_control(source: &str) -> syn::Result<Control> {
+    use syn::parse::Parser;
+    match source {
+        "else" => return Ok(Control::Else),
+        "endif" => return Ok(Control::EndIf),
+        "endfor" => return Ok(Control::EndFor),
+        _ => {}
+    }
+    if let Some(condition) =
+        strip_keyword(source, "else").and_then(|rest| strip_keyword(rest, "if"))
+    {
+        return syn::parse_str(condition).map(|e| Control::ElseIf(Box::new(e)));
+    }
+    if let Some(condition) = strip_keyword(source, "if") {
+        return syn::parse_str(condition).map(|e| Control::If(Box::new(e)));
+    }
+    let parser = |input: syn::parse::ParseStream<'_>| {
+        input.parse::<syn::Token![for]>()?;
+        let pattern = syn::Pat::parse_multi_with_leading_vert(input)?;
+        input.parse::<syn::Token![in]>()?;
+        let expression = input.parse::<syn::Expr>()?;
+        let keyword = input
+            .parse::<syn::Ident>()
+            .map_err(|_| input.error("every loop requires key(expression)"))?;
+        if keyword != "key" {
+            return Err(input.error("expected key(expression)"));
+        }
+        let content;
+        syn::parenthesized!(content in input);
+        let key = content.parse::<syn::Expr>()?;
+        if !content.is_empty() {
+            return Err(content.error("unexpected key tokens"));
+        }
+        Ok(Control::For {
+            pattern: Box::new(pattern),
+            expression: Box::new(expression),
+            key: Box::new(key),
+        })
+    };
+    parser.parse_str(source)
+}
+
+fn validate_control_parents(
+    path: &str,
+    source: &str,
+    parts: &[Part],
+    elements: &[Element],
+    parents: &ContentParents,
+) -> Result<(), Diagnostic> {
+    let mut stack = Vec::new();
+    for part in parts {
+        let Part::Control {
+            control,
+            offset,
+            end,
+            attribute: false,
+        } = part
+        else {
+            continue;
+        };
+        let parent = parents[offset];
+        match control {
+            Control::If(_) | Control::For { .. } => stack.push((parent, *end)),
+            _ => {
+                let (expected, start) = *stack.last().unwrap();
+                let belongs_to_body = |mut parent| {
+                    while parent != expected {
+                        let Some(index) = parent else {
+                            return false;
+                        };
+                        let element = &elements[index];
+                        if let Some(range) = &element.source {
+                            return range.start >= start && range.start < *offset;
+                        }
+                        parent = element.parent;
+                    }
+                    true
+                };
+                if parent != expected
+                    || elements.iter().any(|element| {
+                        element
+                            .source
+                            .as_ref()
+                            .is_some_and(|r| r.start >= start && r.start < *offset)
+                            && !belongs_to_body(element.parent)
+                    })
+                    || parents.iter().any(|(position, parent)| {
+                        *position >= start && *position < *offset && !belongs_to_body(*parent)
+                    })
+                {
+                    return Err(Diagnostic::new(
+                        path,
+                        source,
+                        *offset,
+                        "control body must preserve its HTML parent boundary",
+                    ));
+                }
+                if matches!(control, Control::EndIf | Control::EndFor) {
+                    stack.pop();
+                } else {
+                    stack.last_mut().unwrap().1 = *end;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_attributes(
+    path: &str,
+    source: &str,
+    parts: &[Part],
+    tags: &[TagOutput],
+    elements: &[Element],
+    parents: &ContentParents,
+) -> Result<(), Diagnostic> {
+    for tag in tags {
+        let parent = parents
+            .get(&tag.range.start)
+            .and_then(|parent| parent.map(|index| &elements[index]));
+        let name = source[tag.range.start + 1..tag.insertion].to_ascii_lowercase();
+        // These attributes alter tree construction, not only element presentation.
+        let structural_attributes: &[&str] = match (name.as_str(), parent) {
+            ("input", Some(parent))
+                if parent.namespace == "http://www.w3.org/1999/xhtml"
+                    && matches!(
+                        parent.name.as_str(),
+                        "table" | "tbody" | "thead" | "tfoot" | "tr"
+                    ) =>
+            {
+                &["type"]
+            }
+            ("annotation-xml", _)
+                if elements.iter().any(|element| {
+                    element.source.as_ref() == Some(&tag.range)
+                        && element.namespace == "http://www.w3.org/1998/Math/MathML"
+                }) =>
+            {
+                &["encoding"]
+            }
+            ("font", Some(parent))
+                if parent.namespace != "http://www.w3.org/1999/xhtml"
+                    && !parent.html_integration =>
+            {
+                &["color", "face", "size"]
+            }
+            _ => &[],
+        };
+        let mut branches = Vec::<(usize, usize)>::new();
+        let mut boundaries = Vec::<AttributeBoundary>::new();
+        let mut needs_separator = true;
+        let mut declarations = Vec::<(String, Vec<(usize, usize)>)>::new();
+        let mut cursor = tag.insertion;
+        for part in parts {
+            let Part::Control {
+                control,
+                offset,
+                end,
+                attribute: true,
+            } = part
+            else {
+                continue;
+            };
+            if *offset < tag.range.start || *offset >= tag.range.end {
+                continue;
+            }
+            let segment = &source[cursor..*offset];
+            if segment.trim_end().ends_with('=')
+                || (cursor == tag.insertion && !segment.starts_with(char::is_whitespace))
+            {
+                return Err(Diagnostic::new(
+                    path,
+                    source,
+                    *offset,
+                    "control directives require complete attribute boundaries",
+                ));
+            }
+            let mut literal = segment.to_owned();
+            for part in parts.iter().rev() {
+                if let Part::Expression { offset, end, .. } = part
+                    && *offset >= cursor
+                    && *end <= cursor + segment.len()
+                {
+                    literal.replace_range(offset - cursor..end - cursor, "value");
+                }
+            }
+            validate_attribute_spacing(path, source, cursor, &literal, &mut needs_separator)?;
+            record_attributes(
+                path,
+                source,
+                cursor,
+                &literal,
+                &branches,
+                structural_attributes,
+                &mut declarations,
+            )?;
+            match control {
+                Control::If(_) => {
+                    branches.push((*offset, 0));
+                    boundaries.push(AttributeBoundary {
+                        entry: needs_separator,
+                        completed: false,
+                        exhaustive: false,
+                    });
+                }
+                Control::Else | Control::ElseIf(_) => {
+                    branches.last_mut().unwrap().1 += 1;
+                    let boundary = boundaries.last_mut().unwrap();
+                    boundary.completed |= needs_separator;
+                    boundary.exhaustive = matches!(control, Control::Else);
+                    needs_separator = boundary.entry;
+                }
+                Control::EndIf => {
+                    branches.pop();
+                    let boundary = boundaries.pop().unwrap();
+                    needs_separator |=
+                        boundary.completed || (!boundary.exhaustive && boundary.entry);
+                }
+                _ => {}
+            }
+            cursor = *end;
+        }
+        if cursor != tag.insertion {
+            let mut literal = source[cursor..tag.range.end - 1]
+                .trim_end_matches('/')
+                .to_owned();
+            for part in parts.iter().rev() {
+                if let Part::Expression { offset, end, .. } = part
+                    && *offset >= cursor
+                    && *end < tag.range.end
+                {
+                    literal.replace_range(offset - cursor..end - cursor, "value");
+                }
+            }
+            validate_attribute_spacing(path, source, cursor, &literal, &mut needs_separator)?;
+            record_attributes(
+                path,
+                source,
+                cursor,
+                &literal,
+                &branches,
+                structural_attributes,
+                &mut declarations,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+struct AttributeBoundary {
+    entry: bool,
+    completed: bool,
+    exhaustive: bool,
+}
+
+fn validate_attribute_spacing(
+    path: &str,
+    source: &str,
+    offset: usize,
+    literal: &str,
+    needs_separator: &mut bool,
+) -> Result<(), Diagnostic> {
+    if !literal.is_empty() {
+        if *needs_separator && !literal.starts_with(char::is_whitespace) {
+            return Err(Diagnostic::new(
+                path,
+                source,
+                offset,
+                "attribute declarations require literal whitespace on every control path",
+            ));
+        }
+        *needs_separator = !literal.ends_with(char::is_whitespace);
+    }
+    Ok(())
+}
+
+type AttributeDeclarations = Vec<(String, Vec<(usize, usize)>)>;
+
+fn record_attributes(
+    path: &str,
+    source: &str,
+    offset: usize,
+    literal: &str,
+    branches: &[(usize, usize)],
+    structural_attributes: &[&str],
+    declarations: &mut AttributeDeclarations,
+) -> Result<(), Diagnostic> {
+    let error = || {
+        Diagnostic::new(
+            path,
+            source,
+            offset,
+            "control directives require complete attributes",
+        )
+    };
+    let mut rest = literal.trim();
+    while !rest.is_empty() {
+        let length = rest
+            .find(|c: char| c.is_ascii_whitespace() || c == '=')
+            .unwrap_or(rest.len());
+        if length == 0 {
+            return Err(error());
+        }
+        let name = rest[..length].to_ascii_lowercase();
+        if name.contains(['\'', '"', '<', '>', '/']) {
+            return Err(error());
+        }
+        rest = rest[length..].trim_start();
+        if let Some(value) = rest.strip_prefix('=') {
+            rest = value.trim_start();
+            if let Some(quote @ (b'\'' | b'"')) = rest.as_bytes().first().copied() {
+                let end = rest[1..].find(char::from(quote)).ok_or_else(error)? + 1;
+                rest = &rest[end + 1..];
+            } else {
+                let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+                if end == 0 || rest[..end].contains(['\'', '"', '<', '>', '=', '`']) {
+                    return Err(error());
+                }
+                rest = &rest[end..];
+            }
+            if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+                return Err(error());
+            }
+            rest = rest.trim_start();
+        }
+        if !branches.is_empty() && matches!(name.as_str(), "id" | "data-graft-key") {
+            return Err(Diagnostic::new(
+                path,
+                source,
+                offset,
+                "identity attributes must be unconditional",
+            ));
+        }
+        if !branches.is_empty() && structural_attributes.contains(&name.as_str()) {
+            return Err(Diagnostic::new(
+                path,
+                source,
+                offset,
+                "attributes that control HTML tree construction must be unconditional",
+            ));
+        }
+        if declarations.iter().any(|(previous, alternatives)| {
+            previous == &name
+                && !alternatives.iter().any(|(id, branch)| {
+                    branches
+                        .iter()
+                        .any(|(other, alternative)| id == other && branch != alternative)
+                })
+        }) {
+            return Err(Diagnostic::new(
+                path,
+                source,
+                offset,
+                "duplicate attributes on one control path",
+            ));
+        }
+        declarations.push((name, branches.to_vec()));
+    }
+    Ok(())
 }
 
 fn render_expression(source: &str) -> syn::Result<(syn::Expr, Option<syn::Expr>)> {
@@ -546,6 +1119,29 @@ fn render_expression(source: &str) -> syn::Result<(syn::Expr, Option<syn::Expr>)
         Ok((expression, scope))
     };
     parser.parse_str(source)
+}
+
+fn text_has_non_whitespace(source: &str) -> bool {
+    use html5ever::tokenizer::{BufferQueue, Token, TokenSink, TokenSinkResult, Tokenizer};
+    use std::cell::Cell;
+    struct Sink(Cell<bool>);
+    impl TokenSink for Sink {
+        type Handle = ();
+        fn process_token(&self, token: Token, _: u64) -> TokenSinkResult<()> {
+            if let Token::CharacterTokens(text) = token
+                && text.chars().any(|c| !c.is_ascii_whitespace())
+            {
+                self.0.set(true);
+            }
+            TokenSinkResult::Continue
+        }
+    }
+    let tokenizer = Tokenizer::new(Sink(Cell::new(false)), Default::default());
+    let queue = BufferQueue::default();
+    queue.push_back(source.into());
+    let _ = tokenizer.feed(&queue);
+    tokenizer.end();
+    tokenizer.sink.0.get()
 }
 
 fn tokenise_tag(source: &str) -> Option<html5ever::tokenizer::Tag> {

@@ -1,6 +1,38 @@
 use hypergraft_template_core::parser::parse;
 
 #[test]
+fn control_diagnostics_reject_ambiguous_html_and_invalid_nesting() {
+    for source in include_str!("fixtures/invalid-controls.txt").lines() {
+        let error = parse("invalid-controls.graft.html", source)
+            .err()
+            .unwrap_or_else(|| panic!("accepted {source}"));
+        assert_eq!(error.path, "invalid-controls.graft.html");
+        assert_eq!(error.line, 1);
+    }
+    for source in [
+        "<option {% if let Some(value) = self.value %}selected title=\"{{ value }}\"{% else %}disabled{% endif %}>Value</option>",
+        "<p {% if self.ready %}title=\"one\"{% else if self.other %}title=\"two\"{% else %}title=\"three\"{% endif %}></p>",
+        "<table><tbody>{% for row in self.rows.iter() key(row.id) %}<tr><td>{{ row.id }}</td></tr>{% endfor %}</tbody></table>",
+        "{% if self.ready %}<ul><li>One<li>Two</ul>{% endif %}",
+        "{% if self.ready %}<table><tr><td>One</table>{% endif %}",
+        "<table>{% if self.ready %} &#32; &Tab; {% endif %}</table>",
+        "<input {% if self.ready %}type=\"hidden\"{% else %}type=\"text\"{% endif %}>",
+        "<input {% if self.ready %}{% if self.other %}disabled{% endif %}{% endif %}>",
+        "<input {% if self.ready %}disabled {% endif %}title=\"Save\">",
+        "<input {% if self.ready %}disabled {% endif %}{% if self.other %}required{% endif %}>",
+        "<svg><foreignObject><font {% if self.ready %}color=\"red\"{% endif %}></font></foreignObject></svg>",
+        "<math><annotation-xml encoding=\"text/html\"><font {% if self.ready %}face=\"serif\"{% endif %}></font></annotation-xml></math>",
+        "<svg>{% if self.ready %}<circle />{% else %}<rect />{% endif %}</svg>",
+        "<template>{% for row in self.rows.iter() key(row.id) %}<p>{{ row.id }}</p>{% endfor %}</template>",
+    ] {
+        assert!(
+            parse("controls.graft.html", source).is_ok(),
+            "rejected {source}"
+        );
+    }
+}
+
+#[test]
 fn namespace_pins_framing_normalisation_and_complete_revision() {
     use hypergraft_template_core::identity::namespace;
     let expected = "a5dfbf29613766db56e971452574eea5264736fa390ca94420bb3555c174a99e";
@@ -114,7 +146,6 @@ fn unsupported_contexts_fail_at_the_external_source_position() {
         "<script>{% render self.value %}</script>",
         "<style>{% render self.value %}</style>",
         "<svg><script>{% render self.value %}</script></svg>",
-        "{% if self.value %}x{% endif %}",
         include_str!("fixtures/raw-integration.graft.html"),
     ];
     for source in cases {

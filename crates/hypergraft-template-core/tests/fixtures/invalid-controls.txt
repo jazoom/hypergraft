@@ -1,0 +1,33 @@
+{% for item in self.items %}<p></p>{% endfor %}
+{% for item in self.items key(item) %}{% endif %}
+{% if self.ready %}{% endfor %}
+{% else %}
+{% if self.ready %}{% else %}{% else if self.ready %}{% endif %}
+{% if self.ready %}<div>{% else %}</div>{% endif %}
+{% if self.ready %}<div></div>
+<p {% if self.ready %}id="x"{% endif %}></p>
+<p {% if self.ready %}data-graft-key="u:61"{% else %}data-graft-key="u:62"{% endif %}></p>
+<p {% if self.ready %}title={% endif %}"x"></p>
+<p title="{% if self.ready %}x{% endif %}"></p>
+<p {% for item in self.items key(item) %}hidden{% endfor %}></p>
+<di{% if self.ready %}v{% endif %}></div>
+<p ti{% if self.ready %}tle="x"{% endif %}></p>
+<p {% if self.ready %}hidden{% endif %}title="x"></p>
+<input {% if self.ready %}disabled{% endif %}{% if self.other %}required{% endif %}>
+<input {% if self.ready %}{% if self.other %}disabled{% endif %}{% endif %}title="Save">
+<p title="x" {% if self.ready %}title="y"{% endif %}></p>
+<p {% if self.ready %}hidden {% if self.other %}hidden{% endif %}{% endif %}></p>
+<p {% if self.ready %}hidden{% endif %} {% if self.other %}hidden{% endif %}></p>
+<textarea>{% if self.ready %}x{% endif %}</textarea>
+<svg><script>{% if self.ready %}{% endif %}</script></svg>
+<svg><style>{% for item in self.items key(item) %}{% endfor %}</style></svg>
+<table>{% if self.ready %}<div></div>{% endif %}</table>
+<table>{% if self.ready %}Outside{% endif %}</table>
+<table>{% for item in self.items key(item) %}{{ item }}{% endfor %}</table>
+<table>{% for item in self.items key(item) %}{% render item %}{% endfor %}</table>
+<table>{% for item in self.items key(item) %}<tr><td>Row</td></tr>{% endfor %}</table>
+<p></p {% if self.ready %}hidden{% endif %}>
+<math><annotation-xml {% if self.ready %}encoding="text/html"{% endif %}><div></div></annotation-xml></math>
+<svg><font {% if self.ready %}color="red"{% endif %}></font></svg>
+<math><annotation-xml><font {% if self.ready %}face="serif"{% endif %}></font></annotation-xml></math>
+<table><input {% if self.ready %}type="hidden"{% endif %}></table>

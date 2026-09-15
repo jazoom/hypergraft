@@ -58,12 +58,15 @@ pub enum TemplateError {
     Rendering,
     /// Reconciliation metadata violates its encoding or byte bound.
     InvalidKey,
+    /// A loop contains duplicate semantic instance keys.
+    DuplicateKey,
 }
 
 impl std::fmt::Display for TemplateError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::Rendering => "template rendering failed",
+            Self::DuplicateKey => "template contains duplicate instance keys",
             Self::InvalidKey => "template identity is invalid",
         })
     }
@@ -75,8 +78,28 @@ impl std::error::Error for TemplateError {}
 pub const KEY_MAXIMUM_BYTES: usize = 1024;
 
 /// Parent-relative scope for direct template output.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Scope(Vec<u8>);
+
+/// Duplicate detection belongs to one loop invocation, including empty iterations.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct LoopKeys(std::collections::HashSet<Scope>);
+
+impl LoopKeys {
+    /// Encode once before any body output, independently of authored identity.
+    pub fn enter(
+        &mut self,
+        parent: &Scope,
+        key: &impl SemanticKey,
+    ) -> Result<Scope, TemplateError> {
+        let suffix = Scope::default().extended(key)?;
+        if !self.0.insert(suffix.clone()) {
+            return Err(TemplateError::DuplicateKey);
+        }
+        parent.joined(&suffix)
+    }
+}
 
 impl Scope {
     #[doc(hidden)]
