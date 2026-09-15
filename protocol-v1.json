@@ -108,10 +108,10 @@
             "authoritativeResynchronisation": "resynchronisation"
         }
     },
-    "representativePatch": "<graft-patch-set version=\"1\" title=\"Fixture &amp; title\" location=\"/items?fixture=one&amp;other=two\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+    "representativePatch": "<graft-patch-set version=\"1\" title=\"Fixture &amp; title\" location=\"/items?fixture=one&amp;other=two\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
     "representativeNavigation": "<graft-patch-set version=\"1\" navigate=\"/items?fixture=one&amp;other=two\"></graft-patch-set>",
-    "representativeStreamFrame": "167\n<graft-patch-set version=\"1\" phase=\"progress\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
-    "representativeLivePatch": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+    "representativeStreamFrame": "197\n<graft-patch-set version=\"1\" phase=\"progress\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
+    "representativeLivePatch": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
     "representativeSubscribe": "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":1,\"url\":\"/items?fixture=one\"}",
     "representativeUnsubscribe": "{\"v\":\"1\",\"type\":\"unsubscribe\",\"id\":1}",
     "representativeTerminal": "{\"v\":\"1\",\"type\":\"terminal\"}",
@@ -241,13 +241,13 @@
             "name": "complete-envelope-children",
             "consumers": ["browser-preflight"],
             "expectation": "accept",
-            "envelope": "<graft-patch-set version=\"1\" title=\"Fixture &amp; title\" location=\"/items?fixture=one&amp;other=two\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>"
+            "envelope": "<graft-patch-set version=\"1\" title=\"Fixture &amp; title\" location=\"/items?fixture=one&amp;other=two\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>"
         },
         {
             "name": "live-envelope-children",
             "consumers": ["rust-live", "browser-preflight-live"],
             "expectation": "accept",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
             "builder": {
                 "operation": "children",
                 "target": "fixture-target",
@@ -258,7 +258,7 @@
             "name": "live-envelope-title",
             "consumers": ["rust-live", "browser-preflight-live"],
             "expectation": "protocol",
-            "envelope": "<graft-patch-set version=\"1\" title=\"Nope\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+            "envelope": "<graft-patch-set version=\"1\" title=\"Nope\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
             "builder": {
                 "operation": "children",
                 "target": "fixture-target",
@@ -270,7 +270,7 @@
             "name": "live-envelope-location",
             "consumers": ["rust-live", "browser-preflight-live"],
             "expectation": "protocol",
-            "envelope": "<graft-patch-set version=\"1\" location=\"/items\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+            "envelope": "<graft-patch-set version=\"1\" location=\"/items\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
             "builder": {
                 "operation": "children",
                 "target": "fixture-target",
@@ -288,7 +288,7 @@
             "name": "stream-envelope-location-progress",
             "consumers": ["rust-response", "browser-preflight-frame"],
             "expectation": "protocol",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"progress\" location=\"/items\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+            "envelope": "<graft-patch-set version=\"1\" phase=\"progress\" location=\"/items\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
             "builder": {
                 "operation": "append",
                 "target": "fixture-target",
@@ -301,7 +301,7 @@
             "name": "stream-envelope-location-final",
             "consumers": ["rust-response", "browser-preflight-frame"],
             "expectation": "protocol",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\" location=\"/items\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+            "envelope": "<graft-patch-set version=\"1\" phase=\"final\" location=\"/items\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
             "builder": {
                 "operation": "append",
                 "target": "fixture-target",

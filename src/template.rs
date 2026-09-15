@@ -28,3 +28,28 @@ impl std::fmt::Display for TemplateError {
 }
 
 impl std::error::Error for TemplateError {}
+
+#[doc(hidden)]
+pub fn write_escaped(
+    output: &mut String,
+    value: &(impl std::fmt::Display + ?Sized),
+) -> Result<(), TemplateError> {
+    use std::fmt::Write;
+    struct Escaped<'a>(&'a mut String);
+    impl Write for Escaped<'_> {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            for character in text.chars() {
+                match character {
+                    '&' => self.0.push_str("&amp;"),
+                    '<' => self.0.push_str("&lt;"),
+                    '>' => self.0.push_str("&gt;"),
+                    '"' => self.0.push_str("&quot;"),
+                    '\'' => self.0.push_str("&#39;"),
+                    _ => self.0.push(character),
+                }
+            }
+            Ok(())
+        }
+    }
+    write!(Escaped(output), "{value}").map_err(|_| TemplateError::Rendering)
+}

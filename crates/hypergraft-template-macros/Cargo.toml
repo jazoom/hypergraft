@@ -1,0 +1,19 @@
+[package]
+name = "hypergraft-template-macros"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jazoom/hypergraft"
+description = "Template derive for Hypergraft"
+publish = false
+
+[lib]
+proc-macro = true
+
+[dependencies]
+hypergraft-template-core = { path = "../hypergraft-template-core", version = "0.0.1" }
+proc-macro-crate = "3"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

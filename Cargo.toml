@@ -11,6 +11,7 @@ homepage = "https://github.com/jazoom/hypergraft"
 publish = false
 include = [
   "/src/**",
+  "/tests/**",
   "/benches/**",
   "/benchmarks/templates/**",
   "/askama.toml",
@@ -26,12 +27,17 @@ name = "templates"
 harness = false
 
 [workspace]
-members = ["examples/reference"]
+members = [
+  "examples/reference",
+  "crates/hypergraft-template-core",
+  "crates/hypergraft-template-macros",
+]
 
 [dependencies]
 async-stream = "0.3.6"
 axum = { version = "0.8.9", features = ["ws"] }
 futures-util = "0.3.34"
+hypergraft-template-macros = { path = "crates/hypergraft-template-macros", version = "0.0.1" }
 matchit = "0.8.4"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

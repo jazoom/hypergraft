@@ -1,4 +1,6 @@
 //! Bounded Hypergraft protocol version 1 integration for Axum and Askama.
+extern crate self as hypergraft;
+pub use hypergraft_template_macros::GraftTemplate;
 
 pub mod middleware;
 pub mod outcome;

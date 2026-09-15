@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use askama::Template;
+use crate::GraftTemplate;
 use axum::{
     extract::{Extension, Path, Query, State},
     http::{HeaderMap, HeaderValue, Request, StatusCode, header},
@@ -26,16 +26,10 @@ use crate::{
     },
 };
 
-#[derive(Template)]
-#[template(source = "<p>{{ value }}</p>", ext = "html")]
+#[derive(GraftTemplate)]
+#[graft(path = "tests/templates/paragraph.graft.html")]
 struct Content<'a> {
     value: &'a str,
-}
-
-impl crate::GraftTemplate for Content<'_> {
-    fn render_into(&self, output: &mut String) -> Result<(), crate::TemplateError> {
-        askama::Template::render_into(self, output).map_err(|_| crate::TemplateError::Rendering)
-    }
 }
 
 #[tokio::test]
@@ -451,7 +445,7 @@ async fn harness_dispatches_state_path_and_query() {
     assert_eq!(session.first_patch().targets[0].target, "item-results");
     assert_eq!(
         session.first_patch().targets[0].html,
-        "<p>ready:abc:one</p>"
+        "<p data-graft-key=\"u:7265616479\">ready:abc:one</p>"
     );
 }
 
@@ -467,7 +461,7 @@ async fn harness_dispatches_request_extensions_and_guard_context() {
         .unwrap();
     assert_eq!(
         session.first_patch().targets[0].html,
-        "<p>extension:extension</p>"
+        "<p data-graft-key=\"u:7265616479\">extension:extension</p>"
     );
 }
 
@@ -540,10 +534,16 @@ async fn harness_sends_a_later_patch_after_an_event() {
     let router = LiveRouter::new().route("/items", ticking).unwrap();
     let harness = LiveHarness::new(router, EventHub(tx.clone()));
     let mut session = harness.subscribe("/items", UnitGuard).await.unwrap();
-    assert_eq!(session.first_patch().targets[0].html, "<p>0</p>");
+    assert_eq!(
+        session.first_patch().targets[0].html,
+        "<p data-graft-key=\"u:7265616479\">0</p>"
+    );
     tx.send(1).unwrap();
     let update = session.next_patch().await.unwrap();
-    assert_eq!(update.targets[0].html, "<p>1</p>");
+    assert_eq!(
+        update.targets[0].html,
+        "<p data-graft-key=\"u:7265616479\">1</p>"
+    );
 }
 
 #[tokio::test]
@@ -955,7 +955,7 @@ async fn socket_sends_an_authoritative_first_patch_then_closes_on_duplicate_id()
     assert_eq!(id, 1);
     assert_eq!(
         decode_live_envelope(envelope).unwrap().targets[0].html,
-        "<p>0</p>"
+        "<p data-graft-key=\"u:7265616479\">0</p>"
     );
     incoming
         .send(super::socket::Incoming::Text(
@@ -1895,7 +1895,14 @@ async fn live_diagnostics_exclude_secrets_from_encode_failure() {
         .expect("encode diagnostic");
     assert_eq!(encode.level, tracing::Level::WARN);
     assert_eq!(field_value(encode, "kind"), Some("invalid_live_envelope"));
-    assert_secret_safe(&events, &[LIVE_SECRET, "<p>", "item-results"]);
+    assert_secret_safe(
+        &events,
+        &[
+            LIVE_SECRET,
+            "<p data-graft-key=\"u:7265616479\">",
+            "item-results",
+        ],
+    );
 }
 
 #[tokio::test]

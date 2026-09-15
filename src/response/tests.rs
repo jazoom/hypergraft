@@ -1,5 +1,5 @@
+use crate::GraftTemplate;
 use crate::*;
-use askama::Template;
 use axum::{
     body::to_bytes,
     http::{StatusCode, header},
@@ -18,16 +18,10 @@ fn validates_bounded_dom_ids() {
     assert!(DomId::new("a".repeat(129)).is_err());
 }
 
-#[derive(Template)]
-#[template(source = "<p>{{ value }}</p>", ext = "html")]
+#[derive(GraftTemplate)]
+#[graft(path = "tests/templates/paragraph.graft.html")]
 struct Content<'a> {
     value: &'a str,
-}
-
-impl GraftTemplate for Content<'_> {
-    fn render_into(&self, output: &mut String) -> Result<(), TemplateError> {
-        askama::Template::render_into(self, output).map_err(|_| TemplateError::Rendering)
-    }
 }
 
 #[test]
@@ -89,9 +83,15 @@ fn failed_output_is_discarded_and_targets_precede_evaluation() {
     let decoded = live::decode_live_envelope(&html).unwrap();
     assert_eq!(decoded.targets.len(), MAX_PATCHES);
     assert_eq!(decoded.targets[0].target, "existing");
-    assert_eq!(decoded.targets[0].html, "<p>retained</p>");
+    assert_eq!(
+        decoded.targets[0].html,
+        "<p data-graft-key=\"u:7265616479\">retained</p>"
+    );
     assert_eq!(decoded.targets[1].target, "main");
-    assert_eq!(decoded.targets[1].html, "<p>complete</p>");
+    assert_eq!(
+        decoded.targets[1].html,
+        "<p data-graft-key=\"u:7265616479\">complete</p>"
+    );
 }
 
 async fn body(response: Response) -> String {
@@ -171,7 +171,7 @@ async fn patch_statuses_and_attributes_are_closed_and_escaped() {
         let html = body(response).await;
         assert!(html.contains("title=\"Patients &amp; &quot;records&quot;\""));
         assert!(html.contains("target=\"A:b.c_1\""));
-        assert!(html.contains("<p>&#60;safe&#62;</p>"));
+        assert!(html.contains("<p data-graft-key=\"u:7265616479\">&lt;safe&gt;</p>"));
     }
 }
 

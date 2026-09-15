@@ -501,6 +501,11 @@ test("preflights a representative stream frame", () => {
     const prepared = preflightFrame(envelope);
     expect(prepared.phase).toBe("progress");
     apply(prepared.batch);
+    expect(
+        document
+            .querySelector("#fixture-target > p")
+            ?.getAttribute("data-graft-key"),
+    ).toBe("u:7265616479");
     expect(document.querySelector("#fixture-target")?.textContent).toBe(
         "Ready",
     );

@@ -2,9 +2,11 @@
 
 ## Status and authority
 
-This document defines the target compiler contract authorised by [NEXT.md](../NEXT.md). It replaces that plan's illustrative syntax. It does not describe completed compiler support.
+This document defines the target compiler contract authorised by [NEXT.md](../NEXT.md). It replaces that plan's illustrative syntax.
 
-[Template identity](template-identity.md) defines the associated identity format. [Compatibility](compatibility.md) defines the rollout boundary. The executable protocol fixture remains unchanged in this specification task.
+The compiler implements external sources, literal HTML and escaped expressions in text, RCDATA and quoted attributes. It rejects all directives and options other than `path`. Composition, control flow, blocks and automatic identity remain future work.
+
+[Template identity](template-identity.md) defines the associated identity format. [Compatibility](compatibility.md) defines the rollout boundary. Protocol samples use the fixed authored marker `u:7265616479`. Rust tests compare those samples with production builder output.
 
 Templates are trusted application source, not a sandbox. Rust ownership and type rules apply. Axum remains the host.
 
@@ -44,7 +46,9 @@ Literal markup retains its original bytes except for generated identity attribut
 
 Implied elements receive no generated attributes. For example, a browser-created `tbody` remains unkeyed. SVG and MathML elements receive annotations only when their source contains an authored start tag.
 
-Native `template` contents form a separate child sequence. Typed output must suit its insertion context. The compiler cannot infer a composed template's eventual browser repair from its Rust type.
+Native `template` contents form a separate child sequence. Sources without document elements use template fragment context, which preserves standalone table rows and cells. Sources with authored `html`, `head` or `body` elements use document context.
+
+Typed output must suit its insertion context. The compiler cannot infer a composed template's eventual browser repair from its Rust type.
 
 Control-flow boundaries must preserve one unambiguous HTML parser state. Each branch and loop body ends in the same parent context in which it starts. Optional end tags remain valid when their implied closure stays within that sequence. Cross-branch closure and foster-parented dynamic sequences are errors.
 
@@ -79,7 +83,7 @@ HTML-namespace `title` and `textarea` use RCDATA. They permit escaped expression
 
 The parser determines dynamic contexts from namespace and HTML tokenizer state, not local name alone. An SVG `title` therefore uses ordinary node content. Interpolation and directives in doctypes, processing instructions and foreign CDATA sections are errors.
 
-Script, style and other raw-text elements permit literal content only. HTML comments permit literal content only. Template openers in these contexts produce diagnostics, not guessed escaping. This rule also rejects dynamic comment delimiters.
+Script and style contents permit no interpolation in any namespace. Other raw-text elements permit literal content only. HTML comments permit literal content only. Template openers in these contexts produce diagnostics, not guessed escaping. This rule also rejects dynamic comment delimiters.
 
 Literal template openers in ordinary text can use HTML character references for their braces. Raw-text source cannot use template syntax as an escape mechanism.
 
@@ -92,6 +96,7 @@ The expression after token extraction must parse with `syn`. Rust macros, blocks
 ```text
 {{ "a }} b" }}
 {{ r###"raw }} and {% text"### }}
+{{ cr#"raw C string with \" }} text"#.to_str().unwrap() }}
 {{ { let pair = ('}', '\''); pair.0 } }}
 {{ { /* outer /* nested }} */ comment */ "ok" } }}
 {{ { // }} is inside this line comment
@@ -206,7 +211,15 @@ Nested failures propagate through typed composition. Runtime errors expose bound
 
 Compiler-owned diagnostics include the normalised template path and one-based line and column. They cover HTML structure, unsupported contexts and template grammar. Source byte ranges support those positions.
 
-Generated Rust preserves expression tokens and records their source ranges. Rust type errors can point into macro-generated code. The compiler documents this limitation rather than promises native template spans for every Rust error.
+The compiler core stores expression offsets and authored start-tag ranges. Its HTML tree distinguishes authored elements from implied browser elements through a private parse copy. That copy never enters rendered output.
+
+The derive emits each expression as a borrowed formatting argument inside `render_into`. `syn` parses the extracted Rust tokens. The generated code calls the runtime escape writer directly, without clones or a helper registry.
+
+Generated output uses a hygienic local name and fully qualified standard types. Application type parameters therefore cannot replace the generated `String` or `Result` types. A `Display` failure propagates as the bounded `TemplateError::Rendering` value.
+
+Compiler diagnostics attach the normalised path and one-based source position to the derive's path attribute. File-read failures use position `1:1`. Generated Rust type errors can point at the derive rather than the external expression. Native template spans are not guaranteed.
+
+Each derive emits an `include_str!` reference relative to `CARGO_MANIFEST_DIR`. Cargo therefore tracks the external source without a build script. Dependency aliases resolve through Cargo metadata. Logical paths exclude absolute checkout locations.
 
 The initial language excludes:
 
