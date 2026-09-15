@@ -11,12 +11,19 @@ homepage = "https://github.com/jazoom/hypergraft"
 publish = false
 include = [
   "/src/**",
+  "/benches/**",
+  "/benchmarks/templates/**",
+  "/askama.toml",
   "/Cargo.toml",
   "/README.md",
   "/LICENSE-APACHE",
   "/LICENSE-MIT",
   "/protocol-v1.json",
 ]
+
+[[bench]]
+name = "templates"
+harness = false
 
 [workspace]
 members = ["examples/reference"]

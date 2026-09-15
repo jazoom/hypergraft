@@ -44,6 +44,9 @@
         "test:browser": "vitest run --config vitest.browser.config.ts",
         "check": "tsgo --noEmit --project tsconfig.json",
         "format": "prettier --write --cache --log-level warn .",
+        "bench:server": "cargo bench --bench templates",
+        "bench:browser": "vite --config benchmarks/vite.config.ts",
+        "bench:record": "node benchmarks/record.mjs",
         "example:build": "vite build --config examples/reference/vite.config.ts"
     },
     "devDependencies": {
