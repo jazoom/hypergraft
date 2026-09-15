@@ -69,7 +69,7 @@ Hypergraft does not require authentication for anonymous public data.
 
 Handlers must extract the narrowest accepted representation. Use `PageGraft` for a document-or-navigation page. Use `PatchGraft` for a patch-only command. Use `GraftRequest` when one route serves documents, navigation and form patches.
 
-`PatchSet` accepts templates through `GraftTemplate`, independently of Askama.
+`PatchSet` accepts templates through `GraftTemplate`.
 
 `outcome::page_patch` builds a titled, single-target page patch. `outcome::children_patch` builds one retained-target patch from a `GraftTemplate` value. It accepts any patch status. `PatchSet::append` adds nodes to a retained target. `PatchSet::replace_location` adds a canonical location replacement to a complete command patch. `PatchSet::encode_live` rejects titles and locations.
 
@@ -89,24 +89,22 @@ Patch construction failures become secret-safe no-store 500 responses. The brows
 
 `PatchSet` validates targets before template evaluation. It adds output only after a successful render. `PatchBuildError::Rendering` contains `TemplateError`, with no HTML or underlying engine error. Its classification remains `PatchBuildErrorKind::Rendering`.
 
-The reference retains private adapters for its Askama page and fragment types during compiler migration. Its document helper accepts `GraftTemplate`. The legacy document shell still calls `askama::Template::render` explicitly and needs no adapter.
-
-Response tests, live tests and benchmarks also retain private adapters until their compiler migration. The benchmark keeps Askama as its baseline renderer. Hypergraft provides no blanket Askama implementation or engine-selection API.
+The reference, protocol tests and server benchmarks use the owned compiler. The document shell borrows its typed body without an intermediate HTML string.
 
 ## Page-local blocks
 
-Page-local fragments belong in named Askama blocks within their page template. Separate files suit fragments with independent reuse across pages.
+Page-local fragments belong in named template blocks within their page template. Separate files suit fragments with independent reuse across pages.
 
 A block-specific Rust type needs only the fields referenced by that block. A live projection therefore does not need unrelated page data.
 
-For example, `templates/items.html` contains both the page and its results block:
+For example, `templates/items.graft.html` contains both the page and its results block:
 
 ```html
-<h1>{{ heading }}</h1>
+<h1>{{ self.heading }}</h1>
 <section id="item-results">
     {% block item_results %}
     <ul>
-        {% for item in items %}
+        {% for item in self.items.iter() key(item.as_str()) %}
         <li>{{ item }}</li>
         {% endfor %}
     </ul>
@@ -117,47 +115,29 @@ For example, `templates/items.html` contains both the page and its results block
 The retained `item-results` wrapper sits outside the block. A `children` patch contains only that wrapper's children.
 
 ```rust
-use askama::Template;
+use hypergraft::GraftTemplate;
 
-#[derive(Template)]
-#[template(path = "items.html", blocks = ["item_results"])]
+#[derive(GraftTemplate)]
+#[graft(path = "templates/items.graft.html")]
 struct ItemPage<'a> {
     heading: &'a str,
     items: &'a [String],
 }
 
-#[derive(Template)]
-#[template(path = "items.html", block = "item_results")]
+#[derive(GraftTemplate)]
+#[graft(path = "templates/items.graft.html", block = "item_results")]
 struct ItemResults<'a> {
     items: &'a [String],
 }
 ```
 
-`ItemResults` selects only `item_results`. It does not need `heading`. During migration, each concrete page or fragment type needs a private adapter:
-
-```rust
-impl hypergraft::GraftTemplate for ItemResults<'_> {
-    fn render_into(&self, output: &mut String, _: &hypergraft::template::Scope) -> Result<(), hypergraft::TemplateError> {
-        askama::Template::render_into(self, output)
-            .map_err(|_| hypergraft::TemplateError::Rendering)
-    }
-}
-
-impl hypergraft::GraftTemplate for ItemPage<'_> {
-    fn render_into(&self, output: &mut String, _: &hypergraft::template::Scope) -> Result<(), hypergraft::TemplateError> {
-        askama::Template::render_into(self, output)
-            .map_err(|_| hypergraft::TemplateError::Rendering)
-    }
-}
-```
-
-`PatchSet::children` and `outcome::children_patch` accept these adapted types. Askama block accessors alone do not implement the owned interface.
+`ItemResults` selects only `item_results`. It does not need `heading`. `PatchSet::children` and `outcome::children_patch` accept these derived types directly.
 
 Blocks can nest in the source. A parent block then contains its nested blocks, while each nested block can also render independently.
 
 Source nesting does not permit overlapping patch targets. One batch cannot patch a parent target and its descendant together.
 
-The reference keeps its list blocks in [`tasks.html`](../examples/reference/templates/tasks.html) and its detail block in [`task.html`](../examples/reference/templates/task.html). Their narrow Rust types remain in [`pages.rs`](../examples/reference/src/pages.rs).
+The reference keeps its list blocks in [`tasks.graft.html`](../examples/reference/templates/tasks.graft.html) and its detail block in [`task.graft.html`](../examples/reference/templates/task.graft.html). Their narrow Rust types remain in [`pages.rs`](../examples/reference/src/pages.rs).
 
 ## Page navigation as a titled `main` patch
 
@@ -361,22 +341,23 @@ The reference application does not stream progress. A long command can still sen
 
 ```rust
 use futures_util::Stream;
-use hypergraft::{outcome, PatchSet, PatchStatus, StreamBudget, StreamFrame};
+use hypergraft::{outcome, GraftTemplate, PatchSet, PatchStatus, StreamBudget, StreamFrame};
 
 fn progress_frame(
     budget: &mut StreamBudget,
     line: &LogLine,
+    instance_id: u64,
 ) -> Result<Option<StreamFrame>, hypergraft::PatchBuildError> {
-    let frame = PatchSet::new().with_append("log", line)?.encode_progress()?;
+    let frame = PatchSet::new().with_append("log", &line.scoped(instance_id))?.encode_progress()?;
     if budget.try_progress(&frame).is_err() {
         return Ok(None);
     }
     Ok(Some(frame))
 }
 
-fn final_frame(line: &LogLine) -> Result<StreamFrame, hypergraft::PatchBuildError> {
+fn final_frame(line: &LogLine, instance_id: u64) -> Result<StreamFrame, hypergraft::PatchBuildError> {
     PatchSet::new()
-        .with_append("log", line)?
+        .with_append("log", &line.scoped(instance_id))?
         .encode_final(PatchStatus::Ok)
 }
 
@@ -386,6 +367,8 @@ fn stream_log(
     outcome::stream_response(frames)
 }
 ```
+
+Each log line needs a distinct semantic `instance_id` across progress and final frames. Scope distinguishes generated sibling keys, not authored IDs.
 
 Do not stream a document response.
 
@@ -414,3 +397,5 @@ import { startHypergraft } from "hypergraft/browser";
 The public browser entry is `hypergraft/browser`. Private runtime modules are not a supported integration. The supported integration contains one bundled runtime copy.
 
 Read [Protocol version 1](protocol-v1.md) for wire limits. Read [Browser runtime](browser-runtime.md) for request lifecycle.
+
+The [template language](template-language.md) defines the compiler API. The [identity contract](template-identity.md) defines semantic scopes and public metadata.

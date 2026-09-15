@@ -1,3 +1,0 @@
-# Benchmark-only search path until the owned compiler replaces Askama.
-[general]
-dirs = ["benchmarks/templates"]

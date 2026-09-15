@@ -1,0 +1,1 @@
+{% for row in self.rows.iter() key(*row) %}{% if self.keyed %}<div id="row-{{ row }}"><span>Row {{ row }}</span></div>{% else %}<div><span>Row {{ row }}</span></div>{% endif %}{% endfor %}

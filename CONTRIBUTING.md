@@ -84,3 +84,5 @@ cargo run --quiet --example template-fixtures > browser/fixtures/templates.json
 - Update the [agent integration guide](docs/agent-guide.md) when public APIs or integration constraints change.
 - Include test results in the pull request description.
 - Report security defects through `SECURITY.md`.
+
+Compiler contract tests cover identity, escaping, typed composition and external source rebuilds. Narrow block tests pin unavailable context and selection diagnostics. Tests exclude ordinary Rust type errors and host product behaviour.

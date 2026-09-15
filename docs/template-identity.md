@@ -157,7 +157,7 @@ Literal authored markers receive compiler validation after HTML character-refere
 
 The runtime rejects reserved authored markers and metadata above its byte bound. Error values contain no HTML or evaluated keys. Generated attributes consume the existing response byte budget.
 
-Private Askama adapters still emit legacy HTML without automatic annotations. Their ignored scope parameter does not promise identity for legacy fragments.
+The reference pages and benchmarks now use the owned compiler with automatic annotations and semantic instance scopes.
 
 ## Worked identities
 

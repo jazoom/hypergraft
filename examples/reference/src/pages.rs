@@ -1,9 +1,9 @@
-use askama::Template;
 use axum::{
     extract::{Path, RawQuery, State, rejection::PathRejection},
     http::{HeaderValue, header},
     response::{Html, IntoResponse, Response},
 };
+use hypergraft::GraftTemplate;
 use hypergraft::{GraftRequest, PageGraft, PatchBuildError, PatchSet, PatchStatus, outcome};
 
 use crate::{AppState, security::no_store_response, state::Task};
@@ -129,8 +129,8 @@ struct Document<'a, T: hypergraft::GraftTemplate + ?Sized> {
     body: &'a T,
 }
 
-#[derive(Template)]
-#[template(path = "tasks.html")]
+#[derive(GraftTemplate)]
+#[graft(path = "templates/tasks.graft.html")]
 struct TasksPage<'a> {
     search: &'a str,
     status: StatusFilter,
@@ -140,21 +140,21 @@ struct TasksPage<'a> {
     hidden_by_filter: bool,
 }
 
-#[derive(Template)]
-#[template(path = "tasks.html", block = "task_filter")]
+#[derive(GraftTemplate)]
+#[graft(path = "templates/tasks.graft.html", block = "task_filter")]
 pub(crate) struct TaskFilter<'a> {
     pub(crate) search: &'a str,
     pub(crate) status: StatusFilter,
 }
 
-#[derive(Template)]
-#[template(path = "tasks.html", block = "task_results")]
+#[derive(GraftTemplate)]
+#[graft(path = "templates/tasks.graft.html", block = "task_results")]
 pub(crate) struct TaskResults<'a> {
     pub(crate) tasks: &'a [Task],
 }
 
-#[derive(Template)]
-#[template(path = "tasks.html", block = "task_create")]
+#[derive(GraftTemplate)]
+#[graft(path = "templates/tasks.graft.html", block = "task_create")]
 pub(crate) struct TaskCreate<'a> {
     pub(crate) search: &'a str,
     pub(crate) status: StatusFilter,
@@ -163,56 +163,34 @@ pub(crate) struct TaskCreate<'a> {
     pub(crate) hidden_by_filter: bool,
 }
 
-#[derive(Template)]
-#[template(path = "tasks.html", block = "task_create_filters")]
+#[derive(GraftTemplate)]
+#[graft(path = "templates/tasks.graft.html", block = "task_create_filters")]
 pub(crate) struct TaskCreateFilters<'a> {
     pub(crate) search: &'a str,
     pub(crate) status: StatusFilter,
 }
 
-#[derive(Template)]
-#[template(path = "tasks.html", block = "task_create_feedback")]
+#[derive(GraftTemplate)]
+#[graft(path = "templates/tasks.graft.html", block = "task_create_feedback")]
 pub(crate) struct TaskCreateFeedback<'a> {
     pub(crate) error: Option<&'a str>,
     pub(crate) created: Option<&'a Task>,
     pub(crate) hidden_by_filter: bool,
 }
 
-#[derive(Template)]
-#[template(path = "task.html")]
+#[derive(GraftTemplate)]
+#[graft(path = "templates/task.graft.html")]
 struct TaskPage<'a> {
     task: &'a Task,
     error: Option<&'a str>,
 }
 
-#[derive(Template)]
-#[template(path = "task.html", block = "task_detail")]
+#[derive(GraftTemplate)]
+#[graft(path = "templates/task.graft.html", block = "task_detail")]
 pub(crate) struct TaskDetail<'a> {
     pub(crate) task: &'a Task,
     pub(crate) error: Option<&'a str>,
 }
-
-macro_rules! legacy_template {
-    ($($name:ident),+ $(,)?) => {$ (
-        impl hypergraft::GraftTemplate for $name<'_> {
-            fn render_into(&self, output: &mut String, _: &hypergraft::template::Scope) -> Result<(), hypergraft::TemplateError> {
-                askama::Template::render_into(self, output)
-                    .map_err(|_| hypergraft::TemplateError::Rendering)
-            }
-        }
-    )+};
-}
-
-legacy_template!(
-    TasksPage,
-    TaskFilter,
-    TaskResults,
-    TaskCreate,
-    TaskCreateFilters,
-    TaskCreateFeedback,
-    TaskPage,
-    TaskDetail
-);
 
 pub enum AppError {
     NotFound,

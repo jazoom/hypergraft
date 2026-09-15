@@ -35,7 +35,7 @@ The server measures only the small target output, not the external document. Ser
 
 These definitions remain the shared comparison workloads for the compiler and reconciler replacements. Both engines recognise public IDs. The unkeyed comparison must retain identical hand-authored HTML.
 
-Compiler-generated marker workloads form a separate future category. Different identity semantics cannot establish an engine speed improvement.
+Browser workloads with compiler-generated markers remain a separate future category. Different identity semantics cannot establish an engine speed improvement.
 
 ## Measurement boundaries
 
@@ -71,7 +71,7 @@ The final document-wide ID scan remains inside preflight. The small-target workl
 4. Stop other workloads on the measurement machine.
 5. Run `mise exec -- pnpm bench:record`.
 
-The recorder starts and stops its Vite server on port 4174. An occupied port fails the command instead of a connection to another server. The recorder writes the baseline JSON and compressed Chromium trace. A rerun replaces those artefacts.
+The recorder starts and stops its Vite server on port 4174. An occupied port fails the command instead of a connection to another server. The recorder writes `current-pipeline.json` and `chromium-current.trace.json.gz`. A rerun preserves the historical baseline artefacts.
 
 The recorder reports unavailable browser installations. Application errors fail the command rather than become successful measurements.
 
@@ -83,7 +83,15 @@ mise exec -- cargo bench --bench templates --quiet > /tmp/templates.json
 
 `benches/templates.rs` is a `harness = false` executable. Standard output contains one JSON value. Build diagnostics use standard error.
 
-`askama.toml` adds only the synthetic benchmark template directory. This configuration is temporary benchmark migration support. The Askama replacement task removes it after its last consumer migrates.
+The owned compiler reads `benchmarks/templates/*.graft.html` relative to the root crate. No template-engine configuration file remains.
+
+To save server samples with source hashes and machine metadata, run:
+
+```sh
+mise exec -- node benchmarks/record.mjs --server-only
+```
+
+This command writes `benchmarks/results/owned-template.json` without a browser run.
 
 ### Interactive browser page
 
@@ -148,3 +156,31 @@ Timer quantisation produces zero-valued Firefox samples. Zero does not mean zero
 These sequential, single-machine measurements include runtime warm-up effects and scheduler noise. They establish a reproducible workload baseline, not universal latency guarantees.
 
 No reliable memory, GPU or physical-display paint measurement accompanies this baseline. Headless trace events do not establish user-visible frame completion.
+
+## Owned compiler server measurements
+
+`benchmarks/results/owned-template.json` records release samples, source hashes and machine metadata. The run uses 20 warm-up iterations and 100 samples per workload.
+
+The workload data matches the baseline. ID rows retain public IDs, while their child spans acquire generated markers. Formerly unkeyed rows now acquire generated identity.
+
+Append batches retain the same row data but replace authored row IDs with generated markers. Explicit batch scopes now reach those root markers.
+
+Each row establishes a parent boundary, so its child marker excludes the batch scope. This compiler workload differs from the browser's ID-keyed append comparison.
+
+| Workload             | Output, µs | Encoding, µs | HTML bytes | Added bytes |
+| -------------------- | ---------: | -----------: | ---------: | ----------: |
+| id-unchanged         |     273.26 |        11.98 |    131,781 |      88,001 |
+| id-insertion         |     270.32 |        10.83 |    131,915 |      88,089 |
+| id-reorder           |     269.26 |        10.95 |    131,781 |      88,001 |
+| generated-unchanged  |     515.28 |        19.36 |    230,671 |     199,781 |
+| generated-insertion  |     518.81 |        15.57 |    230,905 |     199,983 |
+| generated-reorder    |     514.71 |        15.24 |    230,671 |     199,781 |
+| small-large-document |       0.32 |         0.11 |        129 |          89 |
+| append-0             |      58.84 |         0.54 |     24,771 |      20,591 |
+| append-9             |      58.56 |         0.34 |     25,101 |      20,701 |
+
+Added bytes comprise generated metadata and one trailing source newline. Append differences also subtract the removed public IDs. The compiler performs semantic key validation that the Askama baseline excludes.
+
+These server results show higher output cost and larger payloads, not an engine speed improvement. The browser benchmark still uses identical hand-authored comparison HTML.
+
+This run measures no browser parsing, reconciliation, layout or paint. The earlier trace remains historical evidence only. Scheduler noise and uncontrolled CPU frequency limit comparisons.

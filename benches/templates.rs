@@ -1,46 +1,29 @@
-use askama::Template;
+use hypergraft::GraftTemplate;
 use hypergraft::PatchSet;
 use serde_json::json;
 use std::{hint::black_box, time::Instant};
 
-#[derive(Template)]
-#[template(path = "list.html")]
+#[derive(GraftTemplate)]
+#[graft(path = "benchmarks/templates/list.graft.html")]
 struct List {
     rows: Vec<usize>,
     keyed: bool,
 }
 
-#[derive(Template)]
-#[template(path = "fragment.html")]
+#[derive(GraftTemplate)]
+#[graft(path = "benchmarks/templates/fragment.graft.html")]
 struct Fragment {
     rows: Vec<usize>,
 }
 
-macro_rules! legacy_template {
-    ($($name:ident),+) => {$ (
-        impl hypergraft::GraftTemplate for $name {
-            fn render_into(&self, output: &mut String, _: &hypergraft::template::Scope) -> Result<(), hypergraft::TemplateError> {
-                askama::Template::render_into(self, output)
-                    .map_err(|_| hypergraft::TemplateError::Rendering)
-            }
-        }
-    )+};
-}
-
-legacy_template!(List, Fragment);
-
-fn measure<T: Template + hypergraft::GraftTemplate>(
-    name: &str,
-    template: &T,
-    append: bool,
-) -> serde_json::Value {
+fn measure<T: GraftTemplate>(name: &str, template: &T, append: bool) -> serde_json::Value {
     let mut render = Vec::new();
     let mut encode = Vec::new();
     let mut html_bytes = 0;
     let mut envelope_bytes = 0;
     for index in 0..120 {
         let start = Instant::now();
-        let html = askama::Template::render(black_box(template)).unwrap();
+        let html = GraftTemplate::render(black_box(template)).unwrap();
         let render_ns = start.elapsed().as_nanos() as u64;
         html_bytes = black_box(html).len();
         // Patch construction renders again outside the isolated encoding interval.
@@ -74,7 +57,7 @@ fn main() {
                 rows.reverse();
             }
             results.push(measure(
-                &format!("{}-{operation}", if keyed { "id" } else { "unkeyed" }),
+                &format!("{}-{operation}", if keyed { "id" } else { "generated" }),
                 &List { rows, keyed },
                 false,
             ));
@@ -93,12 +76,13 @@ fn main() {
             &format!("append-{batch}"),
             &Fragment {
                 rows: (batch * 100..(batch + 1) * 100).collect(),
-            },
+            }
+            .scoped(batch),
             true,
         ));
     }
     println!(
         "{}",
-        json!({"engine": "askama 0.16.0", "warmup": 20, "samples": 100, "results": results})
+        json!({"engine": "hypergraft owned compiler 0.0.1", "warmup": 20, "samples": 100, "results": results})
     );
 }

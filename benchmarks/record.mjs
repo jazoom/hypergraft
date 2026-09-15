@@ -20,15 +20,14 @@ const sourcePaths = [
     "benchmarks/browser.html",
     "benchmarks/record.mjs",
     "benchmarks/vite.config.ts",
-    "benchmarks/templates/list.html",
-    "benchmarks/templates/fragment.html",
-    "askama.toml",
+    "benchmarks/templates/list.graft.html",
+    "benchmarks/templates/fragment.graft.html",
     "Cargo.toml",
     "Cargo.lock",
     "package.json",
     "pnpm-lock.yaml",
     "protocol-v1.json",
-    ...execFileSync("git", ["ls-files", "src", "browser"], {
+    ...execFileSync("git", ["ls-files", "src", "browser", "crates"], {
         encoding: "utf8",
     })
         .trim()
@@ -65,6 +64,13 @@ const metadata = {
         }).replace(/^Version (.*)\n$/, '"$1"'),
     ),
 };
+if (process.argv.includes("--server-only")) {
+    await writeFile(
+        `${directory}/owned-template.json`,
+        JSON.stringify({ ...server, metadata }, null, 2) + "\n",
+    );
+    process.exit(0);
+}
 const vite = await createServer({ configFile: "benchmarks/vite.config.ts" });
 const browsers = [];
 try {
@@ -114,7 +120,7 @@ try {
                 );
                 await session.send("Tracing.end");
                 await finished;
-                const path = `${directory}/chromium-baseline.trace.json.gz`;
+                const path = `${directory}/chromium-current.trace.json.gz`;
                 await writeFile(
                     path,
                     gzipSync(JSON.stringify({ traceEvents: events })),
@@ -183,6 +189,6 @@ try {
     await vite.close();
 }
 await writeFile(
-    `${directory}/askama-morphlex-baseline.json`,
+    `${directory}/current-pipeline.json`,
     JSON.stringify({ metadata, server, browsers }, null, 2) + "\n",
 );
