@@ -9,17 +9,25 @@ import { createServer } from "vite";
 const directory = "benchmarks/results";
 await mkdir(directory, { recursive: true });
 const reconciler = process.argv.includes("--reconciler");
-const server = reconciler
-    ? undefined
-    : JSON.parse(
-          execFileSync("cargo", ["bench", "--bench", "templates", "--quiet"], {
-              encoding: "utf8",
-          }),
-      );
+const ids = process.argv.includes("--ids");
+const server =
+    reconciler || ids
+        ? undefined
+        : JSON.parse(
+              execFileSync(
+                  "cargo",
+                  ["bench", "--bench", "templates", "--quiet"],
+                  {
+                      encoding: "utf8",
+                  },
+              ),
+          );
 // HEAD does not identify uncommitted benchmark sources or production edits.
 const sourcePaths = [
     "benches/templates.rs",
     "benchmarks/browser.ts",
+    "benchmarks/id-validation.ts",
+    "browser/document-ids.ts",
     "benchmarks/browser.html",
     "benchmarks/record.mjs",
     "benchmarks/vite.config.ts",
@@ -100,8 +108,10 @@ try {
                 () => typeof window.runBenchmarks === "function",
             );
             // Latency samples exclude trace overhead. A second run supplies trace evidence.
-            const measurements = await page.evaluate(() =>
-                window.runBenchmarks(),
+            const measurements = await page.evaluate(
+                (ids) =>
+                    ids ? window.runIdBenchmarks() : window.runBenchmarks(),
+                ids,
             );
             const fallback = reconciler
                 ? await page.evaluate(async () => {
@@ -138,9 +148,11 @@ try {
                 : undefined;
             let trace = {
                 available: false,
-                reason: "This recorder supports Chromium CDP trace categories only.",
+                reason: ids
+                    ? "This validator experiment does not measure layout or paint."
+                    : "This recorder supports Chromium CDP trace categories only.",
             };
-            if (name === "chromium") {
+            if (name === "chromium" && !ids) {
                 const session = await page.context().newCDPSession(page);
                 const events = [];
                 session.on("Tracing.dataCollected", ({ value }) =>
@@ -226,6 +238,6 @@ try {
     await vite.close();
 }
 await writeFile(
-    `${directory}/${reconciler ? "owned-reconciler" : "current-pipeline"}.json`,
+    `${directory}/${ids ? "document-id-validation" : reconciler ? "owned-reconciler" : "current-pipeline"}.json`,
     JSON.stringify({ metadata, server, browsers }, null, 2) + "\n",
 );

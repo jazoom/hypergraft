@@ -24,6 +24,7 @@
         "browser/islands.ts",
         "browser/live.ts",
         "browser/morph.ts",
+        "browser/document-ids.ts",
         "browser/patches.ts",
         "browser/identity.ts",
         "browser/requests.ts",

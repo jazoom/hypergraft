@@ -8,7 +8,8 @@ export default defineConfig({
             transform(code, id) {
                 if (!id.endsWith("/browser/patches.ts")) return;
                 // Benchmark-only timers measure the actual loop without a production hook or a duplicate validator.
-                const start = "    const survivingIds = new Set<string>();";
+                const start =
+                    "    validateDocumentIds(liveDocument, patches, insertionIds);";
                 const end =
                     '    return {\n        kind: "patches",\n        batch: {';
                 if (

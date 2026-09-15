@@ -1,3 +1,4 @@
+import { ID_PATTERN, addIncomingId, validateDocumentIds } from "./document-ids";
 import { validateSiblingKeys } from "./identity";
 import { HypergraftError } from "./diagnostics";
 import { appendChildren, morphChildren, captureControls } from "./morph";
@@ -11,8 +12,7 @@ export const MAX_INSERTED_NODES = 1_000_000;
 export const MAX_NESTING_DEPTH = 64;
 export const MAX_STREAM_FRAMES = 256;
 export const MAX_STREAM_BYTES = 256 * 1024 * 1024;
-export const ID_PATTERN_SOURCE = "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$";
-const ID_PATTERN = new RegExp(ID_PATTERN_SOURCE);
+export { ID_PATTERN_SOURCE } from "./document-ids";
 export const PATCH_STATUSES = [200, 401, 409, 422, 429] as const;
 export const STREAM_STATUSES = [200, 401, 409, 422] as const;
 export type AcceptedPatchStatus = (typeof PATCH_STATUSES)[number];
@@ -347,11 +347,8 @@ function parseEnvelope(
         nodeCount += inspected.count;
         if (nodeCount > MAX_INSERTED_NODES)
             fail("target-content", "node bound exceeded", id);
-        for (const insertedId of inspected.ids) {
-            if (insertionIds.has(insertedId))
-                fail("target-content", "duplicate inserted ID", id);
-            insertionIds.add(insertedId);
-        }
+        for (const insertedId of inspected.ids)
+            addIncomingId(insertionIds, insertedId, id);
         fragments.push(clone);
         patches.push({
             target,
@@ -388,31 +385,10 @@ function parseEnvelope(
                 patch.targetId,
             );
         }
-        for (const id of inspected.ids) {
-            if (insertionIds.has(id))
-                fail("target-content", "duplicate inserted ID", patch.targetId);
-            insertionIds.add(id);
-        }
+        for (const id of inspected.ids)
+            addIncomingId(insertionIds, id, patch.targetId);
     }
-    const survivingIds = new Set<string>();
-    for (const element of liveDocument.querySelectorAll("[id]")) {
-        if (
-            patches.some(
-                (p) =>
-                    p.operation === "children" &&
-                    p.target.contains(element) &&
-                    p.target !== element,
-            )
-        )
-            continue;
-        if (
-            !ID_PATTERN.test(element.id) ||
-            survivingIds.has(element.id) ||
-            insertionIds.has(element.id)
-        )
-            fail("target-content", "final ID collision");
-        survivingIds.add(element.id);
-    }
+    validateDocumentIds(liveDocument, patches, insertionIds);
     return {
         kind: "patches",
         batch: {

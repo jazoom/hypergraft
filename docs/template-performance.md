@@ -258,3 +258,96 @@ This command replaces `owned-reconciler.json` and `chromium-owned.trace.json.gz`
 The recorder disables `moveBefore` on element and fragment prototypes for each fallback run. It restores their descriptors in `finally`.
 
 This override exists only in the measurement session. The production runtime exposes no fallback configuration.
+
+## Full scans versus cached document validity
+
+The production runtime still uses `validateDocumentIds` in `browser/document-ids.ts`. The extraction preserves final-document rejection and the existing scope of IDs.
+
+The candidate exists only in `benchmarks/id-validation.ts`. It stores one validity flag, not an ID index. Native `getElementById` supplies lookups on the clean path.
+
+The observer covers the whole document. ID attributes and ID-bearing subtree changes invalidate the flag. Text, private markers and ID-free subtree changes retain it.
+
+Both observer delivery and synchronous drainage use the same invalidation function. Each candidate call drains records before a fast path. Application success never resets the flag.
+
+An unknown cache requires successful validation of the actual document. If that fails, the production validator evaluates the complete hypothetical result. A patch can therefore repair invalid replaced contents.
+
+The document query excludes native template contents and shadow trees. The candidate preserves that scope. Incoming IDs still include native template contents, as production content inspection requires.
+
+Production inspection ignores empty incoming IDs. The actual-document scan rejects empty ID attributes. The candidate preserves this distinction without broader production rejection.
+
+### Reproduction for the ID comparison
+
+Run the recorder:
+
+```sh
+mise exec -- node benchmarks/record.mjs --ids
+```
+
+Run the differential contracts:
+
+```sh
+mise exec -- pnpm test:browser browser/document-ids.browser.test.ts
+HYPERGRAFT_BROWSER=firefox mise exec -- pnpm test:browser browser/document-ids.browser.test.ts
+HYPERGRAFT_BROWSER=webkit mise exec -- pnpm test:browser browser/document-ids.browser.test.ts
+```
+
+### Measurement boundaries and workloads
+
+`benchmarks/results/document-id-validation.json` contains raw samples, source hashes and machine metadata. The machine uses an AMD RYZEN AI MAX+ 395 processor.
+
+Each trial uses 20,000 external elements and one small prepared patch. ID densities are zero, 10% and 100%. Large subtree operations use 1,000 elements.
+
+Each density/operation/strategy tuple forms one trial. Each trial contains five warm-up cycles and 20 measured cycles. The observer disconnects before the next trial.
+
+The full-scan trials contain no candidate observer. Both strategies receive equivalent prepared nodes and incoming ID sets. Incoming collection and HTML parsing occur outside these intervals.
+
+`coldMs` includes observer setup and the initial full validation. It contains one observation per trial, not a per-workload cold-start distribution.
+
+`validatorMs` measures only the validator call. `cycleMs` starts before mutation and includes observer record creation, subtree inspection, delivery and synchronous drainage.
+
+Alternate cycles include a microtask checkpoint. `host-sync` always precedes observer delivery. `host-async` always follows delivery. Both strategies include the same checkpoint overhead.
+
+The cycles cover these operations:
+
+- Unchanged snapshots, text changes and private marker changes.
+- ID-free append and removal.
+- ID-bearing insertion, removal, reorder and whole-target replacement.
+- Host ID changes before and after observer delivery.
+- Sustained ID churn across all external elements.
+- Large ID-free and ID-bearing subtree insertion and removal.
+
+The reorder operation moves two ID-bearing children within the small target at every external ID density.
+
+Counts include cold validation and warm-up cycles. `cacheHits` counts clean-path entries. `invalidations` counts record batches with relevant mutations, not individual mutations.
+
+The existing `runBenchmarks` function still measures production preflight separately. These validator-only samples do not represent equivalent full-pipeline performance. They exclude reconciliation, layout and paint.
+
+### Results and adoption recommendation
+
+The result file records Chromium 151.0.7922.34 and Firefox 153.0. WebKit cannot start because required host libraries are absent. WebKit measurements remain unavailable.
+
+The following values are median cycle milliseconds at 100% external ID density. Zero denotes the timer resolution, not zero work.
+
+| Operation                      | Chromium full | Chromium cached | Firefox full | Firefox cached |
+| ------------------------------ | ------------: | --------------: | -----------: | -------------: |
+| Unchanged                      |          3.90 |            0.00 |         4.00 |           0.00 |
+| Host ID change before delivery |          3.90 |            3.50 |         4.00 |           4.00 |
+| Sustained ID churn             |         21.75 |           24.95 |        18.00 |          25.50 |
+| Large ID-free subtree          |          4.40 |            0.10 |         4.50 |           0.00 |
+| Large ID-bearing subtree       |          5.10 |            3.80 |         5.00 |           5.00 |
+
+At full density, median cold observations across operations were 5.30/4.75 ms for Chromium full/cached and 9.00/9.00 ms for Firefox. Trial order and allocation noise limit cold comparisons.
+
+An unchanged cached trial required one full scan and recorded 25 cache hits. Sustained churn required 26 full scans and 25 invalidations. The measured valid-document workloads required no fallback.
+
+Differential tests cover repair fallback, invalid surviving IDs and collisions. They also cover host callbacks, custom-element effects and partial application failure. Chromium and Firefox pass these contracts.
+
+The warm path removes most scan cost in stable documents. The dirty path retains scan cost and adds observer overhead. Firefox sustained churn regressed at every initial ID density.
+
+Chromium churn at 10% initial density increased from 21.40 to 23.30 ms. Its full-density result also regressed. Repeated, order-balanced trials remain necessary.
+
+Observer overhead forms part of the cycle totals. Separate observer CPU attribution and reliable observer allocation measurements are unavailable. The recorder makes no memory benefit claim.
+
+The recommendation is to retain full scans in production. The evidence supports further evaluation for stable, ID-dense documents, not unconditional adoption.
+
+A later adoption decision requires WebKit conformance and broader repeated cold trials. It also requires a lifecycle design for observer ownership and representative host mutation rates.
