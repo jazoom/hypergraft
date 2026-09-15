@@ -29,6 +29,12 @@ An incompatible ancestor ends descendant identity. Different effective input typ
 
 Native moves preserve platform state when applicable. Fallback moves retain object identity but can trigger custom-element connection callbacks.
 
+The compiler rejects HTML reconstruction that duplicates formatting elements. Previously accepted templates that depend on this repair need explicit closing tags within each parent. This compiler diagnostic changes no wire rule.
+
+Nested expressions inside foreign script or style contents now receive compiler diagnostics. Value-dependent tree-construction attributes require literal values in their affected contexts. Ordinary input types and foreign font attribute values remain dynamic where the template contract permits them.
+
+Incoming empty `id` attributes now fail the existing ID syntax rule. Older inspection incorrectly treated them as absent. The canonical fixture now covers this distinction for every browser preflight entry point.
+
 If implementation reveals a wire incompatibility beyond this coordinated metadata contract, dependent work must stop until explicit approval of a protocol version change.
 
 ## Tested engines

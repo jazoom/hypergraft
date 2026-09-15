@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { cachedDocumentIds, incomingIds } from "../benchmarks/id-validation";
-import { validateDocumentIds } from "./document-ids";
-import { HypergraftError } from "./diagnostics";
-import { apply, preflightLive, type PreparedPatch } from "./patches";
+import { cachedDocumentIds, incomingIds } from "./id-validation";
+import { validateDocumentIds } from "../browser/document-ids";
+import { HypergraftError } from "../browser/diagnostics";
+import { apply, preflightLive, type PreparedPatch } from "../browser/patches";
 
 const accepted = (run: () => void) => {
     try {
@@ -40,8 +40,8 @@ describe("document ID strategies", () => {
             ["", '<b id="target"></b>', "children", false],
             ['<i id="same"></i><b id="same"></b>', "", "children", false],
             ["", '<b id="bad id"></b>', "children", false],
-            ["", '<b id=""></b>', "children", true],
-            ["", '<template><i id=""></i></template>', "children", true],
+            ["", '<b id=""></b>', "children", false],
+            ["", '<template><i id=""></i></template>', "children", false],
             ["", '<template><i id="bad id"></i></template>', "children", false],
             [
                 "",
@@ -51,6 +51,18 @@ describe("document ID strategies", () => {
             ],
             ["", '<b id="old"></b>', "append", false],
             ["", '<b id="old"></b>', "children", true],
+            [
+                '<form id="outside"><input name="id"></form>',
+                '<b id="fresh"></b>',
+                "children",
+                true,
+            ],
+            [
+                "",
+                '<form id="nested"><input name="nodeType"><input name="childNodes" id="field"></form>',
+                "children",
+                true,
+            ],
             [
                 '<template><i id="old"></i></template>',
                 '<b id="old"></b>',

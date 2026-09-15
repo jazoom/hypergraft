@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { apply } from "./patches";
+import { apply, preflightLive } from "./patches";
 
 function patch(target: HTMLElement, html: string) {
     const source = document.createElement("template");
@@ -15,6 +15,78 @@ function patch(target: HTMLElement, html: string) {
         ],
     });
 }
+
+test("form field names do not replace DOM properties during reconciliation", () => {
+    const names = [
+        "moveBefore",
+        "childNodes",
+        "firstChild",
+        "nextSibling",
+        "parentNode",
+        "nodeType",
+        "ownerDocument",
+        "isConnected",
+        "attributes",
+        "localName",
+        "namespaceURI",
+        "id",
+        "getAttributeNS",
+        "hasAttributeNS",
+        "setAttributeNS",
+        "removeAttributeNS",
+        "contains",
+        "insertBefore",
+        "removeChild",
+        "appendChild",
+    ];
+    const fields = (order: readonly string[], value: string) =>
+        order
+            .map(
+                (name) =>
+                    `<input id="field-${name}" name="${name}" value="${value}">`,
+            )
+            .join("");
+    const host = document.createElement("div");
+    host.id = "form-host";
+    host.innerHTML = `<form id="form-before" data-graft-key="u:aa" aria-busy="true">${fields(names, "old")}<button id="obsolete">Old</button></form>`;
+    document.body.append(host);
+    const update = (target: string, html: string, operation = "children") =>
+        apply(
+            preflightLive(
+                `<graft-patch-set version="1"><graft-patch operation="${operation}" target="${target}"><template>${html}</template></graft-patch></graft-patch-set>`,
+            ),
+        );
+    try {
+        const form = host.firstChild;
+        const controls = Array.from(host.querySelectorAll("input"));
+        for (const input of controls) input.value = "dirty";
+        const reversed = [...names].reverse();
+        update(
+            "form-host",
+            `<form id="form-after" data-graft-key="u:aa">${fields(reversed, "new")}</form>`,
+        );
+        expect(host.firstChild).toBe(form);
+        expect(document.getElementById("form-after")).toBe(form);
+        expect(Array.from(host.querySelectorAll("input"))).toEqual(
+            [...controls].reverse(),
+        );
+        expect(controls.map((input) => input.value)).toEqual(
+            names.map(() => "new"),
+        );
+        expect(host.querySelector("[aria-busy]")).toBeNull();
+        expect(host.querySelector("#obsolete")).toBeNull();
+        update("form-after", fields(names, "final"));
+        expect(Array.from(host.querySelectorAll("input"))).toEqual(controls);
+        expect(controls.map((input) => input.value)).toEqual(
+            names.map(() => "final"),
+        );
+        update("form-after", '<input id="appended" value="extra">', "append");
+        expect(host.querySelectorAll("input")).toHaveLength(names.length + 1);
+        expect(host.querySelector("input:last-child")?.id).toBe("appended");
+    } finally {
+        host.remove();
+    }
+});
 
 test("equal attributes supersede dirty controls and complete select defaults", () => {
     const target = document.createElement("div");

@@ -402,12 +402,27 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
                                 "invalid authored reconciliation marker",
                             ));
                         }
+                        let mut dynamic_attributes = Vec::new();
+                        for part in &parts {
+                            if let Part::Expression { offset, .. } = part
+                                && *offset > tag_start
+                            {
+                                let placeholder = format!("{expression_marker}{offset}_");
+                                for attribute in &token.attrs {
+                                    if attribute.value.contains(&placeholder) {
+                                        dynamic_attributes
+                                            .push((attribute.name.local.to_string(), *offset));
+                                    }
+                                }
+                            }
+                        }
                         tags.push(TagOutput {
                             range: tag_start..i + 1,
                             insertion: tag_start + 1 + name.len(),
                             generated: marker.is_none()
                                 && !token.attrs.iter().any(|a| a.name.local.as_ref() == "id"),
                             dynamic_marker,
+                            dynamic_attributes,
                         });
                         starts.push((tag_start..i + 1, tag_start + 1 + name.len()));
                         if matches!(foreign.last().map(String::as_str), Some("svg" | "math"))
@@ -493,7 +508,7 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
     parts.push(Part::Literal(source[start..].into()));
     for tag in &tags {
         if parts.iter().any(|part| {
-            matches!(part, Part::Control { offset, attribute: true, .. } if tag.range.contains(offset))
+            matches!(part, Part::Control { offset, attribute: true, .. } | Part::Expression { offset, .. } if tag.range.contains(offset))
         }) {
             replacements.push((
                 tag.range.start..tag.range.start,
@@ -528,6 +543,7 @@ pub struct TagOutput {
     pub insertion: usize,
     pub generated: bool,
     pub dynamic_marker: bool,
+    dynamic_attributes: Vec<(String, usize)>,
 }
 
 pub type ContentParents = std::collections::HashMap<usize, Option<usize>>;
@@ -563,6 +579,11 @@ fn structure(
     while source.to_ascii_lowercase().contains(&marker) {
         marker.push('x');
     }
+    let dynamic_offsets: Vec<_> = replacements
+        .iter()
+        .filter(|(range, _)| !range.is_empty())
+        .map(|(range, _)| range.start)
+        .collect();
     let expressions: Vec<_> = replacements
         .iter()
         .filter(|(_, marker)| !marker.trim().is_empty())
@@ -625,6 +646,7 @@ fn structure(
             } => {
                 let namespace = name.ns.to_string();
                 let local = name.local.to_string();
+                let parent_raw = raw;
                 raw = raw
                     || matches!(local.as_str(), "script" | "style")
                     || (namespace == "http://www.w3.org/1999/xhtml"
@@ -647,6 +669,16 @@ fn structure(
                         ));
                     }
                     if attrs.borrow().iter().any(|a| a.value.contains(expression)) {
+                        // Foreign raw-content elements can contain parsed child elements.
+                        // Their descendant attributes remain forbidden interpolation contexts.
+                        if parent_raw {
+                            return Err(Diagnostic::new(
+                                path,
+                                source,
+                                *offset,
+                                "interpolation is not supported in raw text",
+                            ));
+                        }
                         found.insert(*offset);
                     }
                 }
@@ -655,9 +687,21 @@ fn structure(
                     .iter()
                     .find(|a| a.name.local.as_ref() == marker)
                     .and_then(|a| a.value.parse::<usize>().ok());
-                let range = origin
-                    .filter(|index| authored.insert(*index))
-                    .map(|index| starts[index].0.clone());
+                let range = if let Some(index) = origin {
+                    // Browser reconstruction copies generated attributes as well as source markers.
+                    // One source slot cannot describe nodes under different parent scopes.
+                    if !authored.insert(index) {
+                        return Err(Diagnostic::new(
+                            path,
+                            source,
+                            starts[index].0.start,
+                            "HTML reconstruction duplicates element identity",
+                        ));
+                    }
+                    Some(starts[index].0.clone())
+                } else {
+                    None
+                };
                 let html_integration = match namespace.as_str() {
                     "http://www.w3.org/2000/svg" => {
                         matches!(local.as_str(), "foreignObject" | "desc" | "title")
@@ -685,7 +729,7 @@ fn structure(
                 });
                 parent = Some(index);
                 if let Some(contents) = template_contents.borrow().as_ref() {
-                    pending.push((contents.clone(), parent, false));
+                    pending.push((contents.clone(), parent, raw));
                 }
             }
             NodeData::Comment { contents } => {
@@ -696,11 +740,23 @@ fn structure(
                         == Some(contents.as_ref())
                     {
                         if raw {
+                            // A tag-context marker points to its first dynamic source part.
+                            let position = starts
+                                .iter()
+                                .find(|(range, _)| range.start == *offset)
+                                .and_then(|(range, _)| {
+                                    dynamic_offsets
+                                        .iter()
+                                        .copied()
+                                        .filter(|position| range.contains(position))
+                                        .min()
+                                })
+                                .unwrap_or(*offset);
                             return Err(Diagnostic::new(
                                 path,
                                 source,
-                                *offset,
-                                "directives are not supported in raw text",
+                                position,
+                                "template expressions are not supported in raw text",
                             ));
                         }
                         found.insert(*offset);
@@ -947,6 +1003,18 @@ fn validate_attributes(
             }
             _ => &[],
         };
+        for (attribute, offset) in &tag.dynamic_attributes {
+            if structural_attributes.contains(&attribute.as_str())
+                && matches!(attribute.as_str(), "encoding" | "type")
+            {
+                return Err(Diagnostic::new(
+                    path,
+                    source,
+                    *offset,
+                    "attributes whose values control HTML tree construction require literal values",
+                ));
+            }
+        }
         let mut branches = Vec::<(usize, usize)>::new();
         let mut boundaries = Vec::<AttributeBoundary>::new();
         let mut needs_separator = true;

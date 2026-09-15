@@ -1,5 +1,6 @@
 import { addIncomingId, validateDocumentIds } from "../browser/document-ids";
 import { HypergraftError } from "../browser/diagnostics";
+import { elementProperty, nodeProperty } from "../browser/dom";
 import type { PreparedPatch } from "../browser/patches";
 
 export function incomingIds(patches: readonly PreparedPatch[]): Set<string> {
@@ -7,11 +8,16 @@ export function incomingIds(patches: readonly PreparedPatch[]): Set<string> {
     const stack = patches.flatMap((patch) => patch.nodes);
     while (stack.length) {
         const node = stack.pop()!;
-        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        if (nodeProperty(node, "nodeType") !== Node.ELEMENT_NODE) continue;
         const element = node as Element;
-        // Production incoming inspection ignores empty IDs, unlike the current-document scan.
-        if (element.id) addIncomingId(ids, element.id);
-        for (const child of element.childNodes) stack.push(child);
+        const id = elementProperty(element, "getAttributeNS").call(
+            element,
+            null,
+            "id",
+        );
+        if (id !== null) addIncomingId(ids, id);
+        for (const child of nodeProperty(element, "childNodes"))
+            stack.push(child);
         if (element instanceof HTMLTemplateElement)
             for (const child of element.content.childNodes) stack.push(child);
     }
@@ -29,9 +35,12 @@ export function cachedDocumentIds(document: Document) {
     };
     // The production document query excludes native template contents and shadow trees.
     const hasIds = (node: Node): boolean =>
-        node.nodeType === Node.ELEMENT_NODE &&
-        ((node as Element).hasAttribute("id") ||
-            (node as Element).querySelector("[id]") !== null);
+        nodeProperty(node, "nodeType") === Node.ELEMENT_NODE &&
+        (elementProperty(node as Element, "hasAttribute").call(node, "id") ||
+            elementProperty(node as Element, "querySelector").call(
+                node,
+                "[id]",
+            ) !== null);
     const records = (mutations: MutationRecord[]) => {
         if (
             mutations.some(
@@ -83,7 +92,10 @@ export function cachedDocumentIds(document: Document) {
                         (patch) =>
                             patch.operation === "children" &&
                             patch.target !== existing &&
-                            patch.target.contains(existing),
+                            nodeProperty(patch.target, "contains").call(
+                                patch.target,
+                                existing,
+                            ),
                     )
                 )
                     throw new HypergraftError(

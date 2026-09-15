@@ -1,4 +1,5 @@
 import { effectiveKey } from "./identity";
+import { elementProperty, nodeProperty } from "./dom";
 
 type Control =
     | HTMLInputElement
@@ -24,11 +25,13 @@ function key(node: Node): string | undefined {
     return node instanceof Element ? effectiveKey(node) : undefined;
 }
 function compatible(a: Node, b: Node): boolean {
-    if (a.nodeType !== b.nodeType) return false;
+    if (nodeProperty(a, "nodeType") !== nodeProperty(b, "nodeType"))
+        return false;
     if (!(a instanceof Element) || !(b instanceof Element)) return true;
     return (
-        a.namespaceURI === b.namespaceURI &&
-        a.localName === b.localName &&
+        elementProperty(a, "namespaceURI") ===
+            elementProperty(b, "namespaceURI") &&
+        elementProperty(a, "localName") === elementProperty(b, "localName") &&
         (!(a instanceof HTMLInputElement) ||
             (b instanceof HTMLInputElement && a.type === b.type))
     );
@@ -69,7 +72,8 @@ export function captureControls(roots: Node[], retained: [Node, Node][] = []) {
                 ),
                 index: node.selectedIndex,
             });
-        for (const child of children(node).childNodes) stack.push(child);
+        for (const child of nodeProperty(children(node), "childNodes"))
+            stack.push(child);
     }
     states.reverse();
     const restore = () => {
@@ -137,15 +141,21 @@ function place(parent: Node, node: Node, before: Node | null): void {
     const movable = parent as Node & {
         moveBefore?: (node: Node, before: Node | null) => void;
     };
+    const moveBefore =
+        parent instanceof HTMLFormElement
+            ? Element.prototype.moveBefore
+            : movable.moveBefore;
     if (
-        movable.moveBefore &&
-        node.parentNode &&
-        node.ownerDocument === parent.ownerDocument &&
-        node.isConnected === parent.isConnected &&
+        typeof moveBefore === "function" &&
+        nodeProperty(node, "parentNode") &&
+        nodeProperty(node, "ownerDocument") ===
+            nodeProperty(parent, "ownerDocument") &&
+        nodeProperty(node, "isConnected") ===
+            nodeProperty(parent, "isConnected") &&
         (node instanceof Element || node instanceof CharacterData)
     )
-        movable.moveBefore(node, before);
-    else parent.insertBefore(node, before);
+        moveBefore.call(parent, node, before);
+    else nodeProperty(parent, "insertBefore").call(parent, node, before);
 }
 
 export function morphChildren(
@@ -158,7 +168,7 @@ export function morphChildren(
     ];
     while (work.length) {
         const { parent, incoming } = work.pop()!;
-        const old = Array.from(parent.childNodes);
+        const old = Array.from(nodeProperty(parent, "childNodes"));
         const keyed = new Map<string, Node>();
         const unkeyed: Node[] = [];
         for (const node of old) {
@@ -168,7 +178,7 @@ export function morphChildren(
         }
         const retained = new Set<Node>();
         let ordinal = 0;
-        let cursor = parent.firstChild;
+        let cursor = nodeProperty(parent, "firstChild");
         for (const source of incoming) {
             const identity = key(source);
             const candidate =
@@ -180,25 +190,34 @@ export function morphChildren(
             retained.add(node);
             if (node !== source) {
                 if (node instanceof Element && source instanceof Element) {
-                    for (const attribute of Array.from(node.attributes))
+                    for (const attribute of Array.from(
+                        elementProperty(node, "attributes"),
+                    ))
                         if (
-                            !source.hasAttributeNS(
+                            !elementProperty(source, "hasAttributeNS").call(
+                                source,
                                 attribute.namespaceURI,
                                 attribute.localName,
                             )
                         )
-                            node.removeAttributeNS(
+                            elementProperty(node, "removeAttributeNS").call(
+                                node,
                                 attribute.namespaceURI,
                                 attribute.localName,
                             );
-                    for (const attribute of source.attributes)
+                    for (const attribute of elementProperty(
+                        source,
+                        "attributes",
+                    ))
                         if (
-                            node.getAttributeNS(
+                            elementProperty(node, "getAttributeNS").call(
+                                node,
                                 attribute.namespaceURI,
                                 attribute.localName,
                             ) !== attribute.value
                         )
-                            node.setAttributeNS(
+                            elementProperty(node, "setAttributeNS").call(
+                                node,
                                 attribute.namespaceURI,
                                 attribute.name,
                                 attribute.value,
@@ -206,22 +225,29 @@ export function morphChildren(
                     consumeOwned?.(node, source);
                     work.push({
                         parent: children(node),
-                        incoming: Array.from(children(source).childNodes),
+                        incoming: Array.from(
+                            nodeProperty(children(source), "childNodes"),
+                        ),
                     });
                 } else if (node.nodeValue !== source.nodeValue)
                     node.nodeValue = source.nodeValue;
             }
             place(parent, node, cursor);
-            cursor = node.nextSibling;
+            cursor = nodeProperty(node, "nextSibling");
         }
         for (const node of old)
-            if (!retained.has(node)) parent.removeChild(node);
+            if (!retained.has(node))
+                nodeProperty(parent, "removeChild").call(parent, node);
     }
 }
 
 export function appendChildren(target: HTMLElement, nodes: Node[]): void {
     // A fragment avoids the JavaScript argument-count limit for large batches.
-    const fragment = target.ownerDocument.createDocumentFragment();
+    const fragment = nodeProperty(
+        target,
+        "ownerDocument",
+    )!.createDocumentFragment();
     for (const node of nodes) fragment.appendChild(node);
-    children(target).appendChild(fragment);
+    const parent = children(target);
+    nodeProperty(parent, "appendChild").call(parent, fragment);
 }

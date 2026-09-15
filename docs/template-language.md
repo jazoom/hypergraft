@@ -46,6 +46,8 @@ Literal markup retains its original bytes except for generated identity attribut
 
 Implied elements receive no generated attributes. For example, a browser-created `tbody` remains unkeyed. SVG and MathML elements receive annotations only when their source contains an authored start tag.
 
+The compiler rejects markup that requires duplicated formatting elements through HTML reconstruction. Reconstruction copies identity attributes into other parent scopes. The diagnostic identifies the original start tag.
+
 Native `template` contents form a separate child sequence. Sources without document elements use template fragment context, which preserves standalone table rows and cells. Sources with authored `html`, `head` or `body` elements use document context.
 
 Typed output must suit its insertion context. The compiler cannot infer a composed template's eventual browser repair from its Rust type.
@@ -83,7 +85,9 @@ HTML-namespace `title` and `textarea` use RCDATA. They permit escaped expression
 
 The parser determines dynamic contexts from namespace and HTML tokenizer state, not local name alone. An SVG `title` therefore uses ordinary node content. Interpolation and directives in doctypes, processing instructions and foreign CDATA sections are errors.
 
-Script and style contents permit no interpolation in any namespace. Other raw-text elements permit literal content only. HTML comments permit literal content only. Template openers in these contexts produce diagnostics, not guessed escaping. This rule also rejects dynamic comment delimiters.
+Script and style contents permit no interpolation in any namespace. This restriction includes attributes on parsed descendants and nested native template contents. Quoted attributes on the script or style element itself remain eligible for interpolation.
+
+Other raw-text elements permit literal content only. HTML comments permit literal content only. Template openers in these contexts produce diagnostics, not guessed escaping. This rule also rejects dynamic comment delimiters.
 
 Literal template openers in ordinary text can use HTML character references for their braces. Raw-text source cannot use template syntax as an escape mechanism.
 
@@ -156,6 +160,10 @@ Conditional attributes cannot change HTML tree construction. The compiler requir
 - `encoding` on MathML `annotation-xml` elements.
 - `color`, `face` and `size` on foreign `font` elements outside HTML integration points.
 - `type` on `input` elements directly within table structure.
+
+The compiler also requires literal `encoding` and `type` values in those affected contexts. Literal character references remain valid. Interpolation in either complete or partial values is an error.
+
+The foreign font attributes require unconditional presence, not literal values. Their presence controls tree construction. Their quoted values can still contain expressions.
 
 Controls cannot appear in end tags.
 

@@ -230,6 +230,8 @@ Elements require equal namespace URI and local name. Text matches text and comme
 
 ## Form compatibility
 
+Form control names do not replace native DOM properties during preflight or reconciliation. A field named `childNodes` or `moveBefore` remains ordinary form data.
+
 The additional table applies only to HTML-namespace elements:
 
 | Candidate pair            | Compatibility                             |

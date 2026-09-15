@@ -324,6 +324,51 @@
             "browserReason": "target-content"
         },
         {
+            "name": "incoming empty ID with a valid marker",
+            "consumers": [
+                "browser-preflight",
+                "browser-preflight-live",
+                "browser-preflight-frame"
+            ],
+            "expectation": "protocol",
+            "browserReason": "target-content",
+            "contentInput": "<i id=\"\" data-graft-key=\"u:aa\"></i>"
+        },
+        {
+            "name": "incoming empty ID in native template contents",
+            "consumers": [
+                "browser-preflight",
+                "browser-preflight-live",
+                "browser-preflight-frame"
+            ],
+            "expectation": "protocol",
+            "browserReason": "target-content",
+            "contentInput": "<template><i id></i></template>"
+        },
+        {
+            "name": "surviving empty ID",
+            "consumers": [
+                "browser-preflight",
+                "browser-preflight-live",
+                "browser-preflight-frame"
+            ],
+            "expectation": "protocol",
+            "browserReason": "target-content",
+            "initialDocument": "<main id=\"fixture-target\"></main><aside id=\"\"></aside>",
+            "contentInput": ""
+        },
+        {
+            "name": "replacement removes an empty ID",
+            "consumers": [
+                "browser-preflight",
+                "browser-preflight-live",
+                "browser-preflight-frame"
+            ],
+            "expectation": "accept",
+            "initialDocument": "<main id=\"fixture-target\"><i id=\"\"></i></main>",
+            "contentInput": "<i></i>"
+        },
+        {
             "name": "reconciliation current duplicates",
             "consumers": ["browser-preflight"],
             "expectation": "protocol",

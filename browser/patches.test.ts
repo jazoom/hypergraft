@@ -113,11 +113,15 @@ test.each(["children", "append"])(
         document.body.innerHTML = `<div id="earlier">old</div><template id="native">${marker}${operation === "children" ? marker : ""}</template>`;
         const before = document.body.innerHTML;
         const title = document.title;
-        expect(() =>
-            preflightLive(
-                `<graft-patch-set version="1" title="changed"><graft-patch operation="children" target="earlier"><template>new</template></graft-patch><graft-patch operation="${operation}" target="native"><template>${marker}</template></graft-patch></graft-patch-set>`,
-            ),
-        ).toThrow();
+        const text = `<graft-patch-set version="1" title="changed"><graft-patch operation="children" target="earlier"><template>new</template></graft-patch><graft-patch operation="${operation}" target="native"><template>${marker}</template></graft-patch></graft-patch-set>`;
+        expect(() => preflight(response(text)[0], text)).toThrowError(
+            expect.objectContaining({
+                reason: "target-content",
+                targetId: "native",
+                message:
+                    "Invalid Hypergraft response: invalid reconciliation metadata",
+            }),
+        );
         expect(document.body.innerHTML).toBe(before);
         expect(document.title).toBe(title);
     },
@@ -125,6 +129,7 @@ test.each(["children", "append"])(
 
 type ProtocolCase = {
     initialDocument?: string;
+    contentInput?: string;
     keyInput?: string | { prefix: string; repeat: string; count: number };
     name: string;
     consumers: string[];
@@ -226,17 +231,21 @@ test("consumes named envelope conformance cases", () => {
                 document.body.innerHTML =
                     item.initialDocument ?? '<main id="fixture-target"></main>';
             }
+            let content = item.contentInput;
             if (item.keyInput !== undefined) {
                 const key =
                     typeof item.keyInput === "string"
                         ? item.keyInput
                         : item.keyInput.prefix +
                           item.keyInput.repeat.repeat(item.keyInput.count);
+                content = `<i id="valid" data-graft-key="${key}"></i>`;
+            }
+            if (content !== undefined) {
                 const phase =
                     consumer === "browser-preflight-frame"
                         ? ' phase="final"'
                         : "";
-                envelope = `<graft-patch-set version="1"${phase}><graft-patch operation="children" target="fixture-target"><template><i id="valid" data-graft-key="${key}"></i></template></graft-patch></graft-patch-set>`;
+                envelope = `<graft-patch-set version="1"${phase}><graft-patch operation="children" target="fixture-target"><template>${content}</template></graft-patch></graft-patch-set>`;
             }
             expect(envelope, item.name).toBeTypeOf("string");
             const run = () => {

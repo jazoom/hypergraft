@@ -39,6 +39,8 @@ A target identifier matches `^[A-Za-z][A-Za-z0-9_.:-]{0,127}$`.
 It is ASCII.
 It is at most 128 bytes.
 
+Every present no-namespace `id` attribute uses the same rule. An absent attribute supplies no ID. An empty incoming ID fails preflight, including inside native template contents.
+
 ## Wire limits
 
 The fixture publishes these numerical bounds:
@@ -273,6 +275,8 @@ Each case lists applicable consumers and an expectation of `accept` or `protocol
 An optional `browserReason` specifies the browser diagnostic category when it differs from that shared expectation.
 Byte-length cases generate otherwise valid inputs at the specified length.
 Control byte-length cases pad a valid terminal control with JSON whitespace.
+
+A `contentInput` case supplies patch contents for each listed browser consumer. The frame consumer adds `phase="final"` to the envelope. These cases distinguish absent IDs from empty attributes.
 
 Consumers are:
 

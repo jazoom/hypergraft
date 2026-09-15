@@ -18,6 +18,7 @@
     },
     "files": [
         "browser/diagnostics.ts",
+        "browser/dom.ts",
         "browser/events.ts",
         "browser/feedback.ts",
         "browser/index.ts",
@@ -44,6 +45,7 @@
     "scripts": {
         "test": "vitest run --config vitest.config.ts",
         "test:browser": "vitest run --config vitest.browser.config.ts",
+        "test:benchmarks": "vitest run --config vitest.benchmarks.config.ts",
         "check": "tsgo --noEmit --project tsconfig.json",
         "format": "prettier --write --cache --log-level warn .",
         "bench:server": "cargo bench --bench templates",

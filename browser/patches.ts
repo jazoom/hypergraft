@@ -1,4 +1,5 @@
 import { ID_PATTERN, addIncomingId, validateDocumentIds } from "./document-ids";
+import { elementProperty, nodeProperty } from "./dom";
 import { validateSiblingKeys } from "./identity";
 import { HypergraftError } from "./diagnostics";
 import { appendChildren, morphChildren, captureControls } from "./morph";
@@ -126,19 +127,26 @@ function inspectContent(
             fail("target-content", "node bound exceeded", targetId);
         if (depth > MAX_NESTING_DEPTH)
             fail("target-content", "depth bound exceeded", targetId);
-        if (node.nodeType !== Node.ELEMENT_NODE) {
-            for (const child of node.childNodes) walk(child, depth + 1);
+        if (nodeProperty(node, "nodeType") !== Node.ELEMENT_NODE) {
+            for (const child of nodeProperty(node, "childNodes"))
+                walk(child, depth + 1);
             return;
         }
         const element = node as Element;
-        if (element.localName.toLowerCase() === "script")
+        if (elementProperty(element, "localName").toLowerCase() === "script")
             fail("target-content", "script element", targetId);
-        if (element.id) {
-            if (!ID_PATTERN.test(element.id))
+        const id = elementProperty(element, "getAttributeNS").call(
+            element,
+            null,
+            "id",
+        );
+        if (id !== null) {
+            if (!ID_PATTERN.test(id))
                 fail("target-content", "invalid ID", targetId);
-            ids.push(element.id);
+            ids.push(id);
         }
-        for (const child of element.childNodes) walk(child, depth + 1);
+        for (const child of nodeProperty(element, "childNodes"))
+            walk(child, depth + 1);
         if (element instanceof HTMLTemplateElement)
             for (const child of element.content.childNodes)
                 walk(child, depth + 1);
@@ -332,8 +340,11 @@ function parseEnvelope(
         const target = targets[0] as HTMLElement;
         for (const previous of patches)
             if (
-                previous.target.contains(target) ||
-                target.contains(previous.target)
+                nodeProperty(previous.target, "contains").call(
+                    previous.target,
+                    target,
+                ) ||
+                nodeProperty(target, "contains").call(target, previous.target)
             )
                 fail("target-content", "overlapping targets", id);
         targetIds.add(id);
@@ -371,7 +382,7 @@ function parseEnvelope(
             const current =
                 patch.target instanceof HTMLTemplateElement
                     ? patch.target.content.childNodes
-                    : patch.target.childNodes;
+                    : nodeProperty(patch.target, "childNodes");
             if (patch.operation === "append")
                 validateSiblingKeys([...current, ...patch.nodes]);
             else {
@@ -422,7 +433,7 @@ export function apply(
     consumeOwned?: (element: Element, source: Element) => void,
 ) {
     const active = document.activeElement;
-    const focusId = active?.id;
+    const focusId = active ? elementProperty(active, "id") : undefined;
     const selection = supportsTextSelection(active)
         ? {
               start: active.selectionStart,
@@ -461,17 +472,22 @@ export function apply(
     }
     controls.restore();
     if (batch.title !== undefined) document.title = batch.title;
-    const finalControl = active?.isConnected
-        ? active
-        : focusId
-          ? document.getElementById(focusId)
-          : null;
+    const finalControl =
+        active && nodeProperty(active, "isConnected")
+            ? active
+            : focusId
+              ? document.getElementById(focusId)
+              : null;
     if (
         (finalControl instanceof HTMLElement ||
             finalControl instanceof SVGElement) &&
         document.activeElement !== finalControl
     )
-        finalControl.focus({ preventScroll: true });
+        if (finalControl instanceof HTMLFormElement)
+            HTMLElement.prototype.focus.call(finalControl, {
+                preventScroll: true,
+            });
+        else finalControl.focus({ preventScroll: true });
     if (
         supportsTextSelection(finalControl) &&
         selection !== null &&

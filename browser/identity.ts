@@ -1,3 +1,5 @@
+import { elementProperty, nodeProperty } from "./dom";
+
 export const RECONCILIATION = {
     attribute: "data-graft-key",
     format: 1,
@@ -83,12 +85,17 @@ export function validateMarker(value: string): void {
 }
 
 export function effectiveKey(element: Element): string | undefined {
-    const marker = element.getAttributeNS(null, RECONCILIATION.attribute);
+    const marker = elementProperty(element, "getAttributeNS").call(
+        element,
+        null,
+        RECONCILIATION.attribute,
+    );
     if (marker !== null) {
         validateMarker(marker);
         return `marker:${marker}`;
     }
-    return element.id ? `id:${element.id}` : undefined;
+    const id = elementProperty(element, "id");
+    return id ? `id:${id}` : undefined;
 }
 
 export function validateSiblingKeys(roots: Iterable<Node>): void {
@@ -96,7 +103,7 @@ export function validateSiblingKeys(roots: Iterable<Node>): void {
     while (scopes.length) {
         const keys = new Set<string>();
         for (const node of scopes.pop()!) {
-            if (node.nodeType === Node.ELEMENT_NODE) {
+            if (nodeProperty(node, "nodeType") === Node.ELEMENT_NODE) {
                 const element = node as Element;
                 const key = effectiveKey(element);
                 if (key !== undefined) {
@@ -106,8 +113,8 @@ export function validateSiblingKeys(roots: Iterable<Node>): void {
                 if (element instanceof HTMLTemplateElement)
                     scopes.push(Array.from(element.content.childNodes));
             }
-            if (node.childNodes.length)
-                scopes.push(Array.from(node.childNodes));
+            const children = nodeProperty(node, "childNodes");
+            if (children.length) scopes.push(Array.from(children));
         }
     }
 }

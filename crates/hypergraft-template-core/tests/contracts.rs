@@ -85,6 +85,22 @@ fn authored_markers_reject_reserved_malformed_and_over_bound_literals() {
 }
 
 #[test]
+fn reconstructed_formatting_elements_cannot_copy_source_identity() {
+    for body in ["<p><b>one</p>two</b>", "<b><p>one</b>two</p>"] {
+        let source = format!("{{% for id in [1, 2] key(id) %}}{body}{{% endfor %}}");
+        let error = parse("reconstruction.graft.html", &source)
+            .err()
+            .unwrap_or_else(|| panic!("accepted {source}"));
+        assert_eq!(error.path, "reconstruction.graft.html");
+        assert_eq!(error.offset, source.find("<b>").unwrap());
+        assert_eq!(
+            error.message,
+            "HTML reconstruction duplicates element identity"
+        );
+    }
+}
+
+#[test]
 fn html_tree_distinguishes_authored_tags_from_browser_elements() {
     let source = include_str!("fixtures/structure.graft.html");
     let document = parse("structure.graft.html", source).unwrap();
@@ -161,6 +177,75 @@ fn unsupported_contexts_fail_at_the_external_source_position() {
             error.column,
             source[..offset].chars().count() + 1,
             "{source}"
+        );
+    }
+}
+
+#[test]
+fn raw_content_rejects_nested_attribute_expressions_in_every_namespace() {
+    for namespace in ["svg", "math"] {
+        for element in ["script", "style"] {
+            for body in [
+                "<g title=\"{{ self.value }}\"></g>",
+                "<g {% if self.ready %}title=\"literal\"{% endif %}></g>",
+                "<foreignObject><template><g title=\"{{ self.value }}\"></g></template></foreignObject>",
+            ] {
+                let source = format!("<{namespace}><{element}>{body}</{element}></{namespace}>");
+                let error = parse("raw-content.graft.html", &source)
+                    .err()
+                    .unwrap_or_else(|| panic!("accepted {source}"));
+                let offset = source.find("{{").or_else(|| source.find("{%")).unwrap();
+                assert_eq!(error.path, "raw-content.graft.html");
+                assert_eq!(
+                    (error.offset, error.line, error.column),
+                    (offset, 1, offset + 1)
+                );
+            }
+            let source = format!(
+                "<{namespace}><{element} title=\"{{{{ self.value }}}}\"></{element}><g title=\"{{{{ self.value }}}}\"></g></{namespace}>"
+            );
+            assert!(
+                parse("raw-attributes.graft.html", &source).is_ok(),
+                "rejected {source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn tree_construction_values_require_literals_only_in_affected_contexts() {
+    for source in [
+        "<math><annotation-xml encoding=\"{{ self.value }}\"></annotation-xml></math>",
+        "<math><annotation-xml ENCODING='text/{{ self.value }}'></annotation-xml></math>",
+        "<table><input type=\"{{ self.value }}\"></table>",
+        "<table><tbody><input type=\"{{ self.value }}\"></tbody></table>",
+        "<table><thead><input type=\"{{ self.value }}\"></thead></table>",
+        "<table><tfoot><input type=\"{{ self.value }}\"></tfoot></table>",
+        "<table><tbody><tr><input type=\"hid{{ self.value }}\"></tr></tbody></table>",
+        "<table><input {% if self.ready %}disabled{% endif %} type=\"{{ self.value }}\"></table>",
+    ] {
+        let error = parse("structural-values.graft.html", source)
+            .err()
+            .unwrap_or_else(|| panic!("accepted {source}"));
+        assert_eq!(error.path, "structural-values.graft.html");
+        assert_eq!(error.offset, source.find("{{").unwrap());
+        assert_eq!(
+            error.message,
+            "attributes whose values control HTML tree construction require literal values"
+        );
+    }
+    for source in [
+        "<math><annotation-xml encoding=\"text/html\" title=\"{{ self.value }}\"><textarea>{{ self.value }}</textarea></annotation-xml></math>",
+        "<table><input type=\"hidden\" value=\"{{ self.value }}\"></table>",
+        "<table><input type=\"hidd&#101;n\" value=\"{{ self.value }}\"></table>",
+        "<table><tr><td><input type=\"{{ self.value }}\"></td></tr></table>",
+        "<input type=\"{{ self.value }}\">",
+        "<annotation-xml encoding=\"{{ self.value }}\"></annotation-xml>",
+        "<svg><font color=\"{{ self.value }}\" face=\"{{ self.value }}\" size=\"{{ self.value }}\"></font></svg>",
+    ] {
+        assert!(
+            parse("structural-values.graft.html", source).is_ok(),
+            "rejected {source}"
         );
     }
 }

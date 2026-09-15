@@ -273,7 +273,9 @@ An unknown cache requires successful validation of the actual document. If that 
 
 The document query excludes native template contents and shadow trees. The candidate preserves that scope. Incoming IDs still include native template contents, as production content inspection requires.
 
-Production inspection ignores empty incoming IDs. The actual-document scan rejects empty ID attributes. The candidate preserves this distinction without broader production rejection.
+The recorded comparison used the former policy that ignored empty incoming IDs. Current production and benchmark validation both reject empty ID attributes. The archived timings predate this correction.
+
+The opt-in suite in `benchmarks/id-validation.browser.test.ts` compares the candidate with production validation. The default browser contract suite excludes these benchmark tests.
 
 ### Reproduction for the ID comparison
 
@@ -286,9 +288,9 @@ mise exec -- node benchmarks/record.mjs --ids
 Run the differential contracts:
 
 ```sh
-mise exec -- pnpm test:browser browser/document-ids.browser.test.ts
-HYPERGRAFT_BROWSER=firefox mise exec -- pnpm test:browser browser/document-ids.browser.test.ts
-HYPERGRAFT_BROWSER=webkit mise exec -- pnpm test:browser browser/document-ids.browser.test.ts
+mise exec -- pnpm test:benchmarks
+HYPERGRAFT_BROWSER=firefox mise exec -- pnpm test:benchmarks
+HYPERGRAFT_BROWSER=webkit mise exec -- pnpm test:benchmarks
 ```
 
 ### Measurement boundaries and workloads

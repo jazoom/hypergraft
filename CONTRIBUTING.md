@@ -48,10 +48,16 @@ Run format and static checks:
 mise run clean
 ```
 
-Run all test suites:
+Run the production test suites:
 
 ```sh
 mise run test
+```
+
+Run the optional benchmark validation suite:
+
+```sh
+mise exec -- pnpm test:benchmarks
 ```
 
 Add a test only when it protects an invariant that the compiler cannot enforce.

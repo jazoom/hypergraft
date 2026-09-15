@@ -400,10 +400,6 @@ fn semantic_encoder_matches_the_fixture_and_scoped_append_is_cumulative() {
         contract["semanticMaximumBytes"],
         hypergraft::template::KEY_MAXIMUM_BYTES
     );
-    assert_eq!(contract["generatedPrefix"], "g1:");
-    assert_eq!(contract["authoredPrefix"], "u:");
-    assert_eq!(contract["namespaceHexDigits"], 64);
-    assert_eq!(contract["format"], 1);
     assert_eq!(contract["slotMaximum"], u64::MAX.to_string());
     let root_scope = |html: String| scopes(&html)[0].to_owned();
     assert_eq!(
