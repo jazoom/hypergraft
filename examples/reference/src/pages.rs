@@ -122,11 +122,11 @@ fn normalise_search(value: &str) -> String {
     bounded.trim_end().to_owned()
 }
 
-#[derive(Template)]
-#[template(path = "document.html")]
-struct Document<'a> {
+#[derive(hypergraft::GraftTemplate)]
+#[graft(path = "templates/document.graft.html")]
+struct Document<'a, T: hypergraft::GraftTemplate + ?Sized> {
     title: &'a str,
-    body: &'a str,
+    body: &'a T,
 }
 
 #[derive(Template)]
@@ -301,8 +301,7 @@ pub async fn task(
 }
 
 fn document(title: &str, page: &impl hypergraft::GraftTemplate) -> Result<Response, AppError> {
-    let body = hypergraft::GraftTemplate::render(page).map_err(|_| AppError::Internal)?;
-    let markup = askama::Template::render(&Document { title, body: &body })
+    let markup = hypergraft::GraftTemplate::render(&Document { title, body: page })
         .map_err(|_| AppError::Internal)?;
     let mut response = Html(markup).into_response();
     response

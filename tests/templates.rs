@@ -32,6 +32,44 @@ fn literal_raw_text_and_optional_markup_keep_source_bytes() {
     );
 }
 
+#[derive(GraftTemplate)]
+#[graft(path = "tests/templates/composition.graft.html")]
+struct Composition<'a, T: GraftTemplate + ?Sized> {
+    text: &'a str,
+    body: &'a T,
+}
+
+#[test]
+fn typed_composition_preserves_html_and_propagates_nested_errors() {
+    let mut child = Formatted::<_, ()> {
+        value: FallibleDisplay(false),
+        marker: std::marker::PhantomData,
+    };
+    let html = child.render().unwrap();
+    let shell = Composition {
+        text: "<b>data</b>",
+        body: &child as &dyn GraftTemplate,
+    };
+    assert_eq!(
+        shell.render().unwrap(),
+        format!("<main>&lt;b&gt;data&lt;/b&gt;{html}{html}</main>")
+    );
+    child.value.0 = true;
+    let shell = Composition {
+        text: "prefix",
+        body: &child,
+    };
+    assert_eq!(
+        shell.render().unwrap_err(),
+        hypergraft::TemplateError::Rendering
+    );
+    let error = hypergraft::PatchSet::new()
+        .children("main", &shell)
+        .unwrap_err();
+    assert_eq!(error.kind(), hypergraft::PatchBuildErrorKind::Rendering);
+    assert!(!error.to_string().contains("secret"));
+}
+
 struct FallibleDisplay(bool);
 
 impl std::fmt::Display for FallibleDisplay {

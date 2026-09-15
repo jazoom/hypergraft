@@ -54,6 +54,14 @@ fn unsupported_contexts_fail_at_the_external_source_position() {
         "<svg><script>{{ self.value }}</script></svg>",
         "<svg><style>{{ self.value }}</style></svg>",
         "<textarea>{% render self.value %}</textarea>",
+        "<title>{% render self.value %}</title>",
+        "<p title='{% render self.value %}'>",
+        "<p {% render self.value %}>",
+        "<{% render self.value %}>",
+        "<!-- {% render self.value %} -->",
+        "<script>{% render self.value %}</script>",
+        "<style>{% render self.value %}</style>",
+        "<svg><script>{% render self.value %}</script></svg>",
         "{% if self.value %}x{% endif %}",
         include_str!("fixtures/raw-integration.graft.html"),
     ];
@@ -76,7 +84,7 @@ fn unsupported_contexts_fail_at_the_external_source_position() {
 
 #[test]
 fn diagnostics_count_unicode_columns_and_source_lines() {
-    let error = match parse("broken.graft.html", "<p>\n🦀 {% render self.value %}") {
+    let error = match parse("broken.graft.html", "<p>\n🦀 {% unknown self.value %}") {
         Err(error) => error,
         Ok(_) => panic!("accepted unsupported directive"),
     };

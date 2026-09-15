@@ -13,6 +13,12 @@ pub trait GraftTemplate {
     }
 }
 
+impl<T: GraftTemplate + ?Sized> GraftTemplate for &T {
+    fn render_into(&self, output: &mut String) -> Result<(), TemplateError> {
+        T::render_into(*self, output)
+    }
+}
+
 /// A bounded failure without template output or evaluated data.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]

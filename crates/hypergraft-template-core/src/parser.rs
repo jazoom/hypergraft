@@ -2,6 +2,10 @@ use crate::source::Diagnostic;
 
 pub enum Part {
     Literal(String),
+    Render {
+        expression: Box<syn::Expr>,
+        offset: usize,
+    },
     Expression {
         expression: Box<syn::Expr>,
         offset: usize,
@@ -21,12 +25,12 @@ enum State {
 }
 
 // Token lengths keep delimiter-like bytes inside Rust literals and comments opaque.
-fn expression_end(source: &str) -> Option<usize> {
+fn expression_end(source: &str, delimiter: &str) -> Option<usize> {
     let mut offset = 0;
     let mut depth = 0usize;
     while offset < source.len() {
         let rest = &source[offset..];
-        if depth == 0 && rest.starts_with("}}") {
+        if depth == 0 && rest.starts_with(delimiter) {
             return Some(offset);
         }
         // This lexer predates C strings. Their raw delimiters match Rust raw strings.
@@ -64,12 +68,40 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
     while i < bytes.len() {
         let rest = &source[i..];
         if rest.starts_with("{%") {
-            return Err(Diagnostic::new(
-                path,
-                source,
-                i,
-                "directives are not supported yet",
-            ));
+            if !matches!(state, State::Text) {
+                return Err(Diagnostic::new(
+                    path,
+                    source,
+                    i,
+                    "composition requires ordinary node content",
+                ));
+            }
+            let end = expression_end(&source[i + 2..], "%}")
+                .ok_or_else(|| Diagnostic::new(path, source, i, "unterminated directive"))?
+                + i
+                + 2;
+            let directive = source[i + 2..end].trim();
+            let expression = directive
+                .strip_prefix("render")
+                .filter(|rest| rest.starts_with(char::is_whitespace))
+                .ok_or_else(|| Diagnostic::new(path, source, i, "unsupported directive"))?;
+            let expression = syn::parse_str(expression.trim()).map_err(|error| {
+                Diagnostic::new(
+                    path,
+                    source,
+                    i,
+                    &format!("invalid Rust expression: {error}"),
+                )
+            })?;
+            parts.push(Part::Literal(source[start..i].into()));
+            parts.push(Part::Render {
+                expression: Box::new(expression),
+                offset: i,
+            });
+            replacements.push((i..end + 2, format!("{expression_marker}{i}_")));
+            i = end + 2;
+            start = i;
+            continue;
         }
         if rest.starts_with("{{") {
             if !matches!(state, State::Text | State::Quoted(_) | State::Rcdata) {
@@ -80,7 +112,7 @@ pub fn parse(path: &str, source: &str) -> Result<Document, Diagnostic> {
                     "interpolation is not supported in this HTML context",
                 ));
             }
-            let end = expression_end(&source[i + 2..])
+            let end = expression_end(&source[i + 2..], "}}")
                 .ok_or_else(|| Diagnostic::new(path, source, i, "unterminated Rust expression"))?
                 + i
                 + 2;

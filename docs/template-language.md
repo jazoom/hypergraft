@@ -213,13 +213,17 @@ Compiler-owned diagnostics include the normalised template path and one-based li
 
 The compiler core stores expression offsets and authored start-tag ranges. Its HTML tree distinguishes authored elements from implied browser elements through a private parse copy. That copy never enters rendered output.
 
-The derive emits each expression as a borrowed formatting argument inside `render_into`. `syn` parses the extracted Rust tokens. The generated code calls the runtime escape writer directly, without clones or a helper registry.
+The derive emits each escaped expression as a borrowed formatting argument inside `render_into`. `syn` parses the extracted Rust tokens. The generated code calls the runtime escape writer directly, without clones or a helper registry.
 
 Generated output uses a hygienic local name and fully qualified standard types. Application type parameters therefore cannot replace the generated `String` or `Result` types. A `Display` failure propagates as the bounded `TemplateError::Rendering` value.
 
 Compiler diagnostics attach the normalised path and one-based source position to the derive's path attribute. File-read failures use position `1:1`. Generated Rust type errors can point at the derive rather than the external expression. Native template spans are not guaranteed.
 
 Each derive emits an `include_str!` reference relative to `CARGO_MANIFEST_DIR`. Cargo therefore tracks the external source without a build script. Dependency aliases resolve through Cargo metadata. Logical paths exclude absolute checkout locations.
+
+Typed composition now emits direct `GraftTemplate::render_into` calls. Generic fields and borrowed templates retain their Rust bounds without clones. Reference values delegate to their underlying template. Ordinary string interpolation remains escaped, and strings do not implement the template interface. Explicit composition scopes remain a later compiler increment.
+
+The isolated consumer test uses a renamed dependency and one separate target directory for successive offline builds. Changes to the direct source and the composed child source each change executable output without Rust source edits.
 
 The initial language excludes:
 

@@ -9,6 +9,9 @@ pub fn generate(
 ) -> TokenStream {
     let statements = document.parts.iter().map(|part| match part {
         Part::Literal(text) => quote! { #output.push_str(#text); },
+        Part::Render { expression, .. } => quote! {
+            #runtime::GraftTemplate::render_into(&(#expression), #output)?;
+        },
         Part::Expression { expression, .. } => quote! {
             #runtime::template::write_escaped(#output, &(#expression))?;
         },
