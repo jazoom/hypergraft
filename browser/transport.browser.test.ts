@@ -257,6 +257,129 @@ test("multi-target preflight restores focus by stable ID", () => {
     expect(document.getElementById("other-result")).not.toBeNull();
 });
 
+function focusBatch(content: string) {
+    const text = `<graft-patch-set version="1"><graft-patch operation="children" target="command"><template>${content}</template></graft-patch></graft-patch-set>`;
+    const prepared = preflight(
+        new Response(text, { headers: { "content-type": MEDIA_TYPE } }),
+        text,
+    );
+    if (prepared.kind !== "patches")
+        throw new Error("Expected prepared patches");
+    return prepared.batch;
+}
+
+test.each(["input", "textarea"])(
+    "retained no-ID %s restores directional selection after focus loss",
+    (tag) => {
+        const markup =
+            tag === "input"
+                ? '<input data-graft-key="u:aa" value="abcdef">'
+                : '<textarea data-graft-key="u:aa">abcdef</textarea>';
+        document.getElementById("command")!.innerHTML = markup;
+        document.getElementById("secondary")!.innerHTML = markup;
+        const control = document.querySelector<
+            HTMLInputElement | HTMLTextAreaElement
+        >(`#command ${tag}`)!;
+        control.focus();
+        control.setSelectionRange(1, 5, "backward");
+        const focus = vi.spyOn(control, "focus");
+        let visited = false;
+        apply(focusBatch(markup.replace("abcdef", "abc")), (element) => {
+            if (element === control) {
+                visited = true;
+                control.blur();
+            }
+        });
+        expect(visited).toBe(true);
+        expect(document.activeElement).toBe(control);
+        expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+        expect(control.value).toBe("abc");
+        expect([
+            control.selectionStart,
+            control.selectionEnd,
+            control.selectionDirection,
+        ]).toEqual([1, 3, "backward"]);
+    },
+);
+
+test("retained focus follows an authored ID change without redundant focus", () => {
+    const markup = '<input id="original" value="abcdef">';
+    document.getElementById("command")!.innerHTML = markup;
+    const control = document.querySelector<HTMLInputElement>("#command input")!;
+    control.focus();
+    const focus = vi.spyOn(control, "focus");
+    apply(focusBatch(markup));
+    expect(focus).not.toHaveBeenCalled();
+    let visited = false;
+    apply(focusBatch(markup), (element) => {
+        if (element === control) {
+            visited = true;
+            // Morphlex does not retain controls across authored ID changes.
+            // Simulate that retained-node visit without a new correspondence engine.
+            control.id = "changed";
+            document.getElementById("secondary")!.innerHTML = markup;
+            control.blur();
+        }
+    });
+    expect(visited).toBe(true);
+    expect(control.id).toBe("changed");
+    expect(document.activeElement).toBe(control);
+});
+
+test("removed controls never restore focus through private keys under another parent", () => {
+    const markup = '<input data-graft-key="u:aa" value="abcdef">';
+    document.getElementById("command")!.innerHTML = markup;
+    document.getElementById("secondary")!.innerHTML = markup;
+    const control = document.querySelector<HTMLInputElement>("#command input")!;
+    control.focus();
+    apply(focusBatch("<p>Removed</p>"));
+    expect(control.isConnected).toBe(false);
+    expect(document.activeElement).toBe(document.body);
+});
+
+test("public-ID fallback restores directional selection on a shorter replacement", () => {
+    document.getElementById("command")!.innerHTML =
+        '<input id="control" value="abcdef">';
+    const control = document.querySelector<HTMLInputElement>("#command input")!;
+    control.focus();
+    control.setSelectionRange(1, 5, "backward");
+    apply(focusBatch('<textarea id="control">abc</textarea>'));
+    const replacement =
+        document.querySelector<HTMLTextAreaElement>("#command textarea")!;
+    expect(control.isConnected).toBe(false);
+    expect(document.activeElement).toBe(replacement);
+    expect([
+        replacement.selectionStart,
+        replacement.selectionEnd,
+        replacement.selectionDirection,
+    ]).toEqual([1, 3, "backward"]);
+});
+
+test("public-ID fallback restores a replacement but skips unsupported selection APIs", () => {
+    document.getElementById("command")!.innerHTML =
+        '<textarea id="control">abcdef</textarea>';
+    const control =
+        document.querySelector<HTMLTextAreaElement>("#command textarea")!;
+    control.focus();
+    control.setSelectionRange(2, 5, "backward");
+    apply(focusBatch('<input id="control" type="number" value="12">'));
+    const replacement =
+        document.querySelector<HTMLInputElement>("#command input")!;
+    expect(control.isConnected).toBe(false);
+    expect(document.activeElement).toBe(replacement);
+    const selection = vi.spyOn(replacement, "setSelectionRange");
+    const getter = vi.spyOn(replacement, "selectionStart", "get");
+    apply(
+        focusBatch('<input id="control" type="number" value="1">'),
+        (element) => {
+            if (element === replacement) replacement.blur();
+        },
+    );
+    expect(document.activeElement).toBe(replacement);
+    expect(getter).not.toHaveBeenCalled();
+    expect(selection).not.toHaveBeenCalled();
+});
+
 test.each(["get", "post"])(
     "an applied %s patch clears pending ARIA before settlement",
     async (method) => {

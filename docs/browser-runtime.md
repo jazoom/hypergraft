@@ -82,6 +82,10 @@ Cleanup finishes before request settlement reaches host listeners. Retained subm
 
 ## Settlement
 
+Patch application restores focus through the original active node reference when that node survives, including controls without IDs or with changed IDs. Only removal permits the public-ID fallback. Private keys never act as document-global focus selectors.
+
+Restoration avoids redundant focus calls and prevents scroll changes. Supported text inputs and textareas retain selection direction, with offsets clamped to the final authoritative value.
+
 Applied navigation focuses the first patched target when that target is programmatically focusable. It then scrolls the window to `(0, 0)`. Version 1 does not restore history scroll positions. After a children patch, the previous offset belongs to different content.
 
 A streamed form request emits `hypergraft:progress` after each applied progress frame. It sets `data-graft-progress` on the form until pending state is restored. It emits `hypergraft:requestsettled` only after the final frame, a clean end of body, and final pending state.

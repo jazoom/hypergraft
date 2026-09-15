@@ -428,42 +428,59 @@ function parseEnvelope(
     };
 }
 
+function supportsTextSelection(
+    element: Element | null,
+): element is HTMLInputElement | HTMLTextAreaElement {
+    return (
+        element instanceof HTMLTextAreaElement ||
+        (element instanceof HTMLInputElement &&
+            ["text", "search", "tel", "url", "password"].includes(element.type))
+    );
+}
+
 export function apply(
     batch: PreparedBatch,
     // The source distinguishes authored attributes from the pending overlay.
     // The live DOM alone cannot establish ownership, even after a morph.
     consumeOwned?: (element: Element, source: Element) => void,
 ) {
-    const active = document.activeElement as
-        HTMLInputElement | HTMLTextAreaElement | null;
+    const active = document.activeElement;
     const focusId = active?.id;
-    const start = active?.selectionStart;
-    const end = active?.selectionEnd;
+    const selection = supportsTextSelection(active)
+        ? {
+              start: active.selectionStart,
+              end: active.selectionEnd,
+              direction: active.selectionDirection,
+          }
+        : null;
     for (const patch of batch.patches) {
         if (patch.operation === "append")
             appendChildren(patch.target, patch.nodes);
         else morphChildren(patch.target, patch.nodes, consumeOwned);
     }
     if (batch.title !== undefined) document.title = batch.title;
-    if (focusId) {
-        const finalControl = document.getElementById(focusId) as
-            HTMLInputElement | HTMLTextAreaElement | null;
-        finalControl?.focus({ preventScroll: true });
-        if (
-            finalControl &&
-            start !== null &&
-            start !== undefined &&
-            end !== null &&
-            end !== undefined
-        )
-            try {
-                const length = finalControl.value.length;
-                finalControl.setSelectionRange(
-                    Math.min(start, length),
-                    Math.min(end, length),
-                );
-            } catch {
-                /* Not a text control. */
-            }
+    const finalControl = active?.isConnected
+        ? active
+        : focusId
+          ? document.getElementById(focusId)
+          : null;
+    if (
+        (finalControl instanceof HTMLElement ||
+            finalControl instanceof SVGElement) &&
+        document.activeElement !== finalControl
+    )
+        finalControl.focus({ preventScroll: true });
+    if (
+        supportsTextSelection(finalControl) &&
+        selection !== null &&
+        selection.start !== null &&
+        selection.end !== null
+    ) {
+        const length = finalControl.value.length;
+        finalControl.setSelectionRange(
+            Math.min(selection.start, length),
+            Math.min(selection.end, length),
+            selection.direction ?? undefined,
+        );
     }
 }
