@@ -105,9 +105,9 @@ If an exception occurs after preflight, earlier morph work in that batch remains
 
 ## Planned reconciliation metadata
 
-[Template identity](template-identity.md) specifies the approved HTML identity contract and proposed `reconciliation` fixture section. [Template language](template-language.md) specifies its compiler producer.
+[Template identity](template-identity.md) specifies the approved HTML identity contract and active `reconciliation` fixture section. [Template language](template-language.md) specifies its compiler producer.
 
-This specification does not activate key validation. The preflight task updates `protocol-v1.json` and its first runtime consumers together, before automatic annotations enter production output.
+Browser preflight enforces this fixture revision before automatic annotations enter production output.
 
 The coordinated migration retains version `1`, both operations and all existing resource limits. Generated metadata consumes the existing response byte budget. The new decoded marker bound is separate from those unchanged budgets.
 
@@ -288,3 +288,15 @@ Consumers are:
 Tests feed those cases to production parsers and builders.
 They do not add a second conformance codec.
 Browser control tests assert only messages that the runtime sends.
+
+## Active identity preflight
+
+The runtime rejects malformed reconciliation markers and duplicate sibling keys before application. Marker validation precedes ID fallback.
+
+The 1024-byte decoded metadata bound and canonical encoding follow [template identity](template-identity.md). Native template contents form separate sibling scopes. Append validation includes surviving children.
+
+All host content callbacks finish before the final fragment inspection. Key failures use the bounded `target-content` diagnostic without HTML or evaluated keys. Document-wide ID validation remains independent.
+
+Compiler and runtime deployments require the same reconciliation fixture revision before generated markers enter production output. Protocol version, operations and transport limits remain unchanged.
+
+Morphlex remains the correspondence engine. This validation does not provide the specified sibling-local reconciliation behaviour.

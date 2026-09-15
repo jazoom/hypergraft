@@ -1,3 +1,4 @@
+import { validateSiblingKeys } from "./identity";
 import { HypergraftError } from "./diagnostics";
 import { appendChildren, morphChildren } from "./morph";
 
@@ -313,6 +314,7 @@ function parseEnvelope(
     const targetIds = new Set<string>();
     const insertionIds = new Set<string>();
     const patches: PreparedBatch["patches"] = [];
+    const fragments: DocumentFragment[] = [];
     let nodeCount = 0;
     for (const patch of patchElements) {
         attributes(patch, new Set(["operation", "target"]));
@@ -350,12 +352,46 @@ function parseEnvelope(
                 fail("target-content", "duplicate inserted ID", id);
             insertionIds.add(insertedId);
         }
+        fragments.push(clone);
         patches.push({
             target,
             targetId: id,
             operation: operation as PatchOperation,
             nodes: [...clone.childNodes],
         });
+    }
+    // Host callbacks can retain and mutate earlier fragments.
+    insertionIds.clear();
+    nodeCount = 0;
+    for (const [index, patch] of patches.entries()) {
+        const fragment = fragments[index]!;
+        const inspected = inspectContent(fragment, patch.targetId);
+        nodeCount += inspected.count;
+        if (nodeCount > MAX_INSERTED_NODES)
+            fail("target-content", "node bound exceeded", patch.targetId);
+        patch.nodes = [...fragment.childNodes];
+        try {
+            if (patch.operation === "append")
+                validateSiblingKeys([
+                    ...patch.target.childNodes,
+                    ...patch.nodes,
+                ]);
+            else {
+                validateSiblingKeys(patch.target.childNodes);
+                validateSiblingKeys(patch.nodes);
+            }
+        } catch {
+            fail(
+                "target-content",
+                "invalid reconciliation metadata",
+                patch.targetId,
+            );
+        }
+        for (const id of inspected.ids) {
+            if (insertionIds.has(id))
+                fail("target-content", "duplicate inserted ID", patch.targetId);
+            insertionIds.add(id);
+        }
     }
     const survivingIds = new Set<string>();
     for (const element of liveDocument.querySelectorAll("[id]")) {

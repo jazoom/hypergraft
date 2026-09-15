@@ -2,7 +2,7 @@
 
 ## Status and boundaries
 
-This normative target contract accompanies [Template language](template-language.md). It specifies future compiler and runtime behaviour, not the current Morphlex implementation.
+This normative target contract accompanies [Template language](template-language.md). Browser preflight enforces its key validation rules. The compiler and correspondence rules remain future work, not guarantees of the current Morphlex implementation.
 
 Complete `children` output describes authoritative contents of a retained target. `append` remains cumulative. Neither endpoint retains a previous DOM snapshot or per-client baseline.
 
@@ -232,9 +232,9 @@ Fallback moves preserve retained object identity, not every native state. Focus 
 
 Island instances follow root object identity. A retained root keeps its instance while server-authored descendants reconcile. Removal, replacement or an island-name change ends the old lifetime with abort before destruction.
 
-## Proposed fixture revision
+## Reconciliation fixture
 
-The preflight task adds this `reconciliation` section with its first runtime consumers. This document does not change `protocol-v1.json`.
+The executable `protocol-v1.json` fixture contains this `reconciliation` section. Browser preflight consumes its encoding and validation contract.
 
 ```json
 {

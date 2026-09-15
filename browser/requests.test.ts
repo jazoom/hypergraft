@@ -2147,3 +2147,23 @@ test("a final frame outside the form preserves attributes from progress", async 
     expect(button.hasAttribute("data-graft-submitter-pending")).toBe(false);
     expect(element.hasAttribute("aria-busy")).toBe(false);
 });
+
+test.each(["get", "post"])("rejects invalid keys after %s", async (method) => {
+    vi.mocked(fetch).mockResolvedValue(
+        patch('<i data-graft-key="invalid"></i>'),
+    );
+    const element = form();
+    element.method = method;
+    const details = collectDiagnostics();
+    submit(element);
+    await flush();
+    expect(details).toEqual(
+        expect.arrayContaining([
+            expect.objectContaining({ reason: "target-content" }),
+        ]),
+    );
+    expect(element.hasAttribute("data-graft-uncertain")).toBe(
+        method === "post",
+    );
+    expect(document.querySelector("[data-graft-key]")).toBeNull();
+});

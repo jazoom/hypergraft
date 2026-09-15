@@ -821,3 +821,30 @@ test("discovers at most 64 live forms", async () => {
     const socket = MockSocket.instances[0]!;
     await vi.waitFor(() => expect(socket.sent).toHaveLength(64));
 });
+
+test("rejects live key metadata without an applied event", async () => {
+    liveForm("one", "/items", "item-results");
+    const applied = vi.fn();
+    document.addEventListener(LIVE_PATCH_EVENT, applied);
+    try {
+        cleanup = startHypergraft();
+        await vi.waitFor(() => expect(MockSocket.instances).toHaveLength(1));
+        const socket = MockSocket.instances[0]!;
+        await vi.waitFor(() => expect(socket.sent).toHaveLength(1));
+        socket.receive(
+            1,
+            envelope("item-results", '<p data-graft-key="invalid">Bad</p>'),
+        );
+        expect(
+            socket.sent.map((message) => JSON.parse(message)),
+        ).toContainEqual({
+            v: "1",
+            type: "unsubscribe",
+            id: 1,
+        });
+        expect(applied).not.toHaveBeenCalled();
+        expect(document.querySelector("[data-graft-key]")).toBeNull();
+    } finally {
+        document.removeEventListener(LIVE_PATCH_EVENT, applied);
+    }
+});

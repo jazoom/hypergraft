@@ -25,6 +25,7 @@
         "browser/live.ts",
         "browser/morph.ts",
         "browser/patches.ts",
+        "browser/identity.ts",
         "browser/requests.ts",
         "browser/stream.ts",
         "LICENSE-APACHE",

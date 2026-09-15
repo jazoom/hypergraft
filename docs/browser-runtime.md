@@ -254,3 +254,15 @@ startHypergraft({ islands: { "position-preview": initPositionPreview } });
 ```
 
 Reconciliation re-reads the server-rendered root. It does not infer completion from DOM changes. Standalone integrations can instead use `observeIslands` and its returned cleanup function.
+
+## Active identity preflight
+
+The runtime rejects malformed reconciliation markers and duplicate sibling keys before application. Marker validation precedes ID fallback.
+
+The 1024-byte decoded metadata bound and canonical encoding follow [template identity](template-identity.md). Native template contents form separate sibling scopes. Append validation includes surviving children.
+
+All host content callbacks finish before the final fragment inspection. Key failures use the bounded `target-content` diagnostic without HTML or evaluated keys. Document-wide ID validation remains independent.
+
+Compiler and runtime deployments require the same reconciliation fixture revision before generated markers enter production output. Protocol version, operations and transport limits remain unchanged.
+
+Morphlex remains the correspondence engine. This validation does not provide the specified sibling-local reconciliation behaviour.

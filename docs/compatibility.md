@@ -17,13 +17,13 @@ Identity metadata stays inside HTML content. This plan changes no wire version, 
 
 This decision does not claim transparent mixed-runtime compatibility. Older runtimes do not enforce the marker contract. Morphlex does not implement the specified sibling-local correspondence. Previously accepted arbitrary marker values can fail the new validator.
 
-The preflight task changes the canonical fixture and its first runtime consumers together. Automatic compiler annotations enter production only after that validation boundary. Compiler and browser releases must use the same fixture revision.
+Browser preflight now enforces the canonical fixture's reconciliation metadata rules. Automatic compiler annotations enter production only after that validation boundary. Compiler and browser releases must use the same fixture revision.
 
 Deployment must replace cached browser bundles with the matching runtime before annotated output becomes active. Open documents also need a reload into that matched deployment. A cache update alone does not replace an active runtime.
 
 Existing authored markers must satisfy the new encoding before key validation becomes active. Current-subtree validation also rejects invalid markers in contents that a patch replaces. Such documents need a full reload with valid markup, not a repair patch.
 
-The specification task leaves executable fixtures and runtime behaviour unchanged. The later reconciler replacement records observable differences before it becomes supported behaviour. These include positional unkeyed correspondence and authoritative control properties.
+Morphlex remains the correspondence engine. The later reconciler replacement records observable differences before it becomes supported behaviour. These include positional unkeyed correspondence and authoritative control properties.
 
 If implementation reveals a wire incompatibility beyond this coordinated metadata contract, dependent work must stop until explicit approval of a protocol version change.
 
