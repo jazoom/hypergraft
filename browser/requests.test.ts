@@ -1997,24 +1997,6 @@ test("an applied command restores submitter state when the patch leaves it unown
     expect(button.hasAttribute("data-graft-submitter-pending")).toBe(false);
 });
 
-test("children-only output does not author the target pending overlay", async () => {
-    const element = panelForm('<button id="save" type="submit">Save</button>', {
-        "aria-busy": "polite",
-    });
-    const button = element.querySelector<HTMLButtonElement>("#save")!;
-    vi.mocked(fetch).mockResolvedValue(
-        new Response(
-            '<graft-patch-set version="1"><graft-patch operation="children" target="task-create"><template><button id="save" type="submit">Save</button></template></graft-patch></graft-patch-set>',
-            { headers: { "Content-Type": MEDIA_TYPE } },
-        ),
-    );
-    submit(element, button);
-    await flush();
-    expect(element.getAttribute("aria-busy")).toBe("polite");
-    expect(element.hasAttribute("data-graft-pending")).toBe(false);
-    expect(button.disabled).toBe(false);
-});
-
 test("a failed command restores original submitter state when nothing applied", async () => {
     vi.mocked(fetch).mockRejectedValue(new TypeError("offline"));
     const element = panelForm(
@@ -2164,24 +2146,4 @@ test("a final frame outside the form preserves attributes from progress", async 
     expect(button.getAttribute("aria-disabled")).toBe("false");
     expect(button.hasAttribute("data-graft-submitter-pending")).toBe(false);
     expect(element.hasAttribute("aria-busy")).toBe(false);
-});
-
-test.each(["get", "post"])("rejects invalid keys after %s", async (method) => {
-    vi.mocked(fetch).mockResolvedValue(
-        patch('<i data-graft-key="invalid"></i>'),
-    );
-    const element = form();
-    element.method = method;
-    const details = collectDiagnostics();
-    submit(element);
-    await flush();
-    expect(details).toEqual(
-        expect.arrayContaining([
-            expect.objectContaining({ reason: "target-content" }),
-        ]),
-    );
-    expect(element.hasAttribute("data-graft-uncertain")).toBe(
-        method === "post",
-    );
-    expect(document.querySelector("[data-graft-key]")).toBeNull();
 });

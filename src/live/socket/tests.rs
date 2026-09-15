@@ -18,8 +18,8 @@ impl LiveGuard for UnitGuard {
     }
 }
 
-#[derive(crate::GraftTemplate)]
-#[graft(path = "tests/templates/row.graft.html")]
+#[derive(askama::Template)]
+#[template(source = "row", ext = "html")]
 struct Content;
 
 #[tokio::test]

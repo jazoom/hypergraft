@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, expect, test, vi } from "vitest";
 import fixture from "../protocol-v1.json";
-import templates from "./fixtures/templates.json";
 import {
     apply,
     GRAFT_TRANSFER,
@@ -24,117 +23,13 @@ import {
     STREAM_STATUSES,
 } from "./patches";
 
-import { RECONCILIATION } from "./identity";
-
-test("compiled page and narrow blocks share keys and pass preflight", () => {
-    document.body.innerHTML = templates.page + '<div id="append"></div>';
-    const results = document.getElementById("results")!;
-    const row = document.getElementById("row-1")!;
-    const keys = (root: ParentNode) =>
-        Array.from(root.querySelectorAll("[data-graft-key]"), (element) =>
-            element.getAttribute("data-graft-key"),
-        );
-    const prepare = (html: string, target: string) => {
-        const patch = preflightLive(
-            `<graft-patch-set version="1"><graft-patch operation="children" target="${target}"><template>${html}</template></graft-patch></graft-patch-set>`,
-        ).patches[0]!;
-        const fragment = document.createDocumentFragment();
-        fragment.append(...patch.nodes);
-        return { fragment };
-    };
-    expect(keys(prepare(templates.results, "results").fragment)).toEqual(
-        keys(results),
-    );
-    expect(keys(prepare(templates.row, "row-1").fragment)).toEqual(keys(row));
-    expect(keys(prepare(templates.status, "append").fragment)).toEqual(
-        keys(row.querySelector("aside")!),
-    );
-    expect(
-        keys(prepare(templates.reordered, "results").fragment).sort(),
-    ).toEqual(keys(results).sort());
-    expect(() => preflightLive(templates.rowPatch)).not.toThrow();
-    expect(() => prepare(templates.siblings, "append")).not.toThrow();
-    expect(keys(prepare(templates.alternative, "append").fragment)).not.toEqual(
-        keys(row.querySelector("aside")!),
-    );
-    const target = document.getElementById("append")!;
-    for (const fragment of templates.append) {
-        expect(() => preflightLive(fragment.envelope)).not.toThrow();
-        target.insertAdjacentHTML("beforeend", fragment.html);
-        expect(() => preflightLive(fragment.envelope)).toThrow();
-    }
-});
-
-test("compiled snapshots and blocks retain actual keyed nodes", () => {
-    document.body.innerHTML = templates.page + '<div id="append"></div>';
-    const row = document.getElementById("row-1")!;
-    const contents = row.firstElementChild;
-    apply(preflightLive(templates.rowPatch));
-    expect(document.getElementById("row-1")).toBe(row);
-    expect(row.firstElementChild).toBe(contents);
-    apply(
-        preflightLive(
-            `<graft-patch-set version="1"><graft-patch operation="children" target="results"><template>${templates.reordered}</template></graft-patch></graft-patch-set>`,
-        ),
-    );
-    expect(document.getElementById("row-1")).toBe(row);
-    expect(row.firstElementChild).toBe(contents);
-    const appended: Node[] = [];
-    for (const fragment of templates.append) {
-        apply(preflightLive(fragment.envelope));
-        for (const node of appended) expect(node.isConnected).toBe(true);
-        appended.push(document.getElementById("append")!.lastChild!);
-    }
-    apply(
-        preflightLive(
-            `<graft-patch-set version="1"><graft-patch operation="children" target="append"><template>${templates.siblings}</template></graft-patch></graft-patch-set>`,
-        ),
-    );
-    expect(Array.from(document.getElementById("append")!.childNodes)).toEqual(
-        appended,
-    );
-    const status = row.querySelector("aside")!;
-    const previous = status.firstElementChild;
-    status.id = "status";
-    apply(
-        preflightLive(
-            `<graft-patch-set version="1"><graft-patch operation="children" target="status"><template>${templates.alternative}</template></graft-patch></graft-patch-set>`,
-        ),
-    );
-    expect(status.firstElementChild).not.toBe(previous);
-    expect(previous!.isConnected).toBe(false);
-    expect(status.textContent).toBe("Inactive");
-});
-
-test.each(["children", "append"])(
-    "native template targets reject %s key collisions before any mutation",
-    (operation) => {
-        const marker = '<b data-graft-key="u:61"></b>';
-        document.body.innerHTML = `<div id="earlier">old</div><template id="native">${marker}${operation === "children" ? marker : ""}</template>`;
-        const before = document.body.innerHTML;
-        const title = document.title;
-        const text = `<graft-patch-set version="1" title="changed"><graft-patch operation="children" target="earlier"><template>new</template></graft-patch><graft-patch operation="${operation}" target="native"><template>${marker}</template></graft-patch></graft-patch-set>`;
-        expect(() => preflight(response(text)[0], text)).toThrowError(
-            expect.objectContaining({
-                reason: "target-content",
-                targetId: "native",
-                message:
-                    "Invalid Hypergraft response: invalid reconciliation metadata",
-            }),
-        );
-        expect(document.body.innerHTML).toBe(before);
-        expect(document.title).toBe(title);
-    },
-);
-
 type ProtocolCase = {
-    initialDocument?: string;
-    contentInput?: string;
-    keyInput?: string | { prefix: string; repeat: string; count: number };
     name: string;
     consumers: string[];
     expectation: "accept" | "protocol";
     envelope?: string;
+    initialDocument?: string;
+    contentInput?: string;
     idByteLength?: number;
     browserReason?: "target-content";
 };
@@ -158,7 +53,6 @@ beforeEach(() => {
 });
 
 test("matches the shared version one fixture", () => {
-    expect(RECONCILIATION).toEqual(fixture.reconciliation);
     expect(PROTOCOL_VERSION).toBe(fixture.version);
     expect(MEDIA_TYPE).toBe(fixture.mediaType);
     expect(PATCH_STATUSES).toEqual(fixture.patchStatuses);
@@ -231,21 +125,12 @@ test("consumes named envelope conformance cases", () => {
                 document.body.innerHTML =
                     item.initialDocument ?? '<main id="fixture-target"></main>';
             }
-            let content = item.contentInput;
-            if (item.keyInput !== undefined) {
-                const key =
-                    typeof item.keyInput === "string"
-                        ? item.keyInput
-                        : item.keyInput.prefix +
-                          item.keyInput.repeat.repeat(item.keyInput.count);
-                content = `<i id="valid" data-graft-key="${key}"></i>`;
-            }
-            if (content !== undefined) {
+            if (item.contentInput !== undefined) {
                 const phase =
                     consumer === "browser-preflight-frame"
                         ? ' phase="final"'
                         : "";
-                envelope = `<graft-patch-set version="1"${phase}><graft-patch operation="children" target="fixture-target"><template>${content}</template></graft-patch></graft-patch-set>`;
+                envelope = `<graft-patch-set version="1"${phase}><graft-patch operation="children" target="fixture-target"><template>${item.contentInput}</template></graft-patch></graft-patch-set>`;
             }
             expect(envelope, item.name).toBeTypeOf("string");
             const run = () => {
@@ -268,6 +153,69 @@ test("consumes named envelope conformance cases", () => {
     }
     expect(count).toBeGreaterThan(0);
 });
+
+test.each(["<script></script>", "<div>".repeat(MAX_NESTING_DEPTH + 1)])(
+    "inspects content before the host callback: %s",
+    (content) => {
+        const callback = vi.fn();
+        const text = `<graft-patch-set version="1"><graft-patch operation="children" target="patient-results"><template>${content}</template></graft-patch></graft-patch-set>`;
+        expect(() =>
+            preflight(response(text)[0], text, document, callback),
+        ).toThrowError(expect.objectContaining({ reason: "target-content" }));
+        expect(callback).not.toHaveBeenCalled();
+    },
+);
+
+test("applies the final fragment roots after host callbacks", () => {
+    document.body.innerHTML = '<main id="a"></main><aside id="b"></aside>';
+    const text =
+        '<graft-patch-set version="1"><graft-patch operation="children" target="a"><template>Original</template></graft-patch><graft-patch operation="children" target="b"><template></template></graft-patch></graft-patch-set>';
+    let first: DocumentFragment | undefined;
+    const replacement = document.createElement("p");
+    replacement.textContent = "Final";
+    const callback = vi.fn((fragment: DocumentFragment) => {
+        if (!first) first = fragment;
+        else first.replaceChildren(replacement);
+    });
+    const prepared = preflight(response(text)[0], text, document, callback);
+    if (prepared.kind === "patches") apply(prepared.batch);
+    expect(callback).toHaveBeenCalledTimes(2);
+    expect(document.querySelector("#a > p")?.textContent).toBe("Final");
+});
+
+test.each(["script", "id", "empty-id", "depth", "duplicate"])(
+    "reinspects earlier fragments after callbacks: %s",
+    (kind) => {
+        document.body.innerHTML =
+            '<main id="a">Before</main><aside id="b">Before</aside>';
+        const text =
+            '<graft-patch-set version="1" title="After"><graft-patch operation="children" target="a"><template><p>Ready</p></template></graft-patch><graft-patch operation="children" target="b"><template><p>Ready</p></template></graft-patch></graft-patch-set>';
+        let first: DocumentFragment | undefined;
+        const callback = vi.fn((fragment: DocumentFragment) => {
+            if (!first) {
+                first = fragment;
+                return;
+            }
+            if (kind === "script")
+                first.append(document.createElement("script"));
+            else if (kind === "depth") {
+                let parent: Node = first;
+                for (let i = 0; i <= MAX_NESTING_DEPTH; i++)
+                    parent = parent.appendChild(document.createElement("div"));
+            } else if (kind === "duplicate") {
+                first.firstElementChild!.id = "duplicate";
+                first.append(first.firstElementChild!.cloneNode(true));
+            } else first.firstElementChild!.id = kind === "empty-id" ? "" : "!";
+        });
+        expect(() =>
+            preflight(response(text)[0], text, document, callback),
+        ).toThrowError(expect.objectContaining({ reason: "target-content" }));
+        expect(callback).toHaveBeenCalledTimes(2);
+        expect(document.getElementById("a")!.textContent).toBe("Before");
+        expect(document.getElementById("b")!.textContent).toBe("Before");
+        expect(document.title).toBe("Before");
+    },
+);
 
 test("preflights and applies a children batch", () => {
     const [reply, text] = response(
@@ -407,28 +355,12 @@ test.each([
     expect(document.body.innerHTML).toBe(before);
 });
 
-test.each([
-    ["<script>bad()</script>", "script element"],
-    [
-        '<i data-graft-key="private-invalid-value"></i>',
-        "invalid reconciliation metadata",
-    ],
-    [
-        '<i data-graft-key="u:aa"></i><i data-graft-key="u:aa"></i>',
-        "invalid reconciliation metadata",
-    ],
-])("rejects invalid later content atomically: %s", (content, message) => {
+test("rejects a script in a later non-overlapping patch atomically", () => {
     document.body.innerHTML =
         '<main id="main"><div id="first-target">First</div><div id="second-target">Second</div></main>';
     const before = document.body.innerHTML;
-    const text = `<graft-patch-set version="1" title="Changed"><graft-patch operation="children" target="first-target"><template><p id="valid-first">Valid</p></template></graft-patch><graft-patch operation="children" target="second-target"><template>${content}</template></graft-patch></graft-patch-set>`;
-    expect(() => preflight(response(text)[0], text)).toThrowError(
-        expect.objectContaining({
-            reason: "target-content",
-            message: `Invalid Hypergraft response: ${message}`,
-            targetId: "second-target",
-        }),
-    );
+    const text = `<graft-patch-set version="1" title="Changed"><graft-patch operation="children" target="first-target"><template><p id="valid-first">Valid</p></template></graft-patch><graft-patch operation="children" target="second-target"><template><script>bad()</script></template></graft-patch></graft-patch-set>`;
+    expect(() => preflight(response(text)[0], text)).toThrow("script element");
     expect(document.body.innerHTML).toBe(before);
     expect(document.title).toBe("Before");
 });
@@ -594,7 +526,7 @@ test("rejects an append that duplicates a surviving descendant ID", () => {
     const text =
         '<graft-patch-set version="1"><graft-patch operation="append" target="patient-results"><template><p id="old">Duplicate</p></template></graft-patch></graft-patch-set>';
     expect(() => preflight(response(text)[0], text)).toThrow(
-        expect.objectContaining({ reason: "target-content" }),
+        "final ID collision",
     );
 });
 
@@ -608,11 +540,6 @@ test("preflights a representative stream frame", () => {
     const prepared = preflightFrame(envelope);
     expect(prepared.phase).toBe("progress");
     apply(prepared.batch);
-    expect(
-        document
-            .querySelector("#fixture-target > p")
-            ?.getAttribute("data-graft-key"),
-    ).toBe("u:7265616479");
     expect(document.querySelector("#fixture-target")?.textContent).toBe(
         "Ready",
     );
@@ -635,167 +562,3 @@ test("rejects a non-canonical final status", () => {
         '<graft-patch-set version="1" phase="final" status="0200"><graft-patch operation="children" target="patient-results"><template>x</template></graft-patch></graft-patch-set>';
     expect(() => preflightFrame(text)).toThrow("status");
 });
-
-test.each([
-    [
-        "current native template duplicates",
-        '<template><i data-graft-key="u:aa"></i><i data-graft-key="u:aa"></i></template>',
-        "",
-        "children",
-        false,
-    ],
-    [
-        "separate native template scopes",
-        "",
-        '<template><i data-graft-key="u:aa"></i></template><template><i data-graft-key="u:aa"></i></template>',
-        "children",
-        true,
-    ],
-    [
-        "mixed namespace siblings",
-        "",
-        '<i data-graft-key="u:aa"></i><svg data-graft-key="u:aa"></svg><math></math>',
-        "children",
-        false,
-    ],
-    [
-        "marker and ID domains",
-        "",
-        '<i data-graft-key="u:aa"></i><i id="u:aa"></i>',
-        "children",
-        true,
-    ],
-    [
-        "marker precedence over ID",
-        "",
-        '<i id="u:aa" data-graft-key="u:bb"></i><i data-graft-key="u:aa"></i>',
-        "children",
-        true,
-    ],
-    [
-        "independent ID validation",
-        '<i id="outside"></i>',
-        '<i id="outside" data-graft-key="u:aa"></i>',
-        "append",
-        false,
-    ],
-    [
-        "append descendant key reuse",
-        '<div><i data-graft-key="u:aa"></i></div>',
-        '<i data-graft-key="u:aa"></i>',
-        "append",
-        true,
-    ],
-    [
-        "malformed current marker",
-        '<i id="valid" data-graft-key="bad"></i>',
-        "",
-        "children",
-        false,
-    ],
-] as const)(
-    "validates sibling scopes: %s",
-    (_name, current, incoming, operation, accepted) => {
-        document.body.innerHTML = `<main id="fixture-target">${current}</main>`;
-        for (const mode of ["complete", "frame", "live"]) {
-            const phase = mode === "frame" ? ' phase="final"' : "";
-            const text = `<graft-patch-set version="1"${phase}><graft-patch operation="${operation}" target="fixture-target"><template>${incoming}</template></graft-patch></graft-patch-set>`;
-            const run = () =>
-                mode === "complete"
-                    ? preflight(response(text)[0], text)
-                    : mode === "frame"
-                      ? preflightFrame(text)
-                      : preflightLive(text);
-            if (accepted) expect(run).not.toThrow();
-            else
-                expect(run).toThrowError(
-                    expect.objectContaining({ reason: "target-content" }),
-                );
-        }
-    },
-);
-
-test("current depth does not consume the incoming depth bound", () => {
-    const target = document.getElementById("patient-results")!;
-    let parent = target;
-    for (let i = 0; i < MAX_NESTING_DEPTH * 2; i++)
-        parent = parent.appendChild(document.createElement("div"));
-    const text =
-        '<graft-patch-set version="1"><graft-patch operation="children" target="patient-results"><template></template></graft-patch></graft-patch-set>';
-    expect(() => preflight(response(text)[0], text)).not.toThrow();
-    parent.setAttribute("data-graft-key", "bad");
-    expect(() => preflight(response(text)[0], text)).toThrow(
-        "invalid reconciliation metadata",
-    );
-});
-
-test.each(["<script></script>", "<div>".repeat(MAX_NESTING_DEPTH + 1)])(
-    "inspects content before the host callback: %s",
-    (content) => {
-        const callback = vi.fn();
-        const text = `<graft-patch-set version="1"><graft-patch operation="children" target="patient-results"><template>${content}</template></graft-patch></graft-patch-set>`;
-        expect(() =>
-            preflight(response(text)[0], text, document, callback),
-        ).toThrowError(expect.objectContaining({ reason: "target-content" }));
-        expect(callback).not.toHaveBeenCalled();
-    },
-);
-
-test("applies the final fragment roots after host callbacks", () => {
-    document.body.innerHTML = '<main id="a"></main><aside id="b"></aside>';
-    const text =
-        '<graft-patch-set version="1"><graft-patch operation="children" target="a"><template>Original</template></graft-patch><graft-patch operation="children" target="b"><template></template></graft-patch></graft-patch-set>';
-    let first: DocumentFragment | undefined;
-    const replacement = document.createElement("p");
-    replacement.textContent = "Final";
-    replacement.setAttribute("data-graft-key", "u:aa");
-    const callback = vi.fn((fragment: DocumentFragment) => {
-        if (!first) first = fragment;
-        else first.replaceChildren(replacement);
-    });
-    const prepared = preflight(response(text)[0], text, document, callback);
-    if (prepared.kind === "patches") apply(prepared.batch);
-    expect(callback).toHaveBeenCalledTimes(2);
-    expect(document.getElementById("a")!.textContent).toBe("Final");
-    expect(
-        document.querySelector("#a > p")!.getAttribute("data-graft-key"),
-    ).toBe("u:aa");
-});
-
-test.each(["key", "script", "id", "depth", "duplicate"])(
-    "reinspects earlier fragments after callbacks: %s",
-    (kind) => {
-        document.body.innerHTML =
-            '<main id="a">Before</main><aside id="b">Before</aside>';
-        const text =
-            '<graft-patch-set version="1" title="After"><graft-patch operation="children" target="a"><template><p>Ready</p></template></graft-patch><graft-patch operation="children" target="b"><template><p>Ready</p></template></graft-patch></graft-patch-set>';
-        let first: DocumentFragment;
-        const callback = vi.fn((fragment: DocumentFragment) => {
-            if (!first) {
-                first = fragment;
-                return;
-            }
-            if (kind === "script")
-                first.append(document.createElement("script"));
-            else if (kind === "depth") {
-                let parent: Node = first;
-                for (let i = 0; i <= MAX_NESTING_DEPTH; i++)
-                    parent = parent.appendChild(document.createElement("div"));
-            } else if (kind === "duplicate") {
-                first.firstElementChild!.setAttribute("data-graft-key", "u:aa");
-                first.append(first.firstElementChild!.cloneNode(true));
-            } else
-                first.firstElementChild!.setAttribute(
-                    kind === "key" ? "data-graft-key" : "id",
-                    "!",
-                );
-        });
-        expect(() =>
-            preflight(response(text)[0], text, document, callback),
-        ).toThrowError(expect.objectContaining({ reason: "target-content" }));
-        expect(callback).toHaveBeenCalledTimes(2);
-        expect(document.getElementById("a")!.textContent).toBe("Before");
-        expect(document.getElementById("b")!.textContent).toBe("Before");
-        expect(document.title).toBe("Before");
-    },
-);

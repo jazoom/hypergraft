@@ -8,5 +8,3 @@ node_modules
 /benchmarks/templates
 /dist
 /benchmarks/results/*.trace.json
-
-**/*.graft.html

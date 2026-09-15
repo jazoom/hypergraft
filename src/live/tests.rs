@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::GraftTemplate;
+use askama::Template;
 use axum::{
     extract::{Extension, Path, Query, State},
     http::{HeaderMap, HeaderValue, Request, StatusCode, header},
@@ -26,75 +26,10 @@ use crate::{
     },
 };
 
-#[derive(GraftTemplate)]
-#[graft(path = "tests/templates/paragraph.graft.html")]
+#[derive(Template)]
+#[template(source = "<p>{{ value }}</p>", ext = "html")]
 struct Content<'a> {
     value: &'a str,
-}
-
-#[tokio::test]
-async fn template_failure_is_secret_safe_at_live_boundary() {
-    struct Failure;
-    impl crate::GraftTemplate for Failure {
-        fn render_into(
-            &self,
-            output: &mut String,
-            _: &crate::template::Scope,
-        ) -> Result<(), crate::TemplateError> {
-            output.push_str(LIVE_SECRET);
-            Err(crate::TemplateError::Rendering)
-        }
-    }
-    async fn projection() -> LiveProjection<()> {
-        LiveProjection::new(futures_util::stream::pending(), |()| async {
-            let mut patches = PatchSet::new();
-            let error = patches.children("main", &Failure).unwrap_err();
-            assert_eq!(error.kind(), crate::PatchBuildErrorKind::Rendering);
-            assert_eq!(error.to_string(), "patch rendering failed");
-            assert!(!format!("{error:?}").contains(LIVE_SECRET));
-            assert_eq!(
-                patches.encode_live().unwrap_err().kind(),
-                crate::PatchBuildErrorKind::EmptyBatch
-            );
-            Err(super::ProjectionError::Retire)
-        })
-    }
-    let capture = Capture::default();
-    let _guard = tracing::subscriber::set_default(capture.subscriber());
-    let (socket, incoming, mut outgoing) = session_pair();
-    let session = tokio::spawn(super::socket::run_session(
-        socket,
-        (),
-        std::sync::Arc::new(LiveRouter::new().route("/failure", projection).unwrap()),
-        UnitGuard,
-        LiveSocketConfig::default(),
-        axum::http::Extensions::new(),
-    ));
-    incoming
-        .send(super::socket::Incoming::Text(format!(
-            r#"{{"v":"1","type":"subscribe","id":1,"url":"/failure?token={LIVE_SECRET}"}}"#
-        )))
-        .unwrap();
-    let retired = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        loop {
-            if let Some(event) = capture
-                .events()
-                .into_iter()
-                .find(|event| event.message == "live subscription retired")
-            {
-                break event;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
-    incoming.send(super::socket::Incoming::Close).unwrap();
-    session.await.unwrap();
-    let retired = retired.expect("template failure must retire the subscription");
-    assert_eq!(retired.level, tracing::Level::DEBUG);
-    assert_eq!(field_value(&retired, "reason"), Some("projection"));
-    assert!(outgoing.try_recv().is_err());
-    assert_secret_safe(&capture.events(), &[LIVE_SECRET, "/failure", "main"]);
 }
 
 #[derive(Clone)]
@@ -449,7 +384,7 @@ async fn harness_dispatches_state_path_and_query() {
     assert_eq!(session.first_patch().targets[0].target, "item-results");
     assert_eq!(
         session.first_patch().targets[0].html,
-        "<p data-graft-key=\"u:7265616479\">ready:abc:one</p>"
+        "<p>ready:abc:one</p>"
     );
 }
 
@@ -465,7 +400,7 @@ async fn harness_dispatches_request_extensions_and_guard_context() {
         .unwrap();
     assert_eq!(
         session.first_patch().targets[0].html,
-        "<p data-graft-key=\"u:7265616479\">extension:extension</p>"
+        "<p>extension:extension</p>"
     );
 }
 
@@ -538,16 +473,10 @@ async fn harness_sends_a_later_patch_after_an_event() {
     let router = LiveRouter::new().route("/items", ticking).unwrap();
     let harness = LiveHarness::new(router, EventHub(tx.clone()));
     let mut session = harness.subscribe("/items", UnitGuard).await.unwrap();
-    assert_eq!(
-        session.first_patch().targets[0].html,
-        "<p data-graft-key=\"u:7265616479\">0</p>"
-    );
+    assert_eq!(session.first_patch().targets[0].html, "<p>0</p>");
     tx.send(1).unwrap();
     let update = session.next_patch().await.unwrap();
-    assert_eq!(
-        update.targets[0].html,
-        "<p data-graft-key=\"u:7265616479\">1</p>"
-    );
+    assert_eq!(update.targets[0].html, "<p>1</p>");
 }
 
 #[tokio::test]
@@ -959,7 +888,7 @@ async fn socket_sends_an_authoritative_first_patch_then_closes_on_duplicate_id()
     assert_eq!(id, 1);
     assert_eq!(
         decode_live_envelope(envelope).unwrap().targets[0].html,
-        "<p data-graft-key=\"u:7265616479\">0</p>"
+        "<p>0</p>"
     );
     incoming
         .send(super::socket::Incoming::Text(
@@ -1899,14 +1828,7 @@ async fn live_diagnostics_exclude_secrets_from_encode_failure() {
         .expect("encode diagnostic");
     assert_eq!(encode.level, tracing::Level::WARN);
     assert_eq!(field_value(encode, "kind"), Some("invalid_live_envelope"));
-    assert_secret_safe(
-        &events,
-        &[
-            LIVE_SECRET,
-            "<p data-graft-key=\"u:7265616479\">",
-            "item-results",
-        ],
-    );
+    assert_secret_safe(&events, &[LIVE_SECRET, "<p>", "item-results"]);
 }
 
 #[tokio::test]

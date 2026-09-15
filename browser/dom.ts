@@ -1,26 +1,12 @@
 type NodeProperty =
     | "childNodes"
-    | "firstChild"
-    | "nextSibling"
-    | "parentNode"
     | "nodeType"
     | "ownerDocument"
     | "isConnected"
     | "appendChild"
-    | "insertBefore"
-    | "removeChild"
+    | "cloneNode"
     | "contains";
-type ElementProperty =
-    | "attributes"
-    | "id"
-    | "localName"
-    | "namespaceURI"
-    | "getAttributeNS"
-    | "hasAttributeNS"
-    | "setAttributeNS"
-    | "removeAttributeNS"
-    | "hasAttribute"
-    | "querySelector";
+type ElementProperty = "id" | "localName" | "getAttributeNS";
 
 // Form named properties take precedence over native members, even for childNodes.
 // Other elements retain their overrides and application exceptions.

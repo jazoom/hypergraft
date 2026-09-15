@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import fixture from "../protocol-v1.json";
-import templates from "./fixtures/templates.json";
 import {
     LIVE_PATCH_EVENT,
     listenForLiveStateChanges,
@@ -196,20 +195,6 @@ test("produces accepted control messages from the protocol fixture", async () =>
         expect(item.control, item.name).toBeTypeOf("string");
         expect(sent, item.name).toContainEqual(JSON.parse(item.control!));
     }
-});
-
-test("repeated compiled snapshots retain live node identity", async () => {
-    liveForm("compiled", "/items", "item-results");
-    cleanup = startHypergraft();
-    await vi.waitFor(() => expect(MockSocket.instances).toHaveLength(1));
-    const socket = MockSocket.instances[0]!;
-    await vi.waitFor(() => expect(socket.sent).toHaveLength(1));
-    socket.receive(1, envelope("item-results", templates.results));
-    const row = document.getElementById("row-1")!;
-    const child = row.firstElementChild;
-    socket.receive(1, envelope("item-results", templates.reordered));
-    expect(document.getElementById("row-1")).toBe(row);
-    expect(row.firstElementChild).toBe(child);
 });
 
 test("opens one socket and applies the first live patch", async () => {
@@ -835,31 +820,4 @@ test("discovers at most 64 live forms", async () => {
     await vi.waitFor(() => expect(MockSocket.instances).toHaveLength(1));
     const socket = MockSocket.instances[0]!;
     await vi.waitFor(() => expect(socket.sent).toHaveLength(64));
-});
-
-test("rejects live key metadata without an applied event", async () => {
-    liveForm("one", "/items", "item-results");
-    const applied = vi.fn();
-    document.addEventListener(LIVE_PATCH_EVENT, applied);
-    try {
-        cleanup = startHypergraft();
-        await vi.waitFor(() => expect(MockSocket.instances).toHaveLength(1));
-        const socket = MockSocket.instances[0]!;
-        await vi.waitFor(() => expect(socket.sent).toHaveLength(1));
-        socket.receive(
-            1,
-            envelope("item-results", '<p data-graft-key="invalid">Bad</p>'),
-        );
-        expect(
-            socket.sent.map((message) => JSON.parse(message)),
-        ).toContainEqual({
-            v: "1",
-            type: "unsubscribe",
-            id: 1,
-        });
-        expect(applied).not.toHaveBeenCalled();
-        expect(document.querySelector("[data-graft-key]")).toBeNull();
-    } finally {
-        document.removeEventListener(LIVE_PATCH_EVENT, applied);
-    }
 });

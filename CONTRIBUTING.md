@@ -48,16 +48,10 @@ Run format and static checks:
 mise run clean
 ```
 
-Run the production test suites:
+Run all test suites:
 
 ```sh
 mise run test
-```
-
-Run the optional benchmark validation suite:
-
-```sh
-mise exec -- pnpm test:benchmarks
 ```
 
 Add a test only when it protects an invariant that the compiler cannot enforce.
@@ -67,20 +61,9 @@ Focus tests on these contracts:
 - Test request classification, envelope bounds and the browser state machine.
 - Test lock-step behaviour with `protocol-v1.json`.
 - Test island registry behaviour that Hypergraft owns.
+- Test preflight callbacks, form-property access, pending ownership and focus through focused browser contracts.
 
 Do not add host product tests or tests that restate a trivial map or match.
-
-## Compiled template fixtures
-
-`tests/support/template_fixture_data.rs` owns the shared fixture producer. It calls actual derives from `tests/templates/` through the production template and patch APIs. Rust tests call this producer directly. Browser tests consume `browser/fixtures/templates.json` for preflight and page/block identity contracts. The drift assertion compares parsed JSON and preserves exact embedded HTML bytes.
-
-After a fixture source change, regenerate the artefact:
-
-```sh
-mise run fixtures:templates
-# Equivalent command:
-cargo run --quiet --example template-fixtures > browser/fixtures/templates.json
-```
 
 ## Pull requests
 
@@ -90,5 +73,3 @@ cargo run --quiet --example template-fixtures > browser/fixtures/templates.json
 - Update the [agent integration guide](docs/agent-guide.md) when public APIs or integration constraints change.
 - Include test results in the pull request description.
 - Report security defects through `SECURITY.md`.
-
-Compiler contract tests cover identity, escaping, typed composition and external source rebuilds. Narrow block tests pin unavailable context and selection diagnostics. Tests exclude ordinary Rust type errors and host product behaviour.

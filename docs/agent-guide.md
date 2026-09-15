@@ -2,7 +2,7 @@
 
 This is the short reference for agents that build host applications with Hypergraft.
 
-Hypergraft is an unpublished source preview for Axum and owned HTML templates. The Rust crate requires Rust 1.96 or later. Rust and browser APIs remain experimental. [`protocol-v1.json`](../protocol-v1.json) is the canonical version 1 wire contract.
+Hypergraft is an unpublished source preview for Axum and Askama. The Rust crate requires Rust 1.96 or later. Rust and browser APIs remain experimental. [`protocol-v1.json`](../protocol-v1.json) is the canonical version 1 wire contract.
 
 ## Mental model
 
@@ -21,6 +21,7 @@ For the example below, add these Cargo dependencies to a host crate at its repos
 ```toml
 [dependencies]
 hypergraft = { path = "../hypergraft" }
+askama = "0.16"
 axum = "0.8"
 serde = { version = "1", features = ["derive"] }
 ```
@@ -75,13 +76,13 @@ This example edits one value at `/settings`. The host supplies persistence and s
 
 ### Templates
 
-Keep page-local fragments in named template blocks within their page template.
+Keep page-local fragments in named Askama blocks within their page template.
 
 Keep each retained target outside the block that supplies its children.
 
 Use separate files for fragments with independent reuse across pages.
 
-Create `templates/document.graft.html` with this shell:
+Create `templates/document.html` with this shell:
 
 ```html
 <!DOCTYPE html>
@@ -94,22 +95,20 @@ Create `templates/document.graft.html` with this shell:
     </head>
     <body>
         <a href="/settings" data-graft>Settings</a>
-        <main id="main" tabindex="-1">{% render &self.body %}</main>
+        <main id="main" tabindex="-1">{{ body|safe }}</main>
     </body>
 </html>
 ```
 
-Create `templates/settings.graft.html` with the contents of `main`, not another `main` element:
+Create `templates/settings.html` with the contents of `main`, not another `main` element:
 
 ```html
 <h1>Settings</h1>
 <section id="settings-form">
     {% block settings_form %}
     <form method="post" action="/settings" data-graft>
-        <label
-            >Value <input name="value" value="{{ &self.value }}" required
-        /></label>
-        <p role="alert">{{ self.error }}</p>
+        <label>Value <input name="value" value="{{ value }}" required /></label>
+        <p role="alert">{{ error }}</p>
         <button type="submit">Save</button>
     </form>
     {% endblock %}
@@ -121,7 +120,7 @@ Create `templates/settings.graft.html` with the contents of `main`, not another 
 `load_value()` returns the stored `String`. `persist_value(&str)` stores a validated value and returns `()`. Both are asynchronous host functions with `Result` return types. Their errors implement `Display`.
 
 ```rust
-use hypergraft::GraftTemplate;
+use askama::Template;
 use axum::{
     extract::{Form, rejection::FormRejection},
     http::{StatusCode, header},
@@ -130,21 +129,21 @@ use axum::{
 use hypergraft::{PageGraft, PatchGraft, PatchStatus, outcome};
 use serde::Deserialize;
 
-#[derive(GraftTemplate)]
-#[graft(path = "templates/document.graft.html")]
-struct Document<'a, T: GraftTemplate> {
-    body: &'a T,
+#[derive(Template)]
+#[template(path = "document.html")]
+struct Document {
+    body: String,
 }
 
-#[derive(GraftTemplate)]
-#[graft(path = "templates/settings.graft.html")]
+#[derive(Template)]
+#[template(path = "settings.html")]
 struct Settings {
     value: String,
     error: &'static str,
 }
 
-#[derive(GraftTemplate)]
-#[graft(path = "templates/settings.graft.html", block = "settings_form")]
+#[derive(Template)]
+#[template(path = "settings.html", block = "settings_form")]
 struct SettingsForm {
     value: String,
     error: &'static str,
@@ -171,7 +170,8 @@ async fn settings(graft: PageGraft) -> Result<Response, Response> {
     };
     match graft {
         PageGraft::Document => {
-            let html = Document { body: &page }.render().map_err(internal)?;
+            let body = page.render().map_err(internal)?;
+            let html = Document { body }.render().map_err(internal)?;
             Ok(([(header::CACHE_CONTROL, "no-store")], Html(html)).into_response())
         }
         PageGraft::Navigation => outcome::page_patch("Settings", "main", &page).map_err(internal),
@@ -203,7 +203,7 @@ async fn save_settings(
 
 `SettingsForm` selects the page-local `settings_form` block. It needs only fields referenced by that block, not unrelated page data. The rejection patch retains `settings-form` and excludes its wrapper from the payload.
 
-The document borrows a typed template body. Ordinary field values receive HTML escaping. Extraction failures return bounded 422 patches before mutation. A plain `Form<Input>` extractor instead returns Axum's default rejection, not a known patch outcome.
+Only rendered Askama output supplies `body|safe`. The field values still receive HTML escaping. Extraction failures return bounded 422 patches before mutation. A plain `Form<Input>` extractor instead returns Axum's default rejection, not a known patch outcome.
 
 ### Router
 
@@ -344,5 +344,3 @@ Leave these components to Hypergraft:
 | Change CSP or investigate Trusted Types                | [Security](security.md)                                                            |
 | Change Hypergraft itself                               | [`AGENTS.md`](../AGENTS.md) and [`CONTRIBUTING.md`](../CONTRIBUTING.md)            |
 | Change wire behaviour                                  | [`protocol-v1.json`](../protocol-v1.json) and [Protocol version 1](protocol-v1.md) |
-
-The [template language](template-language.md) defines the compiler API. The [identity contract](template-identity.md) defines semantic scopes and public metadata.

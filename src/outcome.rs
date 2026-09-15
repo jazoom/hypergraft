@@ -1,6 +1,6 @@
 //! Common negotiated Hypergraft outcomes.
 
-use crate::GraftTemplate;
+use askama::Template;
 use axum::{
     body::{Body, Bytes},
     http::{HeaderValue, StatusCode, header},
@@ -44,7 +44,7 @@ pub fn command_navigation(destination: impl Into<String>) -> Result<Response, In
 }
 
 /// Build a titled, single-target page-navigation patch.
-pub fn page_patch<T: GraftTemplate>(
+pub fn page_patch<T: Template>(
     title: impl Into<String>,
     target: impl AsRef<str>,
     template: &T,
@@ -56,7 +56,7 @@ pub fn page_patch<T: GraftTemplate>(
 }
 
 /// Build one retained-target patch at any accepted status.
-pub fn children_patch<T: GraftTemplate>(
+pub fn children_patch<T: Template>(
     status: PatchStatus,
     target: impl AsRef<str>,
     content: &T,

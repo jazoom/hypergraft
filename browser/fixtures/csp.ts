@@ -42,7 +42,7 @@ export type FixtureResult = {
 
 const PATCH_CONTENT = '<p id="patched">Patched</p>';
 const DISABLED_FORM =
-    '<form id="command-form" method="post" action="/command" data-graft><input name="credential" value="wrong"><button id="save" type="submit" disabled>Save</button></form>';
+    '<form method="post" action="/command" data-graft><input name="credential" value="wrong"><button id="save" type="submit" disabled>Save</button></form>';
 
 const violations: FixtureViolation[] = [];
 

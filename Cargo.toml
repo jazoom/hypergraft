@@ -4,23 +4,21 @@ version = "0.0.1"
 edition = "2024"
 rust-version = "1.96"
 license = "MIT OR Apache-2.0"
-description = "Bounded HTML-over-HTTP and WebSocket protocol with Axum and owned HTML templates"
+description = "Bounded HTML-over-HTTP and WebSocket protocol with an Axum and Askama host"
 readme = "README.md"
 repository = "https://github.com/jazoom/hypergraft"
 homepage = "https://github.com/jazoom/hypergraft"
 publish = false
 include = [
   "/src/**",
-  "/tests/**",
   "/benches/**",
   "/benchmarks/templates/**",
+  "/askama.toml",
   "/Cargo.toml",
   "/README.md",
   "/LICENSE-APACHE",
   "/LICENSE-MIT",
   "/protocol-v1.json",
-  "/browser/fixtures/templates.json",
-  "/examples/template-fixtures.rs",
 ]
 
 [[bench]]
@@ -28,18 +26,13 @@ name = "templates"
 harness = false
 
 [workspace]
-members = [
-  "examples/reference",
-  "crates/hypergraft-template-core",
-  "crates/hypergraft-template-macros",
-]
+members = ["examples/reference"]
 
 [dependencies]
+askama = "0.16.0"
 async-stream = "0.3.6"
 axum = { version = "0.8.9", features = ["ws"] }
 futures-util = "0.3.34"
-html5ever = "0.39.0"
-hypergraft-template-macros = { path = "crates/hypergraft-template-macros", version = "0.0.1" }
 matchit = "0.8.4"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
@@ -48,7 +41,6 @@ tower = { version = "0.5.3", features = ["util"] }
 tracing = "0.1.44"
 
 [dev-dependencies]
-hypergraft-template-core = { path = "crates/hypergraft-template-core" }
 tokio = { version = "1.53.1", features = ["macros", "net", "rt", "test-util"] }
 tokio-tungstenite = "0.29.0"
 tower = { version = "0.5.3", features = ["util"] }

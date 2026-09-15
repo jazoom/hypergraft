@@ -3,7 +3,7 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>{{ self.title }}</title>
+        <title>{{ title }}</title>
         <link rel="stylesheet" href="/assets/style.css" />
         <script type="module" src="/assets/main.js"></script>
     </head>
@@ -27,6 +27,6 @@
             </button>
         </div>
         <p id="live-status" role="status" hidden></p>
-        <main id="main" tabindex="-1">{% render self.body %}</main>
+        <main id="main" tabindex="-1">{{ body|safe }}</main>
     </body>
 </html>

@@ -40,10 +40,6 @@ run = [
   "cargo run -p hypergraft-reference",
 ]
 
-[tasks."fixtures:templates"]
-description = "Generate the shared compiled template fixture"
-run = "cargo run --quiet --example template-fixtures > browser/fixtures/templates.json"
-
 [tasks.clean]
 alias = "c"
 description = "Format and check the Hypergraft project"

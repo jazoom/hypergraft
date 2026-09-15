@@ -1,13 +1,9 @@
-//! Bounded Hypergraft protocol version 1 integration for Axum and owned HTML templates.
-extern crate self as hypergraft;
-pub use hypergraft_template_macros::GraftTemplate;
+//! Bounded Hypergraft protocol version 1 integration for Axum and Askama.
 
 pub mod middleware;
 pub mod outcome;
 mod request;
 mod response;
-pub mod template;
-pub use template::{GraftTemplate, TemplateError};
 
 pub mod live;
 

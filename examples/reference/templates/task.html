@@ -1,29 +1,29 @@
 <article>
     <div id="task-detail">
         {% block task_detail %}
-        <h1>{{ self.task.title }}</h1>
+        <h1>{{ task.title }}</h1>
         <p>
             Status:
-            {% if self.task.done %}
+            {% if task.done %}
             Done
             {% else %}
             Open
             {% endif %}
         </p>
         <div id="task-detail-feedback">
-            {% if let Some(message) = self.error %}
+            {% if let Some(message) = error %}
             <p role="alert">{{ message }}</p>
             {% endif %}
         </div>
-        {% if self.task.done %}
+        {% if task.done %}
         <form
             method="post"
-            action="/tasks/{{ self.task.id }}/status"
+            action="/tasks/{{ task.id }}/status"
             data-graft
             aria-describedby="task-detail-feedback"
         >
             <input type="hidden" name="action" value="reopen" />
-            <input type="hidden" name="revision" value="{{ self.task.revision }}" />
+            <input type="hidden" name="revision" value="{{ task.revision }}" />
             <p>
                 <button type="submit">Reopen</button>
             </p>
@@ -31,12 +31,12 @@
         {% else %}
         <form
             method="post"
-            action="/tasks/{{ self.task.id }}/status"
+            action="/tasks/{{ task.id }}/status"
             data-graft
             aria-describedby="task-detail-feedback"
         >
             <input type="hidden" name="action" value="complete" />
-            <input type="hidden" name="revision" value="{{ self.task.revision }}" />
+            <input type="hidden" name="revision" value="{{ task.revision }}" />
             <p>
                 <button type="submit">Complete</button>
             </p>

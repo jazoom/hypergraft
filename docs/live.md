@@ -70,7 +70,7 @@ A `peer` close has no `close_class` field. Hypergraft does not send a close fram
 
 ### Projection encode
 
-A failed `PatchSet::encode_live` call retires that subscription. The WARN event records `kind` from `PatchBuildError::kind`. The event does not record rendered HTML. The event does not record template error details.
+A failed `PatchSet::encode_live` call retires that subscription. The WARN event records `kind` from `PatchBuildError::kind`. The event does not record rendered HTML. The event does not record Askama error text.
 
 `kind` is one of:
 

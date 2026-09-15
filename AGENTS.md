@@ -2,7 +2,7 @@
 
 ## Project overview
 
-Hypergraft is a bounded HTML-over-HTTP and WebSocket protocol with a JavaScript-required browser runtime. Version 1 of the Rust crate targets Axum and owned HTML templates.
+Hypergraft is a bounded HTML-over-HTTP and WebSocket protocol with a JavaScript-required browser runtime. Version 1 of the Rust crate targets Axum and Askama.
 
 ## Notes to agent
 
@@ -10,7 +10,7 @@ Hypergraft is a bounded HTML-over-HTTP and WebSocket protocol with a JavaScript-
 - Do not broaden protocol version 1 without an explicit plan. Treat `protocol-v1.json` as the canonical protocol fixture before you change request, response, live socket or browser behaviour.
 - HTTP still serves initial documents, canonical GET pages and real link and form markup. JavaScript is required for live projections and command patches. Command routes extract `PatchGraft`. A native POST without patch metadata receives a no-store 400 before domain work. The server stays authoritative.
 - Hosts register projection factories and one connection guard. Do not add a host socket loop, protocol codec, subscription map or reconnect policy.
-- The version 1 Rust host is Axum and owned HTML templates. Do not add a second host adapter unless a plan asks for it.
+- The version 1 Rust host is Axum and Askama. Do not add a second host adapter unless a plan asks for it.
 - Use Australian English spelling and grammar for all text, code comments, documentation and user-facing output. Do not use title case for the text of titles, buttons or headings. Only capitalise the first letter of the first word.
 - Comment a file, module, function or block only when a later reader could break a why, an invariant, a security contract, a protocol bound or a non-obvious constraint.
 
@@ -23,11 +23,7 @@ Write:
 - Protocol: request classification, envelope bounds, live socket bounds and the browser state machine.
 - Cross-language lock-step with `protocol-v1.json`.
 - Island registry behaviour that this crate owns.
-- Compiler-owned identity and escaping contracts from `NEXT.md`, including page/block key equality and narrow block dependencies.
-- Compiler diagnostics for unavailable block context and invalid block selection, not duplicate coverage of ordinary Rust type errors.
-- Semantic key stability, conditional alternatives, sibling fragment scopes and duplicate key rejection.
-- Escaped output, typed composition boundaries and rebuild detection for external template dependencies.
-- Focused reconciliation contracts for retained identity, authoritative controls, pending ownership and focus. These do not authorise a general application browser suite.
+- Focused browser contracts for preflight callbacks, form-property access, pending ownership and focus.
 
 Do not write:
 

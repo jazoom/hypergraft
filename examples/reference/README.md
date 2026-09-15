@@ -10,18 +10,18 @@ The server listens on `127.0.0.1:3000`. Origin checks and the content security p
 
 ## Template organisation
 
-Page-local fragments live in named template blocks within their page template. The initial page and its patches use the same source markup.
+Page-local fragments live in named Askama blocks within their page template. The initial page and its patches use the same source markup.
 
-| Template                                         | Block                  | Retained target        |
-| ------------------------------------------------ | ---------------------- | ---------------------- |
-| [`tasks.graft.html`](templates/tasks.graft.html) | `task_filter`          | `task-filter`          |
-| [`tasks.graft.html`](templates/tasks.graft.html) | `task_results`         | `task-results`         |
-| [`tasks.graft.html`](templates/tasks.graft.html) | `task_create`          | `task-create`          |
-| [`tasks.graft.html`](templates/tasks.graft.html) | `task_create_filters`  | `task-create-filters`  |
-| [`tasks.graft.html`](templates/tasks.graft.html) | `task_create_feedback` | `task-create-feedback` |
-| [`task.graft.html`](templates/task.graft.html)   | `task_detail`          | `task-detail`          |
+| Template                             | Block                  | Retained target        |
+| ------------------------------------ | ---------------------- | ---------------------- |
+| [`tasks.html`](templates/tasks.html) | `task_filter`          | `task-filter`          |
+| [`tasks.html`](templates/tasks.html) | `task_results`         | `task-results`         |
+| [`tasks.html`](templates/tasks.html) | `task_create`          | `task-create`          |
+| [`tasks.html`](templates/tasks.html) | `task_create_filters`  | `task-create-filters`  |
+| [`tasks.html`](templates/tasks.html) | `task_create_feedback` | `task-create-feedback` |
+| [`task.html`](templates/task.html)   | `task_detail`          | `task-detail`          |
 
-Each target wrapper stays outside the block that supplies its children. Block-specific types in [`pages.rs`](src/pages.rs) select those blocks through `#[graft(path = "templates/tasks.graft.html", block = "task_results")]` or the corresponding detail selector.
+Each target wrapper stays outside the block that supplies its children. Block-specific types in [`pages.rs`](src/pages.rs) select those blocks through `#[template(path = "tasks.html", block = "task_results")]` or the corresponding detail selector.
 
 A block-specific type needs only its referenced fields. For example, `TaskResults` takes only the task list, even though its source file also contains forms.
 
@@ -29,9 +29,9 @@ The create block contains nested filter and feedback blocks. A create rejection 
 
 Block nesting does not permit overlapping targets in one batch. The response selects either the parent target or its disjoint descendants.
 
-[`document.graft.html`](templates/document.graft.html) remains the shared document shell. Separate files suit independently reused templates rather than every page-local fragment.
+[`document.html`](templates/document.html) remains the shared document shell. Separate files suit independently reused templates rather than every page-local fragment.
 
-The [host guide](../../docs/host-integration.md#page-local-blocks) describes independent block types and their narrow fields.
+The [host guide](../../docs/host-integration.md#page-local-blocks) describes both block-specific types and accessors on a complete page value.
 
 ## Launch the example
 
@@ -407,5 +407,3 @@ Repeat the steps with a blank title instead of a valid title.
 5. If live updates stopped permanently, reload the page.
 6. Make sure that the created task disappears from the results.
 7. Make sure that the seed tasks are back.
-
-The [template language](../../docs/template-language.md) defines the compiler API. The [identity contract](../../docs/template-identity.md) defines semantic scopes and public metadata.

@@ -8,37 +8,27 @@ import { createServer } from "vite";
 
 const directory = "benchmarks/results";
 await mkdir(directory, { recursive: true });
-const reconciler = process.argv.includes("--reconciler");
-const ids = process.argv.includes("--ids");
-const server =
-    reconciler || ids
-        ? undefined
-        : JSON.parse(
-              execFileSync(
-                  "cargo",
-                  ["bench", "--bench", "templates", "--quiet"],
-                  {
-                      encoding: "utf8",
-                  },
-              ),
-          );
+const server = JSON.parse(
+    execFileSync("cargo", ["bench", "--bench", "templates", "--quiet"], {
+        encoding: "utf8",
+    }),
+);
 // HEAD does not identify uncommitted benchmark sources or production edits.
 const sourcePaths = [
     "benches/templates.rs",
     "benchmarks/browser.ts",
-    "benchmarks/id-validation.ts",
-    "browser/document-ids.ts",
     "benchmarks/browser.html",
     "benchmarks/record.mjs",
     "benchmarks/vite.config.ts",
-    "benchmarks/templates/list.graft.html",
-    "benchmarks/templates/fragment.graft.html",
+    "benchmarks/templates/list.html",
+    "benchmarks/templates/fragment.html",
+    "askama.toml",
     "Cargo.toml",
     "Cargo.lock",
     "package.json",
     "pnpm-lock.yaml",
     "protocol-v1.json",
-    ...execFileSync("git", ["ls-files", "src", "browser", "crates"], {
+    ...execFileSync("git", ["ls-files", "src", "browser"], {
         encoding: "utf8",
     })
         .trim()
@@ -75,13 +65,6 @@ const metadata = {
         }).replace(/^Version (.*)\n$/, '"$1"'),
     ),
 };
-if (process.argv.includes("--server-only")) {
-    await writeFile(
-        `${directory}/owned-template.json`,
-        JSON.stringify({ ...server, metadata }, null, 2) + "\n",
-    );
-    process.exit(0);
-}
 const vite = await createServer({ configFile: "benchmarks/vite.config.ts" });
 const browsers = [];
 try {
@@ -108,51 +91,14 @@ try {
                 () => typeof window.runBenchmarks === "function",
             );
             // Latency samples exclude trace overhead. A second run supplies trace evidence.
-            const measurements = await page.evaluate(
-                (ids) =>
-                    ids ? window.runIdBenchmarks() : window.runBenchmarks(),
-                ids,
+            const measurements = await page.evaluate(() =>
+                window.runBenchmarks(),
             );
-            const fallback = reconciler
-                ? await page.evaluate(async () => {
-                      const prototypes = [
-                          Element.prototype,
-                          DocumentFragment.prototype,
-                      ];
-                      const descriptors = prototypes.map((prototype) =>
-                          Object.getOwnPropertyDescriptor(
-                              prototype,
-                              "moveBefore",
-                          ),
-                      );
-                      try {
-                          for (const prototype of prototypes)
-                              Object.defineProperty(prototype, "moveBefore", {
-                                  configurable: true,
-                                  value: undefined,
-                              });
-                          return await window.runBenchmarks();
-                      } finally {
-                          prototypes.forEach((prototype, index) => {
-                              const descriptor = descriptors[index];
-                              if (descriptor)
-                                  Object.defineProperty(
-                                      prototype,
-                                      "moveBefore",
-                                      descriptor,
-                                  );
-                              else delete prototype.moveBefore;
-                          });
-                      }
-                  })
-                : undefined;
             let trace = {
                 available: false,
-                reason: ids
-                    ? "This validator experiment does not measure layout or paint."
-                    : "This recorder supports Chromium CDP trace categories only.",
+                reason: "This recorder supports Chromium CDP trace categories only.",
             };
-            if (name === "chromium" && !ids) {
+            if (name === "chromium") {
                 const session = await page.context().newCDPSession(page);
                 const events = [];
                 session.on("Tracing.dataCollected", ({ value }) =>
@@ -168,7 +114,7 @@ try {
                 );
                 await session.send("Tracing.end");
                 await finished;
-                const path = `${directory}/chromium-${reconciler ? "owned" : "current"}.trace.json.gz`;
+                const path = `${directory}/chromium-baseline.trace.json.gz`;
                 await writeFile(
                     path,
                     gzipSync(JSON.stringify({ traceEvents: events })),
@@ -223,7 +169,6 @@ try {
                 name,
                 version: browser.version(),
                 measurements,
-                fallback,
                 trace,
                 errors,
             });
@@ -238,6 +183,6 @@ try {
     await vite.close();
 }
 await writeFile(
-    `${directory}/${ids ? "document-id-validation" : reconciler ? "owned-reconciler" : "current-pipeline"}.json`,
+    `${directory}/askama-morphlex-baseline.json`,
     JSON.stringify({ metadata, server, browsers }, null, 2) + "\n",
 );

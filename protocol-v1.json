@@ -108,10 +108,10 @@
             "authoritativeResynchronisation": "resynchronisation"
         }
     },
-    "representativePatch": "<graft-patch-set version=\"1\" title=\"Fixture &amp; title\" location=\"/items?fixture=one&amp;other=two\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
+    "representativePatch": "<graft-patch-set version=\"1\" title=\"Fixture &amp; title\" location=\"/items?fixture=one&amp;other=two\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
     "representativeNavigation": "<graft-patch-set version=\"1\" navigate=\"/items?fixture=one&amp;other=two\"></graft-patch-set>",
-    "representativeStreamFrame": "197\n<graft-patch-set version=\"1\" phase=\"progress\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
-    "representativeLivePatch": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
+    "representativeStreamFrame": "167\n<graft-patch-set version=\"1\" phase=\"progress\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
+    "representativeLivePatch": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
     "representativeSubscribe": "{\"v\":\"1\",\"type\":\"subscribe\",\"id\":1,\"url\":\"/items?fixture=one\"}",
     "representativeUnsubscribe": "{\"v\":\"1\",\"type\":\"unsubscribe\",\"id\":1}",
     "representativeTerminal": "{\"v\":\"1\",\"type\":\"terminal\"}",
@@ -241,13 +241,13 @@
             "name": "complete-envelope-children",
             "consumers": ["browser-preflight"],
             "expectation": "accept",
-            "envelope": "<graft-patch-set version=\"1\" title=\"Fixture &amp; title\" location=\"/items?fixture=one&amp;other=two\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>"
+            "envelope": "<graft-patch-set version=\"1\" title=\"Fixture &amp; title\" location=\"/items?fixture=one&amp;other=two\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>"
         },
         {
             "name": "live-envelope-children",
             "consumers": ["rust-live", "browser-preflight-live"],
             "expectation": "accept",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
+            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
             "builder": {
                 "operation": "children",
                 "target": "fixture-target",
@@ -258,7 +258,7 @@
             "name": "live-envelope-title",
             "consumers": ["rust-live", "browser-preflight-live"],
             "expectation": "protocol",
-            "envelope": "<graft-patch-set version=\"1\" title=\"Nope\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
+            "envelope": "<graft-patch-set version=\"1\" title=\"Nope\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
             "builder": {
                 "operation": "children",
                 "target": "fixture-target",
@@ -270,7 +270,7 @@
             "name": "live-envelope-location",
             "consumers": ["rust-live", "browser-preflight-live"],
             "expectation": "protocol",
-            "envelope": "<graft-patch-set version=\"1\" location=\"/items\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
+            "envelope": "<graft-patch-set version=\"1\" location=\"/items\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
             "builder": {
                 "operation": "children",
                 "target": "fixture-target",
@@ -288,7 +288,7 @@
             "name": "stream-envelope-location-progress",
             "consumers": ["rust-response", "browser-preflight-frame"],
             "expectation": "protocol",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"progress\" location=\"/items\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
+            "envelope": "<graft-patch-set version=\"1\" phase=\"progress\" location=\"/items\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
             "builder": {
                 "operation": "append",
                 "target": "fixture-target",
@@ -301,7 +301,7 @@
             "name": "stream-envelope-location-final",
             "consumers": ["rust-response", "browser-preflight-frame"],
             "expectation": "protocol",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\" location=\"/items\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p data-graft-key=\"u:7265616479\">Ready</p></template></graft-patch></graft-patch-set>",
+            "envelope": "<graft-patch-set version=\"1\" phase=\"final\" location=\"/items\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><p>Ready</p></template></graft-patch></graft-patch-set>",
             "builder": {
                 "operation": "append",
                 "target": "fixture-target",
@@ -324,7 +324,7 @@
             "browserReason": "target-content"
         },
         {
-            "name": "incoming empty ID with a valid marker",
+            "name": "incoming empty ID",
             "consumers": [
                 "browser-preflight",
                 "browser-preflight-live",
@@ -332,7 +332,7 @@
             ],
             "expectation": "protocol",
             "browserReason": "target-content",
-            "contentInput": "<i id=\"\" data-graft-key=\"u:aa\"></i>"
+            "contentInput": "<i id=\"\"></i>"
         },
         {
             "name": "incoming empty ID in native template contents",
@@ -367,667 +367,6 @@
             "expectation": "accept",
             "initialDocument": "<main id=\"fixture-target\"><i id=\"\"></i></main>",
             "contentInput": "<i></i>"
-        },
-        {
-            "name": "reconciliation current duplicates",
-            "consumers": ["browser-preflight"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"><i data-graft-key=\"u:aa\"></i><i data-graft-key=\"u:aa\"></i></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation current duplicates-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"><i data-graft-key=\"u:aa\"></i><i data-graft-key=\"u:aa\"></i></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation current duplicates-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"><i data-graft-key=\"u:aa\"></i><i data-graft-key=\"u:aa\"></i></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation incoming duplicates",
-            "consumers": ["browser-preflight"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i data-graft-key=\"u:aa\"></i><i data-graft-key=\"u:aa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation incoming duplicates-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i data-graft-key=\"u:aa\"></i><i data-graft-key=\"u:aa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation incoming duplicates-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i data-graft-key=\"u:aa\"></i><i data-graft-key=\"u:aa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation append collision",
-            "consumers": ["browser-preflight"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"><i data-graft-key=\"u:aa\"></i></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><i data-graft-key=\"u:aa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation append collision-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"><i data-graft-key=\"u:aa\"></i></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><i data-graft-key=\"u:aa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation append collision-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"><i data-graft-key=\"u:aa\"></i></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"append\" target=\"fixture-target\"><template><i data-graft-key=\"u:aa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation separate parents",
-            "consumers": ["browser-preflight"],
-            "expectation": "accept",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><div><i data-graft-key=\"u:aa\"></i></div><div><i data-graft-key=\"u:aa\"></i></div></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation separate parents-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "accept",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><div><i data-graft-key=\"u:aa\"></i></div><div><i data-graft-key=\"u:aa\"></i></div></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation separate parents-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "accept",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><div><i data-graft-key=\"u:aa\"></i></div><div><i data-graft-key=\"u:aa\"></i></div></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation template duplicate",
-            "consumers": ["browser-preflight"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><template><i data-graft-key=\"u:aa\"></i><i data-graft-key=\"u:aa\"></i></template></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation template duplicate-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><template><i data-graft-key=\"u:aa\"></i><i data-graft-key=\"u:aa\"></i></template></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation template duplicate-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><template><i data-graft-key=\"u:aa\"></i><i data-graft-key=\"u:aa\"></i></template></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation mixed namespaces",
-            "consumers": ["browser-preflight"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><svg><g data-graft-key=\"u:aa\"/><g data-graft-key=\"u:aa\"/></svg></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation mixed namespaces-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><svg><g data-graft-key=\"u:aa\"/><g data-graft-key=\"u:aa\"/></svg></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation mixed namespaces-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><svg><g data-graft-key=\"u:aa\"/><g data-graft-key=\"u:aa\"/></svg></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 6",
-            "consumers": ["browser-preflight"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 6-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 6-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 7",
-            "consumers": ["browser-preflight"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:a\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 7-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:a\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 7-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:a\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 8",
-            "consumers": ["browser-preflight"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:AA\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 8-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:AA\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 8-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:AA\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 9",
-            "consumers": ["browser-preflight"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"x:aa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 9-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"x:aa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 9-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"x:aa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 10",
-            "consumers": ["browser-preflight"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:00:\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 10-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:00:\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 10-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:00:\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 11",
-            "consumers": ["browser-preflight"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:000000026202\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 11-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:000000026202\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 11-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:000000026202\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 12",
-            "consumers": ["browser-preflight"],
-            "expectation": "accept",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 12-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "accept",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 12-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "accept",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 13",
-            "consumers": ["browser-preflight"],
-            "expectation": "accept",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 13-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "accept",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 13-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "accept",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 14",
-            "consumers": ["browser-preflight"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 14-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 14-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 15",
-            "consumers": ["browser-preflight"],
-            "expectation": "accept",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:&#97;&#97;\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 15-live",
-            "consumers": ["browser-preflight-live"],
-            "expectation": "accept",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:&#97;&#97;\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation marker 15-frame",
-            "consumers": ["browser-preflight-frame"],
-            "expectation": "accept",
-            "initialDocument": "<main id=\"fixture-target\"></main>",
-            "envelope": "<graft-patch-set version=\"1\" phase=\"final\"><graft-patch operation=\"children\" target=\"fixture-target\"><template><i id=\"valid\" data-graft-key=\"u:&#97;&#97;\"></i></template></graft-patch></graft-patch-set>"
-        },
-        {
-            "name": "reconciliation decoded authored maximum",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "accept",
-            "keyInput": { "prefix": "u:", "repeat": "&#97;", "count": 1022 }
-        },
-        {
-            "name": "reconciliation decoded authored overflow",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": { "prefix": "u:", "repeat": "&#97;", "count": 1024 }
-        },
-        {
-            "name": "reconciliation generated maximum",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "accept",
-            "keyInput": {
-                "prefix": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:000001d973000001d4",
-                "repeat": "61",
-                "count": 468
-            }
-        },
-        {
-            "name": "reconciliation generated overflow",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": {
-                "prefix": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:10:000001d973000001d4",
-                "repeat": "61",
-                "count": 468
-            }
-        },
-        {
-            "name": "reconciliation decoded trailing newline",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "u:aa&#10;"
-        },
-        {
-            "name": "reconciliation maximum slot",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "accept",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:18446744073709551615:"
-        },
-        {
-            "name": "reconciliation slot overflow",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:18446744073709551616:"
-        },
-        {
-            "name": "reconciliation short namespace",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "g1:aa:0:"
-        },
-        {
-            "name": "reconciliation boolean scope sequence",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "accept",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:000000026200000000026201"
-        },
-        {
-            "name": "reconciliation nested tuple with empty string and integer",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "accept",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:0000002174000000020000000573000000000000000f740000000100000006690000000137"
-        },
-        {
-            "name": "reconciliation UTF-8 string",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "accept",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:000000077300000002c3a9"
-        },
-        {
-            "name": "reconciliation invalid UTF-8 string",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:000000077300000002c0af"
-        },
-        {
-            "name": "reconciliation BOM-prefixed integer",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:000000096900000004efbbbf31"
-        },
-        {
-            "name": "reconciliation minimum signed integer",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "accept",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:0000002d69000000282d313730313431313833343630343639323331373331363837333033373135383834313035373238"
-        },
-        {
-            "name": "reconciliation maximum unsigned integer",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "accept",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:0000002c6900000027333430323832333636393230393338343633343633333734363037343331373638323131343535"
-        },
-        {
-            "name": "reconciliation signed integer underflow",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:0000002d69000000282d313730313431313833343630343639323331373331363837333033373135383834313035373239"
-        },
-        {
-            "name": "reconciliation unsigned integer overflow",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:0000002c6900000027333430323832333636393230393338343633343633333734363037343331373638323131343536"
-        },
-        {
-            "name": "reconciliation negative zero",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:0000000769000000022d30"
-        },
-        {
-            "name": "reconciliation truncated frame header",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:000000"
-        },
-        {
-            "name": "reconciliation truncated frame payload",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:000000036201"
-        },
-        {
-            "name": "reconciliation empty value frame",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:00000000"
-        },
-        {
-            "name": "reconciliation unknown semantic tag",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:0000000178"
-        },
-        {
-            "name": "reconciliation trailing string bytes",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:00000006730000000061"
-        },
-        {
-            "name": "reconciliation tuple count mismatch",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:0000000b7400000002000000026201"
-        },
-        {
-            "name": "reconciliation tuple count overflow",
-            "consumers": [
-                "browser-preflight",
-                "browser-preflight-live",
-                "browser-preflight-frame"
-            ],
-            "expectation": "protocol",
-            "browserReason": "target-content",
-            "keyInput": "g1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:00000005740000000d"
         }
-    ],
-    "reconciliation": {
-        "attribute": "data-graft-key",
-        "format": 1,
-        "maximumBytes": 1024,
-        "authoredPrefix": "u:",
-        "generatedPrefix": "g1:",
-        "namespaceHexDigits": 64,
-        "slotMaximum": "18446744073709551615",
-        "semanticMaximumBytes": 1024,
-        "markerIdDomains": "distinct",
-        "scope": "siblings",
-        "emptyMarker": "reject",
-        "malformedMarker": "reject"
-    }
+    ]
 }

@@ -68,6 +68,16 @@ A host can use that snapshot before an automatic preference update. A host can c
 
 A settlement listener can synchronously submit another command. Live work remains suspended until that command also reaches a known result.
 
+## Content validation
+
+Preflight inspects content before each host validation callback. After all callbacks return, it inspects the final fragments again before any patch applies.
+
+The final inspection enforces script rejection and ID validity. It also enforces node and depth bounds. Replacement roots from a callback become the prepared patch roots.
+
+Without a content callback, preflight inspects each private fragment once. The document-wide ID scan still follows batch preparation.
+
+Hypergraft accesses native form properties during preflight and adapter operations. These guards prevent named controls from replacing those members. They do not extend into Morphlex internals.
+
 ## Pending form state
 
 Temporary pending state is not the latest authoritative form state.
@@ -193,6 +203,8 @@ The [anonymous task list](../examples/reference/README.md) does not use this ges
 
 Other initialisers can return an `IslandInstance`, a cleanup callback or `void`. Mount, reconciliation and destruction failures are isolated per island. Connected roots mount once. Applied patches scan their targets before reconciliation. Location changes scan the document before reconciliation. A retained node that gains `data-island` through morph mounts after the patch. Moved roots keep their instances. Disconnected roots are cleaned up.
 
+The observer also detects `data-island` attribute changes on connected roots. Additions mount an instance. Name changes end the previous lifetime, and attribute removal destroys the instance.
+
 An instance that needs lifecycle facts implements `reconcile(context)`. `IslandReconcileContext` is a discriminated union exported from `hypergraft/browser/islands`. The [island recipe](#island-recipe) consumes it after form settlement.
 
 `{ cause: "patch", detail: RequestSettledDetail }` describes a settled form request. That includes safe failure and unsafe uncertainty without invented targets. `{ cause: "live-patch", detail: AppliedLivePatchDetail }` describes an applied live patch. `{ cause: "location", detail: LocationChangeDetail }` describes a completed enhanced location change.
@@ -258,19 +270,3 @@ startHypergraft({ islands: { "position-preview": initPositionPreview } });
 ```
 
 Reconciliation re-reads the server-rendered root. It does not infer completion from DOM changes. Standalone integrations can instead use `observeIslands` and its returned cleanup function.
-
-## Active identity preflight
-
-The runtime rejects malformed reconciliation markers and duplicate sibling keys before application. Marker validation precedes ID fallback.
-
-The 1024-byte decoded metadata bound and canonical encoding follow [template identity](template-identity.md). Native template contents form separate sibling scopes. Append validation includes surviving children.
-
-All host content callbacks finish before the final fragment inspection. Key failures use the bounded `target-content` diagnostic without HTML or evaluated keys. Document-wide ID validation remains independent.
-
-Compiler and runtime deployments require the same reconciliation fixture revision before generated markers enter production output. Protocol version, operations and transport limits remain unchanged.
-
-The owned reconciler matches keys only among direct siblings. Unkeyed nodes correspond by ordinal among unkeyed siblings, including text and comments.
-
-Incompatible candidates receive replacement without descendant reuse. Compatible elements retain object identity and receive authoritative attributes and control properties.
-
-Native `moveBefore` preserves platform state when its preconditions hold. Ordinary DOM moves preserve object identity but can trigger custom-element connection callbacks.

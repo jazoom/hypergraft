@@ -1,8 +1,6 @@
-import { ID_PATTERN, addIncomingId, validateDocumentIds } from "./document-ids";
-import { elementProperty, nodeProperty } from "./dom";
-import { validateSiblingKeys } from "./identity";
 import { HypergraftError } from "./diagnostics";
-import { appendChildren, morphChildren, captureControls } from "./morph";
+import { elementProperty, nodeProperty } from "./dom";
+import { appendChildren, morphChildren } from "./morph";
 
 export const PROTOCOL_VERSION = "1";
 export const MEDIA_TYPE = "text/vnd.hypergraft.patches+html";
@@ -13,7 +11,8 @@ export const MAX_INSERTED_NODES = 1_000_000;
 export const MAX_NESTING_DEPTH = 64;
 export const MAX_STREAM_FRAMES = 256;
 export const MAX_STREAM_BYTES = 256 * 1024 * 1024;
-export { ID_PATTERN_SOURCE } from "./document-ids";
+export const ID_PATTERN_SOURCE = "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$";
+const ID_PATTERN = new RegExp(ID_PATTERN_SOURCE);
 export const PATCH_STATUSES = [200, 401, 409, 422, 429] as const;
 export const STREAM_STATUSES = [200, 401, 409, 422] as const;
 export type AcceptedPatchStatus = (typeof PATCH_STATUSES)[number];
@@ -358,8 +357,11 @@ function parseEnvelope(
         nodeCount += inspected.count;
         if (nodeCount > MAX_INSERTED_NODES)
             fail("target-content", "node bound exceeded", id);
-        for (const insertedId of inspected.ids)
-            addIncomingId(insertionIds, insertedId, id);
+        for (const insertedId of inspected.ids) {
+            if (insertionIds.has(insertedId))
+                fail("target-content", "duplicate inserted ID", id);
+            insertionIds.add(insertedId);
+        }
         fragments.push(clone);
         patches.push({
             target,
@@ -368,38 +370,51 @@ function parseEnvelope(
             nodes: [...clone.childNodes],
         });
     }
-    // Host callbacks can retain and mutate earlier fragments.
-    insertionIds.clear();
-    nodeCount = 0;
-    for (const [index, patch] of patches.entries()) {
-        const fragment = fragments[index]!;
-        const inspected = inspectContent(fragment, patch.targetId);
-        nodeCount += inspected.count;
-        if (nodeCount > MAX_INSERTED_NODES)
-            fail("target-content", "node bound exceeded", patch.targetId);
-        patch.nodes = [...fragment.childNodes];
-        try {
-            const current =
-                patch.target instanceof HTMLTemplateElement
-                    ? patch.target.content.childNodes
-                    : nodeProperty(patch.target, "childNodes");
-            if (patch.operation === "append")
-                validateSiblingKeys([...current, ...patch.nodes]);
-            else {
-                validateSiblingKeys(current);
-                validateSiblingKeys(patch.nodes);
+    // Host callbacks can retain and mutate earlier fragments before the batch is complete.
+    if (validateContent) {
+        insertionIds.clear();
+        nodeCount = 0;
+        for (const [index, patch] of patches.entries()) {
+            const fragment = fragments[index]!;
+            const inspected = inspectContent(fragment, patch.targetId);
+            nodeCount += inspected.count;
+            if (nodeCount > MAX_INSERTED_NODES)
+                fail("target-content", "node bound exceeded", patch.targetId);
+            patch.nodes = [...fragment.childNodes];
+            for (const id of inspected.ids) {
+                if (insertionIds.has(id))
+                    fail(
+                        "target-content",
+                        "duplicate inserted ID",
+                        patch.targetId,
+                    );
+                insertionIds.add(id);
             }
-        } catch {
-            fail(
-                "target-content",
-                "invalid reconciliation metadata",
-                patch.targetId,
-            );
         }
-        for (const id of inspected.ids)
-            addIncomingId(insertionIds, id, patch.targetId);
     }
-    validateDocumentIds(liveDocument, patches, insertionIds);
+    const survivingIds = new Set<string>();
+    for (const element of liveDocument.querySelectorAll("[id]")) {
+        if (
+            patches.some(
+                (p) =>
+                    p.operation === "children" &&
+                    nodeProperty(p.target, "contains").call(
+                        p.target,
+                        element,
+                    ) &&
+                    p.target !== element,
+            )
+        )
+            continue;
+        const id = elementProperty(element, "id");
+        if (
+            !ID_PATTERN.test(id) ||
+            survivingIds.has(id) ||
+            insertionIds.has(id)
+        )
+            fail("target-content", "final ID collision");
+        survivingIds.add(id);
+    }
     return {
         kind: "patches",
         batch: {
@@ -441,36 +456,11 @@ export function apply(
               direction: active.selectionDirection,
           }
         : null;
-    const controlRoots: Node[] = [];
-    const retainedSources: [Node, Node][] = [];
-    for (const patch of batch.patches) {
-        if (
-            patch.operation === "children" &&
-            (patch.target instanceof HTMLSelectElement ||
-                patch.target instanceof HTMLTextAreaElement)
-        ) {
-            const source = patch.target.cloneNode(false) as
-                HTMLSelectElement | HTMLTextAreaElement;
-            for (const node of patch.nodes) source.appendChild(node);
-            // A shallow textarea clone retains its dirty value, not source text.
-            if (source instanceof HTMLTextAreaElement)
-                source.value = source.defaultValue;
-            patch.nodes = Array.from(source.childNodes);
-            controlRoots.push(source);
-            retainedSources.push([source, patch.target]);
-        } else for (const node of patch.nodes) controlRoots.push(node);
-    }
-    const controls = captureControls(controlRoots, retainedSources);
     for (const patch of batch.patches) {
         if (patch.operation === "append")
             appendChildren(patch.target, patch.nodes);
-        else
-            morphChildren(patch.target, patch.nodes, (element, source) => {
-                controls.retain(element, source);
-                consumeOwned?.(element, source);
-            });
+        else morphChildren(patch.target, patch.nodes, consumeOwned);
     }
-    controls.restore();
     if (batch.title !== undefined) document.title = batch.title;
     const finalControl =
         active && nodeProperty(active, "isConnected")

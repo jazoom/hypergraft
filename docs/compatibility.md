@@ -9,33 +9,15 @@ An incompatible wire change requires a new protocol version.
 [`protocol-v1.json`](../protocol-v1.json) is the canonical fixture.
 Read [Protocol version 1](protocol-v1.md) for the wire rules.
 
-## Template identity migration
+## Template engine rollback
 
-[Template language](template-language.md) and [Template identity](template-identity.md) define the approved replacement contract from [NEXT.md](../NEXT.md).
+Hypergraft again uses Askama and Morphlex. The [template engine decision](template-engine-decision.md) records the rollback and deployment procedure.
 
-Identity metadata stays inside HTML content. This plan changes no wire version, envelope operation or existing resource limit. It adds a bounded interpretation of `data-graft-key` within the coordinated source-preview compiler/runtime pair.
+The runtime no longer interprets generated reconciliation markers. Open documents require a reload with the restored templates and browser bundle.
 
-This decision does not claim transparent mixed-runtime compatibility. Older runtimes do not enforce the marker contract. Morphlex does not implement the specified sibling-local correspondence. Previously accepted arbitrary marker values can fail the new validator.
+Empty incoming ID attributes now fail the existing ID syntax rule. Earlier inspection incorrectly treated them as absent. The canonical fixture covers all browser preflight entry points.
 
-Browser preflight now enforces the canonical fixture's reconciliation metadata rules. Automatic compiler annotations enter production only after that validation boundary. Compiler and browser releases must use the same fixture revision.
-
-Deployment must replace cached browser bundles with the matching runtime before annotated output becomes active. Open documents also need a reload into that matched deployment. A cache update alone does not replace an active runtime.
-
-Existing authored markers must satisfy the new encoding before key validation becomes active. Current-subtree validation also rejects invalid markers in contents that a patch replaces. Such documents need a full reload with valid markup, not a repair patch.
-
-The owned reconciler replaces Morphlex. Unkeyed correspondence now uses sibling-local ordinals, including whitespace text and comments. It never searches for similar descendants.
-
-An incompatible ancestor ends descendant identity. Different effective input types require replacement. Authoritative snapshots supersede dirty control properties, even when attributes remain equal.
-
-Native moves preserve platform state when applicable. Fallback moves retain object identity but can trigger custom-element connection callbacks.
-
-The compiler rejects HTML reconstruction that duplicates formatting elements. Previously accepted templates that depend on this repair need explicit closing tags within each parent. This compiler diagnostic changes no wire rule.
-
-Nested expressions inside foreign script or style contents now receive compiler diagnostics. Value-dependent tree-construction attributes require literal values in their affected contexts. Ordinary input types and foreign font attribute values remain dynamic where the template contract permits them.
-
-Incoming empty `id` attributes now fail the existing ID syntax rule. Older inspection incorrectly treated them as absent. The canonical fixture now covers this distinction for every browser preflight entry point.
-
-If implementation reveals a wire incompatibility beyond this coordinated metadata contract, dependent work must stop until explicit approval of a protocol version change.
+Native form-property guards protect Hypergraft code. They do not change Morphlex internals. Controls that shadow DOM members used by Morphlex can still disrupt its traversal.
 
 ## Tested engines
 

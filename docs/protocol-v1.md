@@ -39,8 +39,6 @@ A target identifier matches `^[A-Za-z][A-Za-z0-9_.:-]{0,127}$`.
 It is ASCII.
 It is at most 128 bytes.
 
-Every present no-namespace `id` attribute uses the same rule. An absent attribute supplies no ID. An empty incoming ID fails preflight, including inside native template contents.
-
 ## Wire limits
 
 The fixture publishes these numerical bounds:
@@ -100,22 +98,16 @@ It enforces a maximum of 1000000 inserted nodes and a nesting depth of 64.
 These limits require DOM inspection, not just wire parsing.
 The browser rejects a script element.
 The browser rejects unknown envelope attributes.
+Empty incoming ID attributes fail the existing ID syntax rule, including inside native template contents.
+A replacement can remove an invalid ID, but surviving document IDs must remain valid and unique.
+
+Content inspection precedes each host validation callback.
+After all callbacks return, the browser inspects the exact final fragments again before application.
+This inspection covers callback changes to earlier fragments and their roots.
 
 Complete batch preflight does not promise rollback after an application-time exception.
 `apply` mutates targets in sequence.
 If an exception occurs after preflight, earlier morph work in that batch remains.
-
-## Planned reconciliation metadata
-
-[Template identity](template-identity.md) specifies the approved HTML identity contract and active `reconciliation` fixture section. [Template language](template-language.md) specifies its compiler producer.
-
-Browser preflight enforces this fixture revision before automatic annotations enter production output.
-
-The coordinated migration retains version `1`, both operations and all existing resource limits. Generated metadata consumes the existing response byte budget. The new decoded marker bound is separate from those unchanged budgets.
-
-Marker validation does not replace final document-wide ID validation. The current Morphlex engine does not provide the future correspondence contract. [Compatibility](compatibility.md#template-identity-migration) records mixed-runtime limitations and the rollout requirement.
-
-A wire incompatibility outside this approved metadata contract blocks dependent work until explicit version approval.
 
 ## Request cancellation
 
@@ -276,8 +268,6 @@ An optional `browserReason` specifies the browser diagnostic category when it di
 Byte-length cases generate otherwise valid inputs at the specified length.
 Control byte-length cases pad a valid terminal control with JSON whitespace.
 
-A `contentInput` case supplies patch contents for each listed browser consumer. The frame consumer adds `phase="final"` to the envelope. These cases distinguish absent IDs from empty attributes.
-
 Consumers are:
 
 - `rust-control`: `parse_control`
@@ -292,15 +282,3 @@ Consumers are:
 Tests feed those cases to production parsers and builders.
 They do not add a second conformance codec.
 Browser control tests assert only messages that the runtime sends.
-
-## Active identity preflight
-
-The runtime rejects malformed reconciliation markers and duplicate sibling keys before application. Marker validation precedes ID fallback.
-
-The 1024-byte decoded metadata bound and canonical encoding follow [template identity](template-identity.md). Native template contents form separate sibling scopes. Append validation includes surviving children.
-
-All host content callbacks finish before the final fragment inspection. Key failures use the bounded `target-content` diagnostic without HTML or evaluated keys. Document-wide ID validation remains independent.
-
-Compiler and runtime deployments require the same reconciliation fixture revision before generated markers enter production output. Protocol version, operations and transport limits remain unchanged.
-
-The owned reconciler uses the same effective keys for sibling-local correspondence. Compatible nodes retain identity and receive authoritative attributes and control properties.

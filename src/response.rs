@@ -1,6 +1,6 @@
 //! Bounded Hypergraft response construction.
 
-use crate::{GraftTemplate, TemplateError};
+use askama::Template;
 use axum::{
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
@@ -30,7 +30,7 @@ pub enum PatchBuildErrorKind {
 /// A failure to construct a valid bounded patch response.
 #[derive(Debug)]
 pub enum PatchBuildError {
-    Rendering(TemplateError),
+    Rendering(askama::Error),
     DuplicateTarget,
     PatchLimit,
     EmptyBatch,
@@ -331,7 +331,7 @@ impl PatchSet {
         Ok(self)
     }
 
-    pub fn children<T: GraftTemplate>(
+    pub fn children<T: Template>(
         &mut self,
         target: impl AsRef<str>,
         template: &T,
@@ -339,7 +339,7 @@ impl PatchSet {
         self.push(target, PatchOperation::Children, template)
     }
 
-    pub fn with_children<T: GraftTemplate>(
+    pub fn with_children<T: Template>(
         mut self,
         target: impl AsRef<str>,
         template: &T,
@@ -348,7 +348,7 @@ impl PatchSet {
         Ok(self)
     }
 
-    pub fn append<T: GraftTemplate>(
+    pub fn append<T: Template>(
         &mut self,
         target: impl AsRef<str>,
         template: &T,
@@ -356,7 +356,7 @@ impl PatchSet {
         self.push(target, PatchOperation::Append, template)
     }
 
-    pub fn with_append<T: GraftTemplate>(
+    pub fn with_append<T: Template>(
         mut self,
         target: impl AsRef<str>,
         template: &T,
@@ -365,7 +365,7 @@ impl PatchSet {
         Ok(self)
     }
 
-    fn push<T: GraftTemplate>(
+    fn push<T: Template>(
         &mut self,
         target: impl AsRef<str>,
         operation: PatchOperation,
