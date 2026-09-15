@@ -23,6 +23,11 @@ Write:
 - Protocol: request classification, envelope bounds, live socket bounds and the browser state machine.
 - Cross-language lock-step with `protocol-v1.json`.
 - Island registry behaviour that this crate owns.
+- Compiler-owned identity and escaping contracts from `NEXT.md`, including page/block key equality and narrow block dependencies.
+- Compiler diagnostics for unavailable block context and invalid block selection, not duplicate coverage of ordinary Rust type errors.
+- Semantic key stability, conditional alternatives, sibling fragment scopes and duplicate key rejection.
+- Escaped output, typed composition boundaries and rebuild detection for external template dependencies.
+- Focused reconciliation contracts for retained identity, authoritative controls, pending ownership and focus. These do not authorise a general application browser suite.
 
 Do not write:
 

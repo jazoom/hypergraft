@@ -103,6 +103,18 @@ Complete batch preflight does not promise rollback after an application-time exc
 `apply` mutates targets in sequence.
 If an exception occurs after preflight, earlier morph work in that batch remains.
 
+## Planned reconciliation metadata
+
+[Template identity](template-identity.md) specifies the approved HTML identity contract and proposed `reconciliation` fixture section. [Template language](template-language.md) specifies its compiler producer.
+
+This specification does not activate key validation. The preflight task updates `protocol-v1.json` and its first runtime consumers together, before automatic annotations enter production output.
+
+The coordinated migration retains version `1`, both operations and all existing resource limits. Generated metadata consumes the existing response byte budget. The new decoded marker bound is separate from those unchanged budgets.
+
+Marker validation does not replace final document-wide ID validation. The current Morphlex engine does not provide the future correspondence contract. [Compatibility](compatibility.md#template-identity-migration) records mixed-runtime limitations and the rollout requirement.
+
+A wire incompatibility outside this approved metadata contract blocks dependent work until explicit version approval.
+
 ## Request cancellation
 
 A client can cancel a safe GET or navigation.
