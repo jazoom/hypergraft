@@ -385,6 +385,6 @@ Import the public browser entry:
 import { startHypergraft } from "hypergraft/browser";
 ```
 
-The public browser entry is `hypergraft/browser`. Private runtime modules are not a supported integration. The supported integration contains one bundled runtime copy.
+The public browser entry is `hypergraft/browser`. Named [entry effects](browser-runtime.md#entry-effects) use that entry and ordinary template attributes. They need no new Rust response API. Private runtime modules are not a supported integration. The supported integration contains one bundled runtime copy.
 
 Read [Protocol version 1](protocol-v1.md) for wire limits. Read [Browser runtime](browser-runtime.md) for request lifecycle.

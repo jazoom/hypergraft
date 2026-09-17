@@ -1,4 +1,5 @@
 import { HypergraftError } from "./diagnostics";
+import type { EnterEffects } from "./enter-effects";
 import { elementProperty, nodeProperty } from "./dom";
 import { appendChildren, morphChildren } from "./morph";
 
@@ -446,7 +447,11 @@ export function apply(
     // The source distinguishes authored attributes from the pending overlay.
     // The live DOM alone cannot establish ownership, even after a morph.
     consumeOwned?: (element: Element, source: Element) => void,
+    effects?: EnterEffects,
+    enter = true,
 ) {
+    const targets = effects ? batch.patches.map((patch) => patch.target) : [];
+    const before = enter ? effects?.capture(targets) : undefined;
     const active = document.activeElement;
     const focusId = active ? elementProperty(active, "id") : undefined;
     const selection = supportsTextSelection(active)
@@ -491,4 +496,5 @@ export function apply(
             selection.direction ?? undefined,
         );
     }
+    effects?.apply(targets, before);
 }

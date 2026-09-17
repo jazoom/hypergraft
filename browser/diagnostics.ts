@@ -16,7 +16,8 @@ export type DiagnosticReason =
     | "invalid-command-form"
     | "unknown-island"
     | "invalid-feedback"
-    | "command-blocked";
+    | "command-blocked"
+    | "enter-effect";
 
 /** A bounded failure fact. `targetId` is present only when a validated target
  * identifier existed at the point of failure; `element` is the originating
@@ -29,6 +30,7 @@ export type DiagnosticDetail =
               | "command-blocked"
               | "unknown-island"
               | "invalid-feedback"
+              | "enter-effect"
           >;
           requestKind: "navigation" | "patch";
           unsafe: boolean;
@@ -53,6 +55,16 @@ export type DiagnosticDetail =
     | {
           reason: "invalid-feedback";
           element: HTMLElement;
+      }
+    | {
+          reason: "enter-effect";
+          issue:
+              | "invalid-definition"
+              | "unknown-effect"
+              | "missing-id"
+              | "unavailable"
+              | "animation-failure";
+          element?: Element;
       };
 
 export function emitDiagnostic(detail: DiagnosticDetail): void {
@@ -77,6 +89,7 @@ type FailureReason = Exclude<
     | "unknown-island"
     | "invalid-feedback"
     | "command-blocked"
+    | "enter-effect"
 >;
 
 /** Internal error used by the bounded reader and preflight. Public diagnostics

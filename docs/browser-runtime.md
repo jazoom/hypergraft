@@ -112,6 +112,97 @@ Failure statuses are included only when the received status is accepted by versi
 
 Complete batch preflight does not promise rollback after an application-time exception. Read [Protocol version 1](protocol-v1.md) for wire limits and named rejection cases.
 
+## Entry effects
+
+`startHypergraft({ enterEffects })` registers named Web Animations definitions. An element opts in through `data-graft-enter="name"` and a stable DOM `id`.
+
+```html
+<article id="conversation-c42-message-7" data-graft-enter="message">
+    New message
+</article>
+```
+
+```ts
+startHypergraft({
+    enterEffects: {
+        message: {
+            keyframes: [
+                { opacity: 0.2, transform: "translateY(10px)" },
+                { opacity: 1, transform: "none" },
+            ],
+            timing: {
+                duration: 240,
+                easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+            },
+            reducedMotion: {
+                keyframes: [{ opacity: 0.65 }, { opacity: 1 }],
+                timing: { duration: 170 },
+            },
+        },
+    },
+});
+```
+
+`EnterAnimation` and `EnterEffect` are public types from `hypergraft/browser`. The registry belongs to one runtime. Startup compiles its definitions independently. Later changes to the configuration object do not change those definitions.
+
+`keyframes` accepts a Web Animations keyframe array or property-indexed object. `timing.duration` is required. `timing.delay` defaults to zero, and `timing.easing` defaults to `linear`. Duration and delay use milliseconds. Both values and their sum must be finite and non-negative.
+
+Other timing fields are invalid. Hypergraft fixes one iteration and `fill: "none"`. The browser validates keyframes and easing. Effects never commit styles or add temporary classes. Transport settlement does not wait for completion. During a delay, the element keeps its default appearance.
+
+### Identity and eligibility
+
+After complete batch preflight, Hypergraft snapshots every ID within the affected targets, including the targets themselves. It applies all patches and restores focus before it starts effects. Only opted-in elements with IDs absent from that snapshot receive effects.
+
+The comparison covers the union of the batch targets. An existing identity does not replay after a text update or node replacement. A move does not cause replay. A replacement island root does not erase the snapshot. An existing identity that gains the opt-in attribute does not receive an effect. Nested opted-in elements receive independent effects when both identities are new.
+
+The comparison does not extend node-retention guarantees across targets. It controls effect eligibility only. IDs must identify the same logical content throughout a page's targeted updates. Conversation-qualified IDs distinguish messages with equal indices in different conversations.
+
+There is no permanent identity history. Removal and reintroduction in a later batch count as a new entry. A bounded view can therefore animate old content that re-enters the view. Pagination and filters can cause the same result. Entry does not mean creation in the domain.
+
+These patch sources share this comparison:
+
+- Complete form responses.
+- Individual stream frames.
+- Live patches.
+
+Targeted GET forms remain eligible even when they replace the browser URL. A command's canonical location replacement also remains eligible.
+
+These contexts do not start entry effects:
+
+- Initial documents.
+- Enhanced link navigation.
+- History traversal.
+
+A successful navigation cancels active effects, including effects on retained elements. A navigation envelope leaves the document through the existing navigation path.
+
+### Lifecycle and reduced motion
+
+Entry effects start after patch application and focus restoration, before transport lifecycle events and patch-induced island mounts. They do not wait for island initialisation. Island code must not depend on entry-effect completion. Scroll control and progressive text reveal remain host behaviour.
+
+A later patch does not restart an active effect for a retained identity. Disconnection or an ID change cancels the old element's effect. A replacement element with the same ID stays in its default state without replay. A mutation observer also cancels owned effects after external DOM removal or ID changes.
+
+Completion releases the runtime's references to the effect. Teardown and runtime replacement cancel all owned effects. They do not cancel animations that the host or CSS owns.
+
+Under `prefers-reduced-motion: reduce`, the default is no entry effect. An optional `reducedMotion` definition supplies an explicit alternative. A preference change cancels all active entry effects without replay or substitution. Later entries use the new preference.
+
+Content must remain visible in its default state. Final keyframes must match the intended default appearance because effects leave no persistent styles. The feature needs no CSP exception. It introduces neither inline code nor inline style attributes. It evaluates no attribute expressions.
+
+### Failure isolation
+
+Entry effects are optional presentation. An effect failure never changes a successful transport outcome or delays settlement. It neither retains a command lock nor causes a retry. Patch failures retain their existing failure path. A rejected or partially failed batch starts no new effects. Earlier successful stream frames keep their own effect lifetimes.
+
+An `enter-effect` diagnostic carries one closed `issue`:
+
+- `invalid-definition`: startup disables that definition, including its reduced-motion alternative.
+- `unknown-effect`: the element names no registered definition.
+- `missing-id`: the opted-in element has no ID.
+- `unavailable`: the browser cannot initialise effect support.
+- `animation-failure`: an effect operation fails.
+
+Element-specific diagnostics include the element. Diagnostics omit definitions and attribute values. They expose no exception text. Invalid definitions do not disable valid definitions. Unknown names and absent IDs leave content visible without animation. Without a configured registry, entry attributes have no effect.
+
+The version 1 envelope and Rust response API remain unchanged.
+
 ## Live transport state
 
 `hypergraft:livestatechange` reports only transport state. Its closed state union contains:
@@ -171,7 +262,7 @@ Safe failures are tracked by source form, not by a request lane. A successful re
 
 `hypergraft:diagnostic` is a typed, secret-safe fact. It is emitted before fallback or feedback. Closed reasons cover transport, redirect, byte limit, UTF-8, protocol, target and content, and patch-application failures. They also cover invalid live-form, invalid command-form, unknown-island and feedback configuration.
 
-Request diagnostics are bounded to request classification, URL, originating element and, where already validated, target identifier. Configuration diagnostics carry only their closed element or island-name facts. Diagnostics never expose response bodies, form values, server diagnostics or arbitrary exceptions.
+Request diagnostics are bounded to request classification, URL, originating element and, where already validated, target identifier. Configuration diagnostics carry only their closed element, island-name or entry-effect issue facts. Diagnostics never expose response bodies, form values, server diagnostics or arbitrary exceptions.
 
 The request URL can contain sensitive query values. Host policy for diagnostic logs remains a host concern. Read [Live](live.md) for the server counterpart.
 

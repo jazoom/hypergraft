@@ -7,6 +7,7 @@ export {
     readBoundedResponse,
 } from "./requests";
 export * from "./events";
+export type { EnterAnimation, EnterEffect } from "./enter-effects";
 export {
     DIAGNOSTIC_EVENT,
     emitDiagnostic,

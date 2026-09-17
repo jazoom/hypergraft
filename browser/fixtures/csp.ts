@@ -1,4 +1,5 @@
 import { startHypergraft } from "../requests";
+import { createEnterEffects } from "../enter-effects";
 import * as primaryPatches from "../patches";
 // @ts-expect-error separately evaluated copy
 import * as duplicatePatches from "../patches?hypergraft-copy=duplicate";
@@ -8,6 +9,7 @@ export type FixtureAction =
     | "restart-runtime"
     | "preflight-primary"
     | "apply-primary"
+    | "apply-entry"
     | "preflight-duplicate"
     | "submit-disabled";
 
@@ -38,6 +40,8 @@ export type FixtureResult = {
     pending?: boolean;
     sameButton?: boolean;
     uncertain?: boolean;
+    animated?: boolean;
+    inlineStyle?: boolean;
 };
 
 const PATCH_CONTENT = '<p id="patched">Patched</p>';
@@ -166,6 +170,36 @@ async function handle(request: FixtureRequest) {
                 if (prepared.kind === "patches")
                     primaryPatches.apply(prepared.batch);
                 reply(request.id, { ok: true });
+                return;
+            }
+            case "apply-entry": {
+                const fade = {
+                    keyframes: [{ opacity: 0.2 }, { opacity: 1 }],
+                    timing: { duration: 60_000 },
+                };
+                const effects = createEnterEffects({
+                    message: { ...fade, reducedMotion: fade },
+                });
+                try {
+                    const { body, response } = envelope(
+                        primaryPatches,
+                        '<p id="patched" data-graft-enter="message">Patched</p>',
+                    );
+                    const prepared = primaryPatches.preflight(response, body);
+                    if (prepared.kind !== "patches")
+                        throw new Error("Expected patches");
+                    primaryPatches.apply(prepared.batch, undefined, effects);
+                    await new Promise(requestAnimationFrame);
+                    await new Promise(requestAnimationFrame);
+                    const element = document.getElementById("patched")!;
+                    reply(request.id, {
+                        ok: true,
+                        animated: element.getAnimations().length === 1,
+                        inlineStyle: element.hasAttribute("style"),
+                    });
+                } finally {
+                    effects.destroy();
+                }
                 return;
             }
             case "preflight-duplicate": {

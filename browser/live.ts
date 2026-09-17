@@ -1,4 +1,5 @@
 import { emitDiagnostic, HypergraftError } from "./diagnostics";
+import type { EnterEffects } from "./enter-effects";
 import {
     emitLivePatch,
     emitLiveStateChange,
@@ -57,6 +58,7 @@ export type LiveControllerOptions = {
     endpoint?: string;
     disposed: () => boolean;
     validateContent?: ValidateContent;
+    enterEffects?: EnterEffects;
 };
 
 function sameOrigin(url: URL) {
@@ -416,7 +418,7 @@ export function createLiveController(
             }
         }
         try {
-            apply(batch);
+            apply(batch, undefined, options.enterEffects);
         } catch (error) {
             emitDiagnostic({
                 reason: "apply-failure",

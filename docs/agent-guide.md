@@ -311,6 +311,37 @@ Live hosts also need the explicit WebSocket source from `LiveEndpoint::csp_conne
 - Do not patch both a parent target and its descendant in one batch.
 - Do not include a retained target's wrapper in its `children` content.
 
+## Optional entry effects
+
+`startHypergraft({ enterEffects })` owns identity-aware entry effects for targeted patches. The host supplies named Web Animations definitions. Markup selects a definition through `data-graft-enter="name"` and a stable DOM `id`.
+
+```ts
+startHypergraft({
+    enterEffects: {
+        row: {
+            keyframes: [{ opacity: 0.2 }, { opacity: 1 }],
+            timing: { duration: 200 },
+        },
+    },
+});
+```
+
+```html
+<li id="task-42" data-graft-enter="row">Read the security notes</li>
+```
+
+A whole-batch ID comparison prevents replay after text updates or root replacement. Moves do not cause replay. Removal and reintroduction in a later batch count as a new entry. IDs must distinguish logical records across targeted updates.
+
+Initial documents receive no entry effects. Enhanced navigation and history traversal also receive no entry effects. Targeted GET forms and command-driven canonical location replacements remain eligible. Effects never delay settlement or change command outcomes.
+
+Reduced motion suppresses effects unless the definition supplies an explicit `reducedMotion` alternative. Preference changes cancel active effects. Runtime teardown cancels only runtime-owned effects.
+
+`timing` accepts finite, non-negative `duration` and optional `delay`. An optional `easing` selects the timing curve. The sum of duration and delay must remain finite. One iteration and no fill keep default styles authoritative. Unsupported timing fields disable the definition.
+
+Content must remain visible without animation. The host needs no message-ID tracker or submission snapshot. It also needs no animation settlement listener. The feature changes no version 1 wire fields.
+
+The [entry-effect contract](browser-runtime.md#entry-effects) defines lifecycle order and failure diagnostics.
+
 ## Optional live projections
 
 A GET form with `data-graft data-graft-live` declares one projection. Its canonical URL includes its successful form controls. The runtime shares one socket across eligible forms.

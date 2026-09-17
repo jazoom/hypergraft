@@ -90,6 +90,16 @@ test("applies a patch under the allowed Trusted Types policy", async () => {
     expect(applied.violations).toEqual([]);
 });
 
+test("entry effects require no inline style or CSP exception", async () => {
+    const { frame, trustedTypes } = await openFixture("allowed");
+    const result = await run(frame, "apply-entry");
+    expect(result.ok).toBe(true);
+    expect(result.animated).toBe(true);
+    expect(result.inlineStyle).toBe(false);
+    expect(result.policies).toEqual(trustedTypes ? ["hypergraft"] : []);
+    expect(result.violations).toEqual([]);
+});
+
 test("denies policy creation before mutation", async () => {
     const { frame, trustedTypes } = await openFixture("denied");
     const imported = await run(frame, "snapshot");

@@ -24,6 +24,11 @@ import {
 } from "./patches";
 import { readStreamFrames } from "./stream";
 import {
+    createEnterEffects,
+    type EnterEffect,
+    type EnterEffects,
+} from "./enter-effects";
+import {
     createLiveController,
     DEFAULT_LIVE_ENDPOINT,
     type LiveController,
@@ -59,6 +64,7 @@ type Runtime = {
     detachListeners: () => void;
     stopIslands: () => void;
     live: LiveController;
+    enterEffects?: EnterEffects;
 };
 
 export type CommandBlockReason =
@@ -85,6 +91,7 @@ export interface HypergraftOptions {
     feedback?: TransportFeedback;
     islands?: Record<string, IslandInitialiser>;
     liveEndpoint?: string;
+    enterEffects?: Record<string, EnterEffect>;
 }
 
 function pruneFailedSafeForms(runtime: Runtime): boolean {
@@ -310,6 +317,7 @@ async function consumeEnhanced(
     runtime: Runtime,
     response: Response,
     isStale: () => boolean,
+    requestKind: "navigation" | "patch",
     allowLocationReplacement: boolean,
     onProgress?: (batch: PreparedBatch, frame: number) => void,
     pending?: PendingSession,
@@ -350,7 +358,12 @@ async function consumeEnhanced(
                 response.status,
             );
         try {
-            apply(prepared.batch, consumeOwned);
+            apply(
+                prepared.batch,
+                consumeOwned,
+                runtime.enterEffects,
+                requestKind === "patch",
+            );
         } catch (error) {
             throw tagStatus(
                 new HypergraftError("apply-failure", errorMessage(error)),
@@ -393,7 +406,12 @@ async function consumeEnhanced(
                 runtime.options.validateContent,
             );
             try {
-                apply(prepared.batch, consumeOwned);
+                apply(
+                    prepared.batch,
+                    consumeOwned,
+                    runtime.enterEffects,
+                    requestKind === "patch",
+                );
             } catch (error) {
                 throw new HypergraftError("apply-failure", errorMessage(error));
             }
@@ -488,6 +506,7 @@ function diagnosticReason(
     | "command-blocked"
     | "unknown-island"
     | "invalid-feedback"
+    | "enter-effect"
 > {
     return hypergraftFailure(error)?.reason ?? "transport";
 }
@@ -554,6 +573,7 @@ async function safeRequest(
         runtime,
         response,
         () => runtime.disposed || lane.sequence !== sequence,
+        kind,
         false,
         failedForm
             ? (batch, frame) => {
@@ -871,6 +891,7 @@ type UnsafeOutcome =
               | "command-blocked"
               | "unknown-island"
               | "invalid-feedback"
+              | "enter-effect"
           >;
           targetId?: string;
       }
@@ -939,6 +960,7 @@ async function unsafeRequest(
             runtime,
             response,
             () => runtime.disposed,
+            "patch",
             true,
             (batch, frame) => {
                 form.setAttribute("data-graft-progress", "");
@@ -1144,6 +1166,7 @@ function handleLiveEvent(runtime: Runtime, event: Event) {
 
 function disposeRuntime(runtime: Runtime, replacement: boolean) {
     if (runtime.disposed) return;
+    runtime.enterEffects?.destroy();
     runtime.stopIslands();
     runtime.stopIslands = () => undefined;
     // Intentional teardown clears feedback synchronously; later responses
@@ -1178,6 +1201,9 @@ function createRuntime(options: HypergraftOptions): Runtime {
         queuedHistoryUrl: undefined,
         detachListeners: () => undefined,
         stopIslands: () => undefined,
+        enterEffects: options.enterEffects
+            ? createEnterEffects(options.enterEffects)
+            : undefined,
         live: {
             reconcile() {},
             retireForm() {},
@@ -1191,6 +1217,7 @@ function createRuntime(options: HypergraftOptions): Runtime {
         endpoint: options.liveEndpoint ?? DEFAULT_LIVE_ENDPOINT,
         disposed: () => runtime.disposed,
         validateContent: options.validateContent,
+        enterEffects: runtime.enterEffects,
     });
     if (documentUnsafe.kind !== "idle") runtime.live.suspend();
     history.replaceState({ ...(history.state ?? {}), hypergraft: true }, "");

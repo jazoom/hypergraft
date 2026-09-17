@@ -19,6 +19,7 @@
     "files": [
         "browser/diagnostics.ts",
         "browser/dom.ts",
+        "browser/enter-effects.ts",
         "browser/events.ts",
         "browser/feedback.ts",
         "browser/index.ts",
