@@ -269,6 +269,37 @@ curl -sS -D - -H "Origin: http://example.com" \
 
 The status is 403. Reload the list. The title is absent.
 
+## Task entry effects
+
+The [browser entry](browser/main.ts) registers one named `task` effect through `startHypergraft({ enterEffects })`. The [list template](templates/tasks.html) selects it on each row:
+
+```html
+<li id="task-{{ task.id }}" data-graft-enter="task"></li>
+```
+
+A row fades from opacity `0.2` to `1` over 200 milliseconds when its identity enters a targeted patch. Command responses and live updates use the same effect. Stable task IDs prevent replay when a row remains in the results, including status changes.
+
+Entry does not mean task creation. A filter can remove a task and later introduce its row again. That row receives the effect too.
+
+Initial documents and enhanced navigation receive no entry effects. Under reduced motion, Hypergraft suppresses this effect because the definition omits a `reducedMotion` alternative. Rows remain visible without animation. Task feedback remains available in the existing status text.
+
+The example needs no animation observer or settlement listener. The [entry-effect contract](../../docs/browser-runtime.md#entry-effects) describes identity comparison and effect lifetimes.
+
+### See task entry in two tabs
+
+1. Open `http://127.0.0.1:3000/tasks` in two tabs.
+2. In the first tab, create a task named `Watch the entry effect`.
+3. Make sure that only the new row fades in each tab.
+4. In the first tab, filter by `Watch the entry effect`.
+5. Clear Search.
+6. Press Filter.
+7. Make sure that the other rows fade as they return.
+8. Reload the page.
+9. Make sure that no rows animate.
+10. Enable reduced motion in the browser developer tools.
+11. Create another task.
+12. Make sure that its row appears without animation.
+
 ## Complete and reopen a task
 
 The detail page contains a command form. JavaScript is required for the command.

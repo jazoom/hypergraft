@@ -90,7 +90,7 @@
     {% else %}
     <ul>
         {% for task in tasks %}
-        <li>
+        <li id="task-{{ task.id }}" data-graft-enter="task">
             <a href="/tasks/{{ task.id }}" data-graft>{{ task.title }}</a>
             {% if task.done %}
             <span>Done</span>

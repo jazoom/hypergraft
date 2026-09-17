@@ -49,4 +49,12 @@ listenForLivePatches(() => {
 });
 
 const { feedback } = bindTransportFeedback(document);
-startHypergraft({ feedback });
+startHypergraft({
+    feedback,
+    enterEffects: {
+        task: {
+            keyframes: [{ opacity: 0.2 }, { opacity: 1 }],
+            timing: { duration: 200, easing: "ease-out" },
+        },
+    },
+});
