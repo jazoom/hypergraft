@@ -1,7 +1,6 @@
 {
     "name": "hypergraft",
-    "version": "0.0.1",
-    "private": true,
+    "version": "0.1.0",
     "license": "MIT OR Apache-2.0",
     "description": "Bounded HTML-over-HTTP and WebSocket protocol with a JavaScript-required browser runtime for server-rendered applications",
     "repository": {
@@ -46,9 +45,6 @@
         "test:browser": "vitest run --config vitest.browser.config.ts",
         "check": "tsgo --noEmit --project tsconfig.json",
         "format": "prettier --write --cache --log-level warn .",
-        "bench:server": "cargo bench --bench templates",
-        "bench:browser": "vite --config benchmarks/vite.config.ts",
-        "bench:record": "node benchmarks/record.mjs",
         "example:build": "vite build --config examples/reference/vite.config.ts"
     },
     "devDependencies": {

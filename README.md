@@ -1,5 +1,7 @@
 # Hypergraft
 
+NOTE: Experimental. Not ready for general use.
+
 Hypergraft is a bounded HTML-over-HTTP and WebSocket protocol for server-rendered Axum applications.
 
 Ordinary Axum pages already serve documents, links and forms. Hypergraft adds enhanced navigation, command patches and live projections to those pages. The server stays authoritative.

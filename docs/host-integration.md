@@ -365,19 +365,19 @@ Do not stream a document response.
 
 ## Use from a host
 
-Place this repository next to the host repository.
-
-If the host crate is in `app/`, add this path dependency:
+Add the Rust crate from crates.io to `[dependencies]` in the host crate's `Cargo.toml`:
 
 ```toml
-hypergraft = { path = "../../hypergraft" }
+hypergraft = "0.1.0"
 ```
 
-If the host root is next to this repository, add this npm dependency:
+Add the browser package from npm to `dependencies` in the host's `package.json`:
 
 ```json
-"hypergraft": "file:../hypergraft"
+"hypergraft": "^0.1.0"
 ```
+
+Use a TypeScript-capable bundler, such as Vite, for the browser package.
 
 Import the public browser entry:
 

@@ -1,7 +1,5 @@
 # Contributions
 
-Hypergraft is an unpublished source preview. Protocol version 1 remains narrow and uses `protocol-v1.json` as its canonical fixture.
-
 ## Before a change
 
 - Read the [front page](README.md) and the [anonymous task list](examples/reference/README.md).

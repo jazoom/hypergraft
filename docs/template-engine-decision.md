@@ -28,8 +28,6 @@ The optimisations left compiler output byte-identical. Compression reduced repea
 
 The archive contains the full report at `docs/performance-investigation.md`. Its raw results reside in `benchmarks/results/pipeline-investigation-{before,after}.json.gz`.
 
-The active project retains the original [benchmark harness and baseline](template-performance.md). The cached-ID experiment and owned-pipeline tooling remain archive-only.
-
 ## Retained fixes
 
 The rollback retains these engine-independent changes:

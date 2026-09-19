@@ -5,6 +5,4 @@ node_modules
 /.cache
 /examples/reference/dist
 /examples/reference/templates
-/benchmarks/templates
 /dist
-/benchmarks/results/*.trace.json

@@ -2,8 +2,6 @@
 
 This is the short reference for agents that build host applications with Hypergraft.
 
-Hypergraft is an unpublished source preview for Axum and Askama. The Rust crate requires Rust 1.96 or later. Rust and browser APIs remain experimental. [`protocol-v1.json`](../protocol-v1.json) is the canonical version 1 wire contract.
-
 ## Mental model
 
 - The server owns application state and renders authoritative HTML.
@@ -14,25 +12,23 @@ Hypergraft is an unpublished source preview for Axum and Askama. The Rust crate 
 
 ## Connect a host
 
-Place the Hypergraft checkout next to the host repository.
-
-For the example below, add these Cargo dependencies to a host crate at its repository root:
+For the example below, add these crates.io dependencies to the host crate's `Cargo.toml`:
 
 ```toml
 [dependencies]
-hypergraft = { path = "../hypergraft" }
+hypergraft = "0.1.0"
 askama = "0.16"
 axum = "0.8"
 serde = { version = "1", features = ["derive"] }
 ```
 
-Add this dependency to the host's `package.json`:
+Add the browser package from npm to `dependencies` in the host's `package.json`:
 
 ```json
-"hypergraft": "file:../hypergraft"
+"hypergraft": "^0.1.0"
 ```
 
-Adjust the paths for nested crates or packages.
+Use a TypeScript-capable bundler, such as Vite, for the browser package.
 
 Bundle imports from `hypergraft/browser` into one host asset.
 
