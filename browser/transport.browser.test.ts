@@ -437,18 +437,22 @@ test("an applied command keeps a server-disabled submitter disabled", async () =
         ),
     );
     const observed: { disabled: boolean; pending: boolean }[] = [];
-    addEventListener("hypergraft:requestsettled", () => {
-        const save = document.getElementById(
-            "save",
-        ) as HTMLButtonElement | null;
-        observed.push({
-            disabled: save?.disabled === true,
-            pending:
-                save?.hasAttribute("data-graft-submitter-pending") === true,
-        });
-    });
+    addEventListener(
+        "hypergraft:requestsettled",
+        () => {
+            const save = document.getElementById(
+                "save",
+            ) as HTMLButtonElement | null;
+            observed.push({
+                disabled: save?.disabled === true,
+                pending:
+                    save?.hasAttribute("data-graft-submitter-pending") === true,
+            });
+        },
+        { once: true },
+    );
     submit(form, button);
-    await flush();
+    await vi.waitFor(() => expect(observed).toHaveLength(1));
     const save = document.getElementById("save") as HTMLButtonElement;
     expect(save).toBe(button);
     expect(save.disabled).toBe(true);
