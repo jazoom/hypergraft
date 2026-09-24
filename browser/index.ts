@@ -15,7 +15,11 @@ export {
     type DiagnosticDetail,
     type DiagnosticReason,
 } from "./diagnostics";
-export { bindTransportFeedback, type BoundTransportFeedback } from "./feedback";
+export {
+    bindReadFeedback,
+    bindTransportFeedback,
+    type BoundTransportFeedback,
+} from "./feedback";
 export {
     observeIslands,
     type IslandErrorReporter,

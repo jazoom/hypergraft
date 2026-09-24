@@ -1,4 +1,5 @@
 import {
+    bindReadFeedback,
     bindTransportFeedback,
     listenForLivePatches,
     listenForLiveStateChanges,
@@ -48,9 +49,10 @@ listenForLivePatches(() => {
     setLiveStatus("The list updated.");
 });
 
-const { feedback } = bindTransportFeedback(document);
-startHypergraft({
-    feedback,
+const bound = bindTransportFeedback(document);
+const stopReadFeedback = bindReadFeedback(document);
+const stop = startHypergraft({
+    feedback: bound.feedback,
     enterEffects: {
         task: {
             keyframes: [{ opacity: 0.2 }, { opacity: 1 }],
@@ -58,3 +60,11 @@ startHypergraft({
         },
     },
 });
+
+if (import.meta.hot) {
+    import.meta.hot.dispose(() => {
+        stop();
+        stopReadFeedback();
+        bound.destroy();
+    });
+}

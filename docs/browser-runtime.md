@@ -78,6 +78,75 @@ Without a content callback, preflight inspects each private fragment once. The d
 
 Hypergraft accesses native form properties during preflight and adapter operations. These guards prevent named controls from replacing those members. They do not extend into Morphlex internals.
 
+## Navigation lifecycle
+
+`listenForNavigation` observes `hypergraft:navigation`. Register the listener before `startHypergraft`.
+
+`NavigationDetail` contains a document-lifetime `requestId`, the attempted `url`, a `cause` and an optional source `link`. The cause is `link-navigation` or `history-traversal`. History traversal has no source link. Request identifiers remain distinct across runtime replacement.
+
+The closed state union contains:
+
+- `started`: the runtime owns the request, before transport starts.
+- `succeeded`: authoritative content, history and focus are complete.
+- `cancelled`: cancellation with reason `aborted` or `superseded`.
+- `failed`: the enhanced request failed, before recovery.
+- `handed-off`: document navigation will take over at `destination`.
+- `disposed`: teardown retired an active request synchronously.
+
+Success, cancellation, handoff and disposal end ownership. Failure precedes the recovery decision. The current runtime follows failure with handoff through its existing document fallback. Failure does not promise that the old document remains intact after a partial patch exception.
+
+Handoff also covers navigation envelopes and supported same-origin redirects. It does not claim that the destination document loaded. The current runtime keeps commands blocked while document navigation remains pending. The event excludes response bodies, form values and thrown errors. URLs can contain private data. Hosts must not treat these events as safe telemetry.
+
+Ordinary link activation still waits for an active navigation. History traversal can supersede it. Blocked or native links emit no navigation events. Cancellation emits neither a form settlement nor an error diagnostic. Disposed and superseded responses emit no late navigation events.
+
+## Query pending state
+
+`listenForQueryPending` observes `hypergraft:querypending` for enhanced GET form requests. It excludes commands and background live patches. The runtime uses the effective method, including submitter overrides.
+
+`QueryPendingDetail` contains `requestId`, `form` and `pending`. Query identifiers remain distinct across runtime replacement. Query and navigation identifiers use separate namespaces. These events contain no URL, form values, response bodies or errors.
+
+`pending: true` reports ownership after the form enters its pending state, before transport starts. `pending: false` ends that ownership after cleanup. It covers cancellation, supersession, handoff and teardown, as well as success and failure. A false flag does not claim a successful result. Existing settlement events retain their result semantics.
+
+A detached form does not prove that transport ended. The pending lifetime continues until the request ends or the runtime cancels it. Streamed queries remain pending through the final frame until the body ends cleanly.
+
+## Read feedback
+
+`bindReadFeedback(root)` consumes navigation and query lifetimes and returns a destroy function. Bind it before runtime startup. Keep its two slots outside patch targets:
+
+```html
+<div data-graft-read-indicator aria-hidden="true" hidden>
+    <span class="visually-hidden">Loading content</span>
+</div>
+<p
+    class="visually-hidden"
+    data-graft-read-status
+    role="status"
+    aria-atomic="true"
+></p>
+```
+
+```ts
+const stopReadFeedback = bindReadFeedback(document);
+const stopRuntime = startHypergraft();
+
+function stop() {
+    stopRuntime();
+    stopReadFeedback();
+}
+```
+
+The binder leaves links unchanged. It never changes the current route or document content. The shared indicator supplies pending feedback.
+
+Each request receives a separate 200 ms presentation timer. If any active request reaches that delay, the binder reveals the indicator. It copies the indicator text into the persistent status region. The delay controls presentation only. It does not delay transport. Fast requests remain silent.
+
+Each terminal event clears only its own request. Concurrent queries keep the indicator visible until their remaining slow requests end. A replacement query receives a fresh timer. An older event cannot clear a newer request's presentation. Debounce time precedes request startup and does not count towards the presentation delay.
+
+Hosts supply the indicator text and styles. Hide the status region visually, not with `hidden` or `display: none`. The indicator can hide its own text visually and use an indeterminate bar instead. The binder still copies that text into the status region.
+
+The anonymous example uses a slim indeterminate bar. Reduced motion disables the bar animation. Normal link hover and keyboard focus styles remain intact.
+
+Destroy cancels all presentation timers and clears owned presentation. Commands and background live patches do not start this indicator. Form pending state and unsafe guards remain independent. Protocol version 1 and its cache policy remain unchanged.
+
 ## Pending form state
 
 Temporary pending state is not the latest authoritative form state.

@@ -8,11 +8,25 @@ use axum::{
 };
 use hypergraft::live::LiveEndpoint;
 
-pub const PUBLIC_ORIGIN: &str = "http://127.0.0.1:3000";
-pub const BIND_ADDR: &str = "127.0.0.1:3000";
+pub fn bind_addr() -> std::net::SocketAddrV4 {
+    static PORT: OnceLock<u16> = OnceLock::new();
+    let port = *PORT.get_or_init(|| {
+        let value = std::env::var("HYPERGRAFT_REFERENCE_PORT").unwrap_or_else(|_| "3000".into());
+        value
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port != 0)
+            .expect("HYPERGRAFT_REFERENCE_PORT must be between 1 and 65535")
+    });
+    std::net::SocketAddrV4::new(std::net::Ipv4Addr::LOCALHOST, port)
+}
+
+pub fn public_origin() -> String {
+    live_endpoint().expected_origin().to_owned()
+}
 
 pub fn live_endpoint() -> LiveEndpoint {
-    LiveEndpoint::with_default_path(PUBLIC_ORIGIN)
+    LiveEndpoint::with_default_path(&format!("http://{}", bind_addr()))
         .expect("loopback origin is a valid live endpoint")
 }
 
@@ -78,5 +92,5 @@ fn origin_matches(headers: &axum::http::HeaderMap) -> bool {
     if values.next().is_some() {
         return false;
     }
-    first.as_bytes() == PUBLIC_ORIGIN.as_bytes()
+    first.as_bytes() == public_origin().as_bytes()
 }

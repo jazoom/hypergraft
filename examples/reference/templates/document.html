@@ -26,6 +26,10 @@
                 Reload
             </button>
         </div>
+        <div data-graft-read-indicator aria-hidden="true" hidden>
+            <span class="visually-hidden">Loading content</span>
+        </div>
+        <p class="visually-hidden" data-graft-read-status role="status" aria-atomic="true"></p>
         <p id="live-status" role="status" hidden></p>
         <main id="main" tabindex="-1">{{ body|safe }}</main>
     </body>

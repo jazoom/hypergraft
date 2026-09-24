@@ -112,7 +112,9 @@ If an exception occurs after preflight, earlier morph work in that batch remains
 ## Request cancellation
 
 A client can cancel a safe GET or navigation.
-A superseded or aborted safe request emits no settlement and no diagnostic.
+A superseded or aborted safe request emits no form settlement and no diagnostic.
+The browser-only [navigation lifecycle](browser-runtime.md#navigation-lifecycle) reports navigation cancellation separately.
+These events do not change the wire contract.
 The runtime does not apply a disposed safe response.
 
 An unsafe command is not cancellable as if it never occurred.

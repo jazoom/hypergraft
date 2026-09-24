@@ -6,7 +6,7 @@ The application is anonymous. It has no sign-in page. It has no database.
 
 The process stores tasks in memory. A restart restores the seed data.
 
-The server listens on `127.0.0.1:3000`. Origin checks and the content security policy still apply.
+The server defaults to `127.0.0.1:3000`. `HYPERGRAFT_REFERENCE_PORT` selects another non-zero loopback port. Origin checks and the content security policy use the same address.
 
 ## Template organisation
 
@@ -61,6 +61,42 @@ The launch command builds `/assets/main.js` and `/assets/style.css` before the p
 
 JavaScript is required for enhanced navigation. Real links still work without it. After an enhanced navigation, focus moves to `main`.
 
+## Navigation feedback
+
+The example uses `bindReadFeedback` and host-authored slots outside `main`. Navigation and submitted GET filters share a slim indeterminate bar after 200 ms. Screen readers receive a status announcement at that time. The current content remains visible until the authoritative response arrives.
+
+Reduced motion keeps the bar static. Pending feedback leaves the keyboard focus style intact.
+
+Failure retains the current document fallback. Explicit retry and navigation replacement belong to later work. The [navigation lifecycle](../../docs/browser-runtime.md#navigation-lifecycle) describes failure and handoff separately.
+
+### Run beside another application
+
+Use a separate loopback port:
+
+```sh
+HYPERGRAFT_REFERENCE_PORT=3003 mise run example
+```
+
+Open `http://127.0.0.1:3003/tasks`.
+
+### Review immediate feedback
+
+1. Open the task list.
+2. Set a high-latency network profile in the browser developer tools.
+3. Activate a task detail link.
+4. Make sure that the link keeps its normal appearance during the request.
+5. Make sure that the list stays visible until the detail arrives.
+6. Make sure that the top bar appears after 200 ms.
+7. Make sure that both pending indicators disappear after navigation.
+8. Use Tab to focus **Back to tasks**.
+9. Press Enter.
+10. Make sure that keyboard activation gives the same feedback.
+11. Disable the network throttle.
+12. Make sure that fast navigation does not flash the shared status.
+13. Enable reduced motion.
+14. Repeat the slow navigation.
+15. Make sure that feedback remains visible without animation.
+
 ## Search the task list
 
 The list filter is a canonical GET form. It accepts a search string and a status of `all`, `open` or `done`.
@@ -68,6 +104,8 @@ The list filter is a canonical GET form. It accepts a search string and a status
 The server removes control characters and trims the search string. It truncates the search to 120 Unicode scalar values. An unknown status becomes `all`.
 
 A browser without JavaScript still submits the form as a document request.
+
+Enhanced search disables the Filter button immediately. Slow searches reveal the shared top bar and screen-reader status after 200 ms. Fast searches remain silent. Commands and background live updates do not start this bar.
 
 1. Open `http://127.0.0.1:3000/tasks`.
 2. Enter `notes` in Search.
@@ -88,6 +126,19 @@ The same result and the same filter values must remain.
 Open `http://127.0.0.1:3000/tasks?status=bogus&q=zzzzzzzz`.
 
 The status control must show All. The results must say that no tasks match this filter. The filter controls must stay available.
+
+### Review search feedback
+
+1. Open the developer tools.
+2. Set a high-latency network profile.
+3. Enter `notes` in Search.
+4. Press Filter.
+5. Make sure that the previous results remain visible while the request is active.
+6. Make sure that the top bar appears after 200 ms.
+7. Make sure that the bar disappears when the results arrive.
+8. Disable the network throttle.
+9. Repeat the search.
+10. Make sure that fast searches do not flash the bar.
 
 ## Create a task
 

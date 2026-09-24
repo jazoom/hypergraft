@@ -17,10 +17,7 @@ use axum::{
 };
 use tokio::net::TcpListener;
 
-use crate::{
-    security::{BIND_ADDR, PUBLIC_ORIGIN},
-    state::Store,
-};
+use crate::state::Store;
 
 #[derive(Clone)]
 struct Assets {
@@ -68,10 +65,11 @@ async fn main() {
         .fallback(security::not_found)
         .layer(middleware::from_fn(security::security_headers))
         .with_state(state);
-    let listener = TcpListener::bind(BIND_ADDR)
+    let address = security::bind_addr();
+    let listener = TcpListener::bind(address)
         .await
-        .unwrap_or_else(|error| panic!("failed to bind {BIND_ADDR}: {error}"));
-    println!("Listening on {PUBLIC_ORIGIN}/tasks");
+        .unwrap_or_else(|error| panic!("failed to bind {address}: {error}"));
+    println!("Listening on {}/tasks", security::public_origin());
     axum::serve(listener, app).await.expect("server error");
 }
 

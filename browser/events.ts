@@ -1,10 +1,59 @@
 import type { AcceptedPatchStatus } from "./patches";
 
+export const NAVIGATION_EVENT = "hypergraft:navigation";
+export const QUERY_PENDING_EVENT = "hypergraft:querypending";
 export const LOCATION_CHANGE_EVENT = "hypergraft:locationchange";
 export const REQUEST_SETTLED_EVENT = "hypergraft:requestsettled";
 export const PROGRESS_EVENT = "hypergraft:progress";
 export const LIVE_PATCH_EVENT = "hypergraft:livepatch";
 export const LIVE_STATE_CHANGE_EVENT = "hypergraft:livestatechange";
+
+export type NavigationRequest = {
+    requestId: number;
+    url: string;
+    cause: "link-navigation" | "history-traversal";
+    link?: HTMLAnchorElement;
+};
+
+/** Failure precedes recovery. The event excludes response bodies and errors. */
+export type NavigationDetail = NavigationRequest &
+    (
+        | { state: "started" | "succeeded" | "failed" | "disposed" }
+        | { state: "cancelled"; reason: "aborted" | "superseded" }
+        | { state: "handed-off"; destination: string }
+    );
+
+export function emitNavigation(detail: NavigationDetail): void {
+    dispatchEvent(new CustomEvent(NAVIGATION_EVENT, { detail }));
+}
+
+export function listenForNavigation(
+    listener: (detail: NavigationDetail) => void,
+): () => void {
+    const handler = (event: Event) =>
+        listener((event as CustomEvent<NavigationDetail>).detail);
+    addEventListener(NAVIGATION_EVENT, handler);
+    return () => removeEventListener(NAVIGATION_EVENT, handler);
+}
+
+export type QueryPendingDetail = {
+    requestId: number;
+    form: HTMLFormElement;
+    pending: boolean;
+};
+
+export function emitQueryPending(detail: QueryPendingDetail): void {
+    dispatchEvent(new CustomEvent(QUERY_PENDING_EVENT, { detail }));
+}
+
+export function listenForQueryPending(
+    listener: (detail: QueryPendingDetail) => void,
+): () => void {
+    const handler = (event: Event) =>
+        listener((event as CustomEvent<QueryPendingDetail>).detail);
+    addEventListener(QUERY_PENDING_EVENT, handler);
+    return () => removeEventListener(QUERY_PENDING_EVENT, handler);
+}
 
 export type LocationChangeDetail = {
     url: string;

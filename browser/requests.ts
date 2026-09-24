@@ -5,7 +5,11 @@ import {
 } from "./diagnostics";
 import {
     emitLocationChange,
+    emitNavigation,
     emitProgress,
+    emitQueryPending,
+    type NavigationDetail,
+    type NavigationRequest,
     emitRequestSettled,
     type RequestSettledDetail,
 } from "./events";
@@ -49,6 +53,8 @@ type UnsafeState =
 // unlock it.
 let documentUnsafe: UnsafeState = { kind: "idle" };
 let activeRuntime: Runtime | undefined;
+let nextNavigationId = 0;
+let nextQueryId = 0;
 
 type Runtime = {
     disposed: boolean;
@@ -60,6 +66,7 @@ type Runtime = {
     liveTimers: Map<HTMLElement, ReturnType<typeof setTimeout>>;
     composing: boolean;
     navigationPending: boolean;
+    navigation?: NavigationRequest;
     queuedHistoryUrl: URL | undefined;
     detachListeners: () => void;
     stopIslands: () => void;
@@ -447,7 +454,7 @@ async function consumeEnhanced(
 type SafeOutcome =
     | { kind: "applied"; url: string; settlement: AppliedSettlement }
     | { kind: "stale" }
-    | { kind: "handed-off" };
+    | { kind: "handed-off"; destination: string };
 
 type AcceptedStatus = (typeof PATCH_STATUSES)[number];
 type Settlement = RequestSettledDetail extends infer Detail
@@ -566,8 +573,7 @@ async function safeRequest(
         }
         if (!sameOrigin(destination))
             throw new HypergraftError("redirect", "Cross-origin redirect");
-        window.location.assign(destination.href);
-        return { kind: "handed-off" };
+        return { kind: "handed-off", destination: destination.href };
     }
     const consumed = await consumeEnhanced(
         runtime,
@@ -591,8 +597,7 @@ async function safeRequest(
     );
     if (consumed.kind === "stale") return { kind: "stale" };
     if (consumed.kind === "navigation") {
-        window.location.assign(consumed.destination);
-        return { kind: "handed-off" };
+        return { kind: "handed-off", destination: consumed.destination };
     }
     if (failedForm) clearError(runtime, lane, failedForm);
     else if (pruneFailedSafeForms(runtime))
@@ -605,13 +610,15 @@ async function safeRequest(
 }
 
 function cancelActiveSafeForms(runtime: Runtime) {
-    for (const lane of runtime.activeSafeFormLanes) {
+    const lanes = [...runtime.activeSafeFormLanes];
+    runtime.activeSafeFormLanes.clear();
+    for (const lane of lanes) {
         ++lane.sequence;
         lane.controller?.abort();
-        lane.cancelPending?.();
+        const cancelPending = lane.cancelPending;
         lane.cancelPending = undefined;
+        cancelPending?.();
     }
-    runtime.activeSafeFormLanes.clear();
 }
 
 function clearLiveTimers(runtime: Runtime) {
@@ -619,11 +626,22 @@ function clearLiveTimers(runtime: Runtime) {
     runtime.liveTimers.clear();
 }
 
+function endNavigation(runtime: Runtime, detail: NavigationDetail) {
+    if (runtime.navigation?.requestId !== detail.requestId) return;
+    runtime.navigation = undefined;
+    // Supersession and handoff still reserve departure. Document navigation
+    // is asynchronous, so handoff must keep the command guard active.
+    runtime.navigationPending =
+        detail.state === "handed-off" ||
+        (detail.state === "cancelled" && detail.reason === "superseded");
+    emitNavigation(detail);
+}
+
 async function navigate(
     runtime: Runtime,
     url: URL,
     mode: "push" | "pop" = "push",
-    element?: HTMLElement,
+    element?: HTMLAnchorElement,
 ) {
     if (
         runtime.disposed ||
@@ -631,12 +649,32 @@ async function navigate(
         (runtime.navigationPending && mode !== "pop")
     )
         return;
-    runtime.navigationPending = true;
-    runtime.live.suspend();
-    cancelActiveSafeForms(runtime);
     const sequence = ++runtime.navigationLane.sequence;
+    const isStale = () =>
+        runtime.disposed || sequence !== runtime.navigationLane.sequence;
     runtime.navigationLane.controller?.abort();
     runtime.navigationLane.controller = new AbortController();
+    if (runtime.navigation)
+        endNavigation(runtime, {
+            ...runtime.navigation,
+            state: "cancelled",
+            reason: "superseded",
+        });
+    if (isStale()) return;
+    runtime.navigationPending = true;
+    const navigation: NavigationRequest = {
+        requestId: ++nextNavigationId,
+        url: url.href,
+        cause: mode === "pop" ? "history-traversal" : "link-navigation",
+        ...(element ? { link: element } : {}),
+    };
+    runtime.navigation = navigation;
+    emitNavigation({ ...navigation, state: "started" });
+    if (isStale()) return;
+    runtime.live.suspend();
+    if (isStale()) return;
+    cancelActiveSafeForms(runtime);
+    if (isStale()) return;
     const responseUrl: { current?: string } = {};
     try {
         const result = await safeRequest(
@@ -654,6 +692,12 @@ async function navigate(
         )
             return;
         if (result.kind === "handed-off") {
+            endNavigation(runtime, {
+                ...navigation,
+                state: "handed-off",
+                destination: result.destination,
+            });
+            if (!isStale()) location.assign(result.destination);
             return;
         }
         if (mode === "push")
@@ -662,6 +706,7 @@ async function navigate(
             url: location.href,
             cause: mode === "pop" ? "history-traversal" : "link-navigation",
         });
+        if (isStale()) return;
         // A successful page replacement is authoritative for the whole
         // page; failures whose forms disappeared must not survive it.
         clearAllSafeErrors(runtime);
@@ -679,14 +724,22 @@ async function navigate(
             }
         }
         window.scrollTo(0, 0);
+        if (isStale()) return;
         runtime.live.resume();
+        endNavigation(runtime, { ...navigation, state: "succeeded" });
     } catch (error) {
-        if (
-            errorName(error) === "AbortError" ||
-            runtime.disposed ||
-            sequence !== runtime.navigationLane.sequence
-        )
+        if (isStale()) return;
+        if (errorName(error) === "AbortError") {
+            runtime.live.resume();
+            endNavigation(runtime, {
+                ...navigation,
+                state: "cancelled",
+                reason: "aborted",
+            });
             return;
+        }
+        emitNavigation({ ...navigation, state: "failed" });
+        if (isStale()) return;
         emitDiagnostic({
             reason: diagnosticReason(error),
             requestKind: "navigation",
@@ -695,12 +748,15 @@ async function navigate(
             element,
             targetId: diagnosticTargetId(error),
         });
+        if (isStale()) return;
+        endNavigation(runtime, {
+            ...navigation,
+            state: "handed-off",
+            destination: url.href,
+        });
+        if (isStale()) return;
         if (mode === "push") location.assign(url.href);
         else location.reload();
-    } finally {
-        if (sequence === runtime.navigationLane.sequence) {
-            runtime.navigationPending = false;
-        }
     }
 }
 
@@ -785,19 +841,30 @@ async function submitSafe(
     const lane = runtime.formLanes.get(form) ?? { sequence: 0, error: false };
     runtime.formLanes.set(form, lane);
     const sequence = ++lane.sequence;
+    const isStale = () => runtime.disposed || sequence !== lane.sequence;
     if (form.hasAttribute("data-graft-live"))
         runtime.live.retireForm(form, sequence);
     lane.controller?.abort();
     // A replacement request owns a fresh pending snapshot. Restore the old
     // one before taking it, otherwise the replacement can preserve a stale
     // data-graft-pending attribute indefinitely.
-    lane.cancelPending?.();
+    const cancelPending = lane.cancelPending;
     lane.cancelPending = undefined;
+    cancelPending?.();
+    if (isStale()) return;
     lane.controller = new AbortController();
     runtime.activeSafeFormLanes.add(lane);
     const pending = pendingState(form, button);
+    const requestId = ++nextQueryId;
+    let finished = false;
+    const finishQuery = () => {
+        if (finished) return;
+        finished = true;
+        emitQueryPending({ requestId, form, pending: false });
+    };
     lane.cancelPending = () => {
         pending.restore();
+        finishQuery();
         runtime.live.restoreForm(form, sequence);
     };
     // The effective request URL: the response URL once a response was
@@ -808,6 +875,8 @@ async function submitSafe(
     // response. Superseded requests and navigation hand-offs emit nothing.
     let settlement: Settlement | undefined;
     try {
+        emitQueryPending({ requestId, form, pending: true });
+        if (isStale()) return;
         const result = await safeRequest(
             runtime,
             url,
@@ -818,6 +887,11 @@ async function submitSafe(
             form,
             pending,
         );
+        if (isStale()) return;
+        if (result.kind === "handed-off") {
+            runtime.navigationPending = true;
+            location.assign(result.destination);
+        }
         if (result.kind === "applied") {
             settlement = result.settlement;
             responseUrl.current = result.url;
@@ -854,10 +928,9 @@ async function submitSafe(
         if (!runtime.disposed && sequence === lane.sequence) {
             runtime.activeSafeFormLanes.delete(lane);
             lane.cancelPending = undefined;
+            // Cancellation and handoff also end the temporary form state.
+            pending.restore();
             if (settlement) {
-                // Pending state is final before lifecycle observers reconcile
-                // retained roots, so restore the form and submitter first.
-                pending.restore();
                 emitRequestSettled({
                     requestKind: "patch",
                     form,
@@ -867,6 +940,7 @@ async function submitSafe(
             }
             runtime.live.restoreForm(form, sequence);
         }
+        finishQuery();
     }
 }
 
@@ -1018,9 +1092,14 @@ async function submitUnsafe(
         else runtime.options.feedback?.commandBlocked?.();
         return;
     }
+    // Query cleanup can invoke host listeners. Reserve the command first.
+    documentUnsafe = { kind: "pending", form };
     runtime.live.suspend();
     cancelActiveSafeForms(runtime);
-    documentUnsafe = { kind: "pending", form };
+    if (runtime.disposed) {
+        location.reload();
+        return;
+    }
     const pending = pendingState(form, prepared.submitter);
     const outcome = await unsafeRequest(runtime, form, prepared, pending);
     if (runtime.disposed) {
@@ -1179,6 +1258,8 @@ function disposeRuntime(runtime: Runtime, replacement: boolean) {
     runtime.navigationLane.sequence += 1;
     runtime.navigationLane.controller?.abort();
     runtime.navigationPending = false;
+    if (runtime.navigation)
+        endNavigation(runtime, { ...runtime.navigation, state: "disposed" });
     runtime.queuedHistoryUrl = undefined;
     cancelActiveSafeForms(runtime);
     runtime.options = {};
