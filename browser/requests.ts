@@ -27,6 +27,7 @@ import {
     type ValidateContent,
 } from "./patches";
 import { readStreamFrames } from "./stream";
+import { createScrollRestoration } from "./scroll-restoration";
 import { readBoundedResponse } from "./read-response";
 export { readBoundedResponse } from "./read-response";
 import {
@@ -89,6 +90,7 @@ type Runtime = {
     live: LiveController;
     enterEffects?: EnterEffects;
     prefetch?: Prefetch;
+    scroll?: ReturnType<typeof createScrollRestoration>;
     pointerPosition?: { x: number; y: number };
     patchedPointer?: { x: number; y: number };
 };
@@ -119,6 +121,7 @@ export interface HypergraftOptions {
     liveEndpoint?: string;
     enterEffects?: Record<string, EnterEffect>;
     prefetch?: boolean | PrefetchOptions;
+    scrollRestoration?: boolean;
 }
 
 function pruneFailedSafeForms(runtime: Runtime): boolean {
@@ -746,6 +749,7 @@ async function navigate(
                     return false;
                 }
                 if (isStale()) return false;
+                if (!runtime.navigationMutated) runtime.scroll?.capture();
                 runtime.navigationMutated = true;
                 return true;
             },
@@ -772,20 +776,19 @@ async function navigate(
         // A successful page replacement is authoritative for the whole
         // page; failures whose forms disappeared must not survive it.
         clearAllSafeErrors(runtime);
-        // Version 1 does not restore history scroll positions. After a
-        // children patch the previous offset belongs to different content.
         const firstTarget = result.settlement.targetIds[0];
         const focusRoot = firstTarget
             ? document.getElementById(firstTarget)
             : null;
         if (focusRoot && typeof focusRoot.focus === "function") {
             try {
-                focusRoot.focus();
+                focusRoot.focus({ preventScroll: true });
             } catch {
                 // A target that cannot take programmatic focus stays native.
             }
         }
-        window.scrollTo(0, 0);
+        if (runtime.scroll) runtime.scroll.restore(mode === "pop");
+        else window.scrollTo(0, 0);
         if (isStale()) return;
         endNavigation(runtime, { ...navigation, state: "succeeded" });
         resumeAfterNavigation(runtime);
@@ -958,7 +961,11 @@ async function submitSafe(
         if (result.kind === "applied") {
             settlement = result.settlement;
             responseUrl.current = result.url;
-            history.replaceState({ hypergraft: true }, "", result.url);
+            history.replaceState(
+                { ...history.state, hypergraft: true },
+                "",
+                result.url,
+            );
             runtime.documentUrl = location.href;
             emitLocationChange({
                 url: location.href,
@@ -1254,16 +1261,37 @@ function referencedSubmitter(
     return ["submit", "image"].includes(submitter.type) ? submitter : undefined;
 }
 
+function cancelEditedQuery(runtime: Runtime, event: Event) {
+    const form = (event.target as Element).closest<HTMLFormElement>(
+        "form[data-graft]",
+    );
+    if (!form) return;
+    for (const [control, timer] of runtime.liveTimers) {
+        if (control.closest("form") !== form) continue;
+        clearTimeout(timer);
+        runtime.liveTimers.delete(control);
+    }
+    const lane = runtime.formLanes.get(form);
+    if (!lane || !runtime.activeSafeFormLanes.has(lane)) return;
+    ++lane.sequence;
+    lane.controller?.abort();
+    const cancel = lane.cancelPending;
+    lane.cancelPending = undefined;
+    runtime.activeSafeFormLanes.delete(lane);
+    cancel?.();
+}
+
 function handleLiveEvent(runtime: Runtime, event: Event) {
+    if (runtime.disposed) return;
     const control = (event.target as Element).closest<HTMLElement>(
         "[data-graft-submit-on]",
     );
-    if (
-        runtime.disposed ||
-        !control ||
-        control.dataset.graftSubmitOn !== event.type ||
-        runtime.composing
-    )
+    const matchesTrigger = control?.dataset.graftSubmitOn === event.type;
+    // Input owns intent before debounce. A paired change event must not cancel
+    // that query unless it triggers a replacement.
+    if (event.type === "input" || matchesTrigger)
+        cancelEditedQuery(runtime, event);
+    if (runtime.disposed || !control || !matchesTrigger || runtime.composing)
         return;
     const form = control.closest("form[data-graft]") as HTMLFormElement | null;
     const delayText = control.dataset.graftDebounce ?? "0";
@@ -1298,8 +1326,6 @@ function handleLiveEvent(runtime: Runtime, event: Event) {
         });
         return;
     }
-    const previous = runtime.liveTimers.get(control);
-    if (previous) clearTimeout(previous);
     runtime.liveTimers.set(
         control,
         setTimeout(() => {
@@ -1314,6 +1340,7 @@ function disposeRuntime(runtime: Runtime, replacement: boolean) {
     const partialNavigation = !!runtime.navigation && runtime.navigationMutated;
     const handoffPending = runtime.navigationPending && !runtime.navigation;
     const historyPending = runtime.navigation?.cause === "history-traversal";
+    runtime.scroll?.destroy();
     runtime.enterEffects?.destroy();
     runtime.stopIslands();
     runtime.stopIslands = () => undefined;
@@ -1356,6 +1383,9 @@ function createRuntime(
         disposed: false,
         options,
         prefetch,
+        scroll: options.scrollRestoration
+            ? createScrollRestoration()
+            : undefined,
         navigationLane: { sequence: 0, error: false },
         formLanes: new WeakMap(),
         activeSafeFormLanes: new Set(),
@@ -1495,7 +1525,8 @@ function createRuntime(
         void submitUnsafe(runtime, form, prepared);
     };
     const onLive = (event: Event) => handleLiveEvent(runtime, event);
-    const onCompositionStart = () => {
+    const onCompositionStart = (event: CompositionEvent) => {
+        cancelEditedQuery(runtime, event);
         runtime.composing = true;
     };
     const onCompositionEnd = (event: CompositionEvent) => {

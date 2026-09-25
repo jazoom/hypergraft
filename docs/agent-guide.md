@@ -287,7 +287,7 @@ Live hosts also need the explicit WebSocket source from `LiveEndpoint::csp_conne
 - Deploy the Rust crate and browser bundle from the same fixture revision. Older bundles retain the smaller content budgets.
 - Patches cannot contain script elements.
 - A title updates `document.title`, not the document head.
-- Version 1 does not restore history scroll positions.
+- Optional `scrollRestoration: true` restores window and registered container positions after fresh history responses. Logical anchors take precedence over old offsets.
 - Safe GET work is cancellable. An uncertain command keeps the document's unsafe lock and suspends live work until a reload.
 - Server-authored form state wins after a patch. A retained DOM node does not prove request completion.
 - A blocked command emits `command-blocked`, not settlement. The runtime never queues or replays that command.

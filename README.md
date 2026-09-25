@@ -74,7 +74,7 @@ Private hosts own the route review and authorisation interval. Longer retention 
 
 Version 1 does not patch the document head. A titled patch updates `document.title` only.
 
-Version 1 does not restore history scroll positions. After a children patch, the previous offset belongs to different content.
+History restoration is opt-in through `scrollRestoration: true`. Fresh responses restore window and registered container positions, with logical anchors before pixel offsets.
 
 If the application serves private data, the host owns authentication and authorisation. Anonymous public data does not require authentication. Origin checks and CSP still apply.
 

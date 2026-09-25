@@ -220,6 +220,26 @@ The status control must show All. The results must say that no tasks match this 
 9. Repeat the search.
 10. Make sure that fast searches do not flash the bar.
 
+## Preserve work and history position
+
+The example enables `scrollRestoration: true` and marks task rows with logical anchors. Back and Forward request fresh list content before position restoration. No HTML snapshot or draft enters browser storage.
+
+Filter and live targets exclude the task title and its validation feedback. This target boundary preserves the draft without a generic field snapshot.
+
+### Review drafts and fresh history
+
+1. Enter an unsaved task title.
+2. Change Status and press Filter.
+3. Make sure that the title remains unchanged.
+4. Create or complete a task in another tab.
+5. Make sure that the live response leaves the draft unchanged.
+6. Use a short browser viewport so that the list scrolls.
+7. Scroll to a task row and open its detail link.
+8. Press Back.
+9. Make sure that a fresh GET restores the list near the same row.
+10. Repeat with a high-latency network profile.
+11. Make sure that restoration waits for the fresh response.
+
 ## Create a task
 
 The list page contains a create form. JavaScript is required for the command.

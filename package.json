@@ -30,6 +30,7 @@
         "browser/requests.ts",
         "browser/read-response.ts",
         "browser/prefetch.ts",
+        "browser/scroll-restoration.ts",
         "browser/stream.ts",
         "LICENSE-APACHE",
         "LICENSE-MIT",

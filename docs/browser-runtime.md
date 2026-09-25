@@ -303,7 +303,29 @@ Patch application restores focus through the original active node reference when
 
 Restoration avoids redundant focus calls and prevents scroll changes. Supported text inputs and textareas retain selection direction, with offsets clamped to the final authoritative value.
 
-Applied navigation focuses the first patched target when that target is programmatically focusable. It then scrolls the window to `(0, 0)`. Version 1 does not restore history scroll positions. After a children patch, the previous offset belongs to different content.
+Applied navigation focuses the first patched target when that target is programmatically focusable. Ordinary link navigation resets the window to `(0, 0)`.
+
+### Fresh history positions
+
+`startHypergraft({ scrollRestoration: true })` enables history position restoration. The default remains off. The runtime selects manual browser restoration until teardown.
+
+Back and Forward still request fresh canonical content. Restoration follows patch application and synchronous location reconciliation for islands. Hosts must complete required geometry during that reconciliation.
+
+`data-graft-scroll` registers a scroll container with a stable DOM `id`. `data-graft-scroll-anchor` identifies logical content within a scroll owner. Anchor values must be unique within that owner.
+
+```html
+<div id="schedule-scroll" data-graft-scroll>
+    <div data-graft-scroll-anchor="monday-0900">09:00</div>
+</div>
+```
+
+The runtime captures the first visible anchor and its relative position before navigation changes content. A surviving anchor takes precedence over old pixel offsets. A missing saved anchor resets its owner to the origin. Owners without a visible anchor use pixel offsets, subject to native scroll bounds.
+
+The runtime records the window and at most 32 containers per entry. It retains at most 50 entry records in document-local memory. Records contain positions and anchor identifiers, never HTML or field values. History state contains only an opaque key alongside existing state.
+
+Ordinary link navigation resets registered containers and the window. Failed or cancelled traversal retains document recovery, without restoration onto obsolete content. Teardown discards records and restores the previous browser scroll policy. Reload and runtime replacement do not retain position records.
+
+This behaviour changes no wire envelopes or cache rules. Hosts must not use appointment coordinates as stable time anchors when appointments can move.
 
 A streamed form request emits `hypergraft:progress` after each applied progress frame. It sets `data-graft-progress` on the form until pending state is restored. It emits `hypergraft:requestsettled` only after the final frame, a clean end of body, and final pending state.
 
@@ -476,6 +498,8 @@ The request URL can contain sensitive query values. Host policy for diagnostic l
 ## Live GET gestures
 
 A live GET form can submit on `input` or `change` without a click. The control uses `data-graft-submit-on="input"` or `data-graft-submit-on="change"`. Optional `data-graft-debounce` is a whole number of milliseconds from 0 to 2000. An omitted value submits at once. Optional `data-graft-submit-with` names the submitter that must belong to the same form.
+
+Input or composition in an active GET form cancels its obsolete request before a debounce deadline or explicit resubmission. Cancellation preserves current input and emits no false settlement. A newer gesture also replaces older debounce timers for that form. Commands remain independent.
 
 Live enhancement is GET-only, `application/x-www-form-urlencoded`, same-origin and fragment-free. Anything else stays native and emits `invalid-live-form`.
 
