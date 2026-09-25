@@ -10,6 +10,7 @@ export {
 } from "./requests";
 export * from "./events";
 export { bindNavigationRecovery } from "./navigation-feedback";
+export { bindLiveFeedback } from "./live-feedback";
 export type { EnterAnimation, EnterEffect } from "./enter-effects";
 export {
     DIAGNOSTIC_EVENT,

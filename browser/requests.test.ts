@@ -1916,6 +1916,52 @@ test("an unsafe stream applies progress then settles on the final frame", async 
     expect(details[0]?.outcome).toBe("applied-patch");
 });
 
+test.each(["complete", "interrupt"] as const)(
+    "a final command frame retains the guard until the stream ends: %s",
+    async (ending) => {
+        const details = collectSettled();
+        let controller!: ReadableStreamDefaultController<Uint8Array>;
+        vi.mocked(fetch).mockResolvedValue(
+            new Response(
+                new ReadableStream<Uint8Array>({
+                    start(value) {
+                        controller = value;
+                    },
+                }),
+                {
+                    headers: {
+                        "content-type": MEDIA_TYPE,
+                        "graft-transfer": "stream",
+                    },
+                },
+            ),
+        );
+        const element = form();
+        submit(element);
+        const final =
+            '<graft-patch-set version="1" phase="final"><graft-patch operation="children" target="theme-card"><template>Server result</template></graft-patch></graft-patch-set>';
+        const encoded = new TextEncoder().encode(final);
+        controller.enqueue(new TextEncoder().encode(`${encoded.byteLength}\n`));
+        controller.enqueue(encoded);
+        await flush();
+        expect(commandBlockReason()).toBe("pending-command");
+        expect(details).toHaveLength(0);
+        if (ending === "complete") controller.close();
+        else
+            controller.error(
+                new TypeError("Connection lost after final frame"),
+            );
+        await flush();
+        expect(details.map((detail) => detail.outcome)).toEqual([
+            ending === "complete" ? "applied-patch" : "uncertain-unsafe-result",
+        ]);
+        expect(commandBlockReason()).toBe(
+            ending === "complete" ? undefined : "uncertain-command",
+        );
+        expect(fetch).toHaveBeenCalledTimes(1);
+    },
+);
+
 test("an incomplete unsafe stream stays uncertain", async () => {
     const details = collectSettled();
     vi.mocked(fetch).mockResolvedValue(

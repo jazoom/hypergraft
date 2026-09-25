@@ -495,9 +495,11 @@ The list filter form is a live projection. JavaScript is required for live updat
 
 The server patches `task-results` after a successful create or status change. The filter form and the create form stay outside that target.
 
-The live status region sits outside `main`. It presents a disconnected state and a terminal stop. It does not run a second retry timer. A live patch event means a projection applied. An open socket does not prove that the list is current.
+`bindLiveFeedback` owns the connection and projection presentation. The connection surface sits outside `main`. It distinguishes disconnection from a terminal stop without another retry timer.
 
-Unsafe uncertainty feedback stays in front of this connection text.
+The list status requires a response for `task-filter` that includes `task-results`. Its timestamp records the last observed update in the browser timezone. It does not prove that the server contains no newer changes. Reconnection alone does not remove the unverified message.
+
+Normal command and navigation suspension produces no outage warning. Unsafe uncertainty feedback takes precedence over both connection and projection text.
 
 A command suspends live work. No subscription starts during the command. After a known create result, live work resumes with the command query. That query comes from the hidden filter fields. The resumed subscription uses that same query. The filter controls, the results and the browser URL use it too.
 
@@ -514,7 +516,25 @@ Subscription URLs include every filter control, including an empty `q` and the d
 3. Open Write the weekly notes in a third tab.
 4. Press Complete.
 5. Make sure that both list tabs remove that task without a reload.
-6. Make sure that the live status reports that the list updated.
+6. Make sure that the list timestamp shows the last received update.
+
+### Distinguish connection loss from a slow request
+
+1. Open `http://127.0.0.1:3000/tasks`.
+2. Make sure that the list shows a last-update timestamp.
+3. Stop the example server.
+4. Make sure that the connection warning appears.
+5. Make sure that the list retains its timestamp and shows the unverified message.
+6. Start the example server again.
+7. Make sure that the list receives a fresh response before the unverified message disappears.
+8. Throttle the network in the browser developer tools.
+9. Open a task.
+10. Make sure that the read indicator appears without a connection warning.
+11. Return to the list.
+12. Create a task.
+13. Make sure that the normal command pause produces no connection warning.
+
+The focused transport tests cover response loss after a command reaches the server. That result stays uncertain and blocks another command. Stream tests also cover interruption after a final frame but before clean completion. The example adds no artificial delay or progress percentage.
 
 ### Resume live work after a pending filter GET
 

@@ -23,6 +23,7 @@
         "browser/feedback.ts",
         "browser/index.ts",
         "browser/islands.ts",
+        "browser/live-feedback.ts",
         "browser/live.ts",
         "browser/morph.ts",
         "browser/navigation-feedback.ts",

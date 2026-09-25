@@ -36,7 +36,11 @@
             <a href="/tasks" data-graft data-graft-navigation-retry>Retry navigation</a>
             <button type="button" data-graft-navigation-dismiss>Dismiss</button>
         </aside>
-        <p id="live-status" role="status" hidden></p>
+        <p class="visually-hidden" data-graft-live-announcement role="status" aria-atomic="true"></p>
+        <aside id="live-status" data-graft-live-connection hidden>
+            <span data-graft-live-reconnecting>Live updates are disconnected. The app will reconnect.</span>
+            <span data-graft-live-stopped hidden>Live updates stopped. Reload the page to reconnect.</span>
+        </aside>
         <main id="main" tabindex="-1">{{ body|safe }}</main>
     </body>
 </html>

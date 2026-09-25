@@ -453,6 +453,58 @@ Runtime teardown emits `stopped` unless the transport already reports that state
 
 Command and navigation startup suspend live work before safe-request cancellation releases retired forms. A replacement GET owns its form retirement. An older GET cannot restore that form. Known command results restore eligible forms and resume live work. Uncertain results leave live work suspended.
 
+### Connection and projection feedback
+
+`bindLiveFeedback(root)` binds host-authored connection and projection feedback. Register it before `startHypergraft`. Destroy it before runtime teardown.
+
+The connection surface uses these slots outside patch targets:
+
+```html
+<p
+    class="visually-hidden"
+    data-graft-live-announcement
+    role="status"
+    aria-atomic="true"
+></p>
+<aside data-graft-live-connection hidden>
+    <span data-graft-live-reconnecting
+        >Live updates are disconnected. The app will reconnect.</span
+    >
+    <span data-graft-live-stopped hidden
+        >Live updates stopped. Reload the page to reconnect.</span
+    >
+</aside>
+```
+
+Normal command and navigation suspension hides connection feedback. Socket reconnection alone never establishes projection freshness. Browser online events change neither presentation nor freshness.
+
+Each reviewed projection declares its source form and required targets:
+
+```html
+<p data-graft-live-status="item-filter" data-graft-live-targets="item-results">
+    <span data-graft-live-unverified role="status"
+        >The list awaits a fresh update.</span
+    >
+    <span data-graft-live-updated hidden
+        >Last update received <time data-graft-live-time></time>.</span
+    >
+</p>
+```
+
+The status surface and its GET form stay outside the required patch targets. Target names are a space-separated list. The host owns this list.
+
+A successful live patch must identify that exact form and every required target. A settled status-200 GET response for that form also qualifies. Partial target sets, progress frames and unrelated forms do not qualify. Hosts must select targets that contain the whole projection, not command acknowledgements.
+
+Disconnection invalidates every observed projection independently. Query startup invalidates its source projection. Projection errors also remove its freshness evidence. An open socket cannot remove these states.
+
+The timestamp records browser receipt, not server completeness. It uses the document language and the browser timezone. It stays visible after disconnection. The unverified message returns until another qualifying response arrives. No timer infers freshness from elapsed time.
+
+Normal suspension hides the unverified message until live work resumes. Successful page navigation resets previous observation times, including retained status elements. Form replacement also resets observation ownership. The binder restores presentation after retained-target morphs.
+
+Uncertain command feedback takes precedence over both connection and projection feedback. The binder never retries requests or releases a command guard. Teardown discards all observation state.
+
+Protocol version 1, reconnect limits and stream settlement rules remain unchanged.
+
 ## Runtime replacement
 
 The unsafe document guard remains authoritative across runtime replacement.

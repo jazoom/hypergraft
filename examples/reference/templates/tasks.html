@@ -83,6 +83,10 @@
     </p>
     {% endblock %}
 </form>
+<p data-graft-live-status="task-filter" data-graft-live-targets="task-results">
+    <span data-graft-live-unverified role="status">The list awaits a fresh update.</span>
+    <span data-graft-live-updated hidden>Last update received <time data-graft-live-time></time>.</span>
+</p>
 <section id="task-results">
     {% block task_results %}
     {% if tasks.is_empty() %}
