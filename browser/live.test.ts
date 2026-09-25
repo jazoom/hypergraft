@@ -812,69 +812,172 @@ test("emits idle at startup when the document has no live form", async () => {
     expect(states).toEqual([{ state: "idle" }]);
 });
 
-test.each(["patch", "disconnect", "terminal"])(
-    "live %s discards speculation before another activation",
-    async (cause) => {
+test.each(["pending", "complete"])(
+    "an unchanged resubscription snapshot preserves %s speculation after navigation",
+    async (state) => {
+        vi.useFakeTimers();
         liveForm("projection", "/items", "item-results");
+        const content =
+            "<p>Live truth</p><template><span>Detail</span></template>";
+        document.getElementById("item-results")!.innerHTML = content;
         document.body.insertAdjacentHTML(
             "beforeend",
-            '<main id="main">Old page</main><a href="/next" data-graft data-graft-prefetch>Next</a>',
+            '<main id="main">Old page</main><a href="/first" data-graft data-graft-prefetch>Next</a>',
         );
         const link = document.querySelector("a")!;
-        vi.mocked(fetch).mockResolvedValue(
-            new Response(envelope("main", "Prefetched"), {
+        const response = (text: string) =>
+            new Response(envelope("main", text), {
                 headers: {
                     "content-type": MEDIA_TYPE,
                     "cache-control": "no-store",
                     "Graft-Prefetch": "intent",
                 },
+            });
+        vi.mocked(fetch).mockResolvedValueOnce(response("First page"));
+        cleanup = startHypergraft({ prefetch: true });
+        await vi.advanceTimersByTimeAsync(0);
+        MockSocket.instances[0]!.receive(1, envelope("item-results", content));
+        link.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+        await vi.advanceTimersByTimeAsync(0);
+        link.click();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(location.pathname).toBe("/first");
+        expect(MockSocket.instances).toHaveLength(2);
+
+        let resolve!: (response: Response) => void;
+        vi.mocked(fetch).mockReturnValueOnce(
+            new Promise((done) => {
+                resolve = done;
             }),
         );
-        cleanup = startHypergraft({ prefetch: true });
-        await vi.waitFor(() =>
-            expect(MockSocket.instances[0]?.sent).toHaveLength(1),
+        link.href = "/second";
+        link.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+        if (state === "complete") {
+            resolve(response("Second page"));
+            await vi.advanceTimersByTimeAsync(0);
+        }
+        MockSocket.instances[1]!.receive(1, envelope("item-results", content));
+        expect(vi.mocked(fetch).mock.calls[1]![1]!.signal!.aborted).toBe(false);
+        link.click();
+        if (state === "pending") resolve(response("Second page"));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(location.pathname).toBe("/second");
+        expect(document.getElementById("main")!.textContent).toBe(
+            "Second page",
         );
-        const socket = MockSocket.instances[0]!;
+        expect(fetch).toHaveBeenCalledTimes(2);
+    },
+);
+
+test.each([
+    "patch",
+    "attribute",
+    "template",
+    "append",
+    "invalid",
+    "validator",
+    "disconnect",
+    "terminal",
+])("live %s discards speculation before another activation", async (cause) => {
+    liveForm("projection", "/items", "item-results");
+    const content =
+        '<p data-state="old">Live truth</p><template>Old detail</template>';
+    document.getElementById("item-results")!.innerHTML = content;
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        '<main id="main">Old page</main><a href="/next" data-graft data-graft-prefetch>Next</a>',
+    );
+    const link = document.querySelector("a")!;
+    vi.mocked(fetch).mockResolvedValue(
+        new Response(envelope("main", "Prefetched"), {
+            headers: {
+                "content-type": MEDIA_TYPE,
+                "cache-control": "no-store",
+                "Graft-Prefetch": "intent",
+            },
+        }),
+    );
+    let validatorSawInvalidation = false;
+    cleanup = startHypergraft({
+        prefetch: true,
+        validateContent:
+            cause === "validator"
+                ? () => {
+                      validatorSawInvalidation =
+                          vi.mocked(fetch).mock.calls[0]![1]!.signal!.aborted;
+                  }
+                : undefined,
+    });
+    await vi.waitFor(() =>
+        expect(MockSocket.instances[0]?.sent).toHaveLength(1),
+    );
+    const socket = MockSocket.instances[0]!;
+    link.dispatchEvent(
+        new PointerEvent("pointerover", {
+            bubbles: true,
+            pointerType: "mouse",
+        }),
+    );
+    const signal = vi.mocked(fetch).mock.calls[0]![1]!.signal!;
+    expect(socket.readyState).toBe(MockSocket.OPEN);
+    expect(socket.sent).toHaveLength(1);
+    if (cause === "patch")
+        socket.receive(1, envelope("item-results", "Changed truth"));
+    else if (cause === "attribute")
+        socket.receive(
+            1,
+            envelope(
+                "item-results",
+                content.replace('data-state="old"', 'data-state="new"'),
+            ),
+        );
+    else if (cause === "template")
+        socket.receive(
+            1,
+            envelope(
+                "item-results",
+                content.replace("Old detail", "New detail"),
+            ),
+        );
+    else if (cause === "append")
+        socket.receive(
+            1,
+            envelope("item-results", content).replace(
+                'operation="children"',
+                'operation="append"',
+            ),
+        );
+    else if (cause === "invalid")
+        socket.receive(1, envelope("missing", content));
+    else if (cause === "validator") {
+        socket.receive(1, envelope("item-results", content));
+        expect(validatorSawInvalidation).toBe(true);
+    } else
+        socket.finishClose(
+            cause === "terminal" ? LIVE_CLOSE.terminal : LIVE_CLOSE.retryable,
+        );
+    expect(signal.aborted).toBe(true);
+    if (cause === "terminal") {
+        cleanup = startHypergraft({ prefetch: true });
         link.dispatchEvent(
             new PointerEvent("pointerover", {
                 bubbles: true,
                 pointerType: "mouse",
             }),
         );
-        const signal = vi.mocked(fetch).mock.calls[0]![1]!.signal!;
-        expect(socket.readyState).toBe(MockSocket.OPEN);
-        expect(socket.sent).toHaveLength(1);
-        if (cause === "patch")
-            socket.receive(1, envelope("item-results", "Live truth"));
-        else
-            socket.finishClose(
-                cause === "terminal"
-                    ? LIVE_CLOSE.terminal
-                    : LIVE_CLOSE.retryable,
-            );
-        expect(signal.aborted).toBe(true);
-        if (cause === "terminal") {
-            cleanup = startHypergraft({ prefetch: true });
-            link.dispatchEvent(
-                new PointerEvent("pointerover", {
-                    bubbles: true,
-                    pointerType: "mouse",
-                }),
-            );
-            expect(fetch).toHaveBeenCalledTimes(1);
-        }
-        vi.mocked(fetch).mockResolvedValueOnce(
-            new Response(envelope("main", "Fresh"), {
-                headers: { "content-type": MEDIA_TYPE },
-            }),
-        );
-        link.click();
-        await vi.waitFor(() =>
-            expect(document.getElementById("main")!.textContent).toBe("Fresh"),
-        );
-        expect(fetch).toHaveBeenCalledTimes(2);
-    },
-);
+        expect(fetch).toHaveBeenCalledTimes(1);
+    }
+    vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(envelope("main", "Fresh"), {
+            headers: { "content-type": MEDIA_TYPE },
+        }),
+    );
+    link.click();
+    await vi.waitFor(() =>
+        expect(document.getElementById("main")!.textContent).toBe("Fresh"),
+    );
+    expect(fetch).toHaveBeenCalledTimes(2);
+});
 
 test("discovers at most 64 live forms", async () => {
     for (let index = 0; index < 65; index += 1) {

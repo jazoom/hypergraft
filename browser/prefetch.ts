@@ -104,8 +104,9 @@ export function createPrefetch(options: true | PrefetchOptions) {
     let current: Entry | undefined;
     // Admission survives cancellation and navigation. Rapid pointer movement cannot refund traffic.
     const starts: number[] = [];
-    const invalidate = () => {
+    const invalidate = (preserve?: () => boolean) => {
         const entry = current;
+        if (entry && preserve?.()) return;
         current = undefined;
         if (!entry) return;
         clearTimeout(entry.timer);

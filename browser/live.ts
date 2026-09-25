@@ -1,4 +1,5 @@
 import { emitDiagnostic, HypergraftError } from "./diagnostics";
+import { elementProperty, nodeProperty } from "./dom";
 import type { EnterEffects } from "./enter-effects";
 import {
     emitLivePatch,
@@ -10,6 +11,8 @@ import {
     apply,
     MAX_RESPONSE_BYTES,
     preflightLive,
+    type PreparedBatch,
+    type PreparedPatch,
     type ValidateContent,
 } from "./patches";
 
@@ -59,7 +62,7 @@ export type LiveControllerOptions = {
     disposed: () => boolean;
     validateContent?: ValidateContent;
     enterEffects?: EnterEffects;
-    invalidatePrefetch?: (terminal: boolean) => void;
+    invalidatePrefetch?: (terminal: boolean, preserve?: () => boolean) => void;
 };
 
 function sameOrigin(url: URL) {
@@ -190,6 +193,24 @@ function decodeFrame(buffer: ArrayBuffer): { id: number; text: string } {
             `Invalid Hypergraft live patch: ${error instanceof Error ? error.message : String(error)}`,
         );
     }
+}
+
+function matchesCurrentContent(patch: PreparedPatch): boolean {
+    if (patch.operation !== "children") return false;
+    const current = nodeProperty(patch.target, "childNodes");
+    return (
+        current.length === patch.nodes.length &&
+        patch.nodes.every((node, index) => {
+            const existing = current[index]!;
+            // Serialisation includes template contents, unlike isEqualNode.
+            if (existing instanceof Element && node instanceof Element)
+                return (
+                    elementProperty(existing, "outerHTML") ===
+                    elementProperty(node, "outerHTML")
+                );
+            return Node.prototype.isEqualNode.call(existing, node);
+        })
+    );
 }
 
 export function createLiveController(
@@ -385,11 +406,18 @@ export function createLiveController(
     };
 
     const handlePatch = (sub: Subscription, text: string) => {
-        options.invalidatePrefetch?.(false);
-        let batch;
+        // A host validator can synchronously start navigation or change the content.
+        if (options.validateContent) options.invalidatePrefetch?.(false);
+        let batch: PreparedBatch;
         try {
             batch = preflightLive(text, document, options.validateContent);
+            // Compare only while a speculative entry exists, not on every live update.
+            if (!options.validateContent)
+                options.invalidatePrefetch?.(false, () =>
+                    batch.patches.every(matchesCurrentContent),
+                );
         } catch (error) {
+            options.invalidatePrefetch?.(false);
             emitDiagnostic({
                 reason:
                     error instanceof HypergraftError
@@ -409,6 +437,7 @@ export function createLiveController(
         }
         for (const patch of batch.patches) {
             if (conflicts(sub, patch.target)) {
+                options.invalidatePrefetch?.(false);
                 emitDiagnostic({
                     reason: "target-content",
                     requestKind: "patch",
@@ -424,6 +453,7 @@ export function createLiveController(
         try {
             apply(batch, undefined, options.enterEffects);
         } catch (error) {
+            options.invalidatePrefetch?.(false);
             emitDiagnostic({
                 reason: "apply-failure",
                 requestKind: "patch",

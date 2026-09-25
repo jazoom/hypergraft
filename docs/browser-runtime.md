@@ -223,11 +223,15 @@ These events discard speculation:
 
 - An explicit GET form or command starts.
 - Another navigation starts without a matching eligible entry.
-- A current live projection arrives, before content validation.
+- A current live projection changes content or fails validation.
 - The live connection reports disconnection or a terminal stop.
 - The document becomes hidden or receives `pagehide`.
 - The speculative deadline expires.
 - The runtime stops or another runtime replaces it.
+
+An unchanged valid `children` snapshot preserves speculation, including the initial snapshots after navigation reconnects the live socket. The runtime compares the current target children with the incoming content, including nested template contents. It still applies the snapshot and emits the live-patch event. This exception retains no previous response body and creates no new freshness guarantee.
+
+Changed content and `append` patches discard speculation before application. A host content validator also discards speculation before its callback, because that callback can change content or start navigation. Invalid content, target conflicts and application failures discard speculation before error events.
 
 A terminal live stop disables further speculation for that document, including replacement runtimes. Ordinary runtime disposal does not establish terminal identity loss. The runtime cannot infer an unobserved identity change from an HttpOnly cookie. Hosts use `invalidatePrefetch()` for other observed identity or domain changes, before another activation.
 

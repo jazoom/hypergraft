@@ -1386,9 +1386,9 @@ function createRuntime(
         disposed: () => runtime.disposed,
         validateContent: options.validateContent,
         enterEffects: runtime.enterEffects,
-        invalidatePrefetch: (terminal) => {
+        invalidatePrefetch: (terminal, preserve) => {
             runtime.patchedPointer = runtime.pointerPosition;
-            runtime.prefetch?.invalidate();
+            runtime.prefetch?.invalidate(terminal ? undefined : preserve);
             if (terminal && !runtime.disposed) documentPrefetchStopped = true;
         },
     });
