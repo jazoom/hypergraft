@@ -156,6 +156,83 @@ New navigation and successful location changes clear earlier recovery presentati
 
 Protocol version 1 and its cache policy remain unchanged.
 
+## Intent prefetch
+
+The `prefetch` init option selects eligible enhanced links. The default is off. Every mode requires `a[data-graft][href]` and server approval through `Graft-Prefetch: intent`.
+
+The option accepts these values:
+
+- Omitted or `false`: no speculation, even for marked links.
+- `true`, `{}` or `{ links: "marked" }`: only links with `data-graft-prefetch` or `data-graft-prefetch="true"` qualify.
+- `{ routes: ["/items", "/diary"] }`: all enhanced links to those exact pathnames qualify, without another attribute.
+- `{ links: "all" }`: all otherwise eligible enhanced links qualify.
+
+`PrefetchOptions` is the exported type for object options. Every object form accepts `maxAgeMs`, with a default of 10,000 ms. An age-only object retains marked-link eligibility. The runtime snapshots eligibility and maximum age at startup. Later configuration changes require runtime replacement.
+
+`maxAgeMs` accepts whole milliseconds from 1 to 2,147,483,647, inclusive. Omission or `undefined` selects the default. Other values throw `RangeError` at startup, without coercion or clamping. The maximum prevents browser timer overflow, not excessive retention under a host's freshness policy.
+
+```ts
+startHypergraft({
+    prefetch: {
+        routes: ["/", "/patients", "/diary", "/waiting-room"],
+        maxAgeMs: 10_000,
+    },
+});
+```
+
+```html
+<a href="/patients?q=alex" data-graft>Patients</a>
+<a href="/patients?q=alex" data-graft data-graft-prefetch="false"
+    >Read on activation only</a
+>
+```
+
+Route matching uses exact `URL.pathname` values. It does not expand prefixes, wildcards or child paths. Queries remain part of request identity, so different query strings never share one entry. An opt-in attribute cannot extend a configured route list.
+
+`data-graft-prefetch="false"` excludes a link in every mode. Unknown attribute values also exclude it. The runtime checks current eligibility again at activation. No mode speculates on GET forms or native unenhanced links.
+
+The host owns request-start approval. Response approval arrives after the request and cannot prevent unwanted GET side effects. The all-links mode requires a host-wide route review or explicit per-link exclusions.
+
+Pointer entry and keyboard focus start the request immediately. There is no dwell timer or debounce. A primary touch press also starts speculation. A cancelled touch press discards it without navigation.
+
+A patch can place a new link under a stationary pointer. That layout-induced event does not establish new intent. A later pointer movement permits another pointer entry. The runtime does not automatically prefetch adjacent dates after navigation.
+
+The runtime requests the exact destination and query with the normal navigation representation. Requests use same-origin credentials, `cache: "no-store"` and manual redirects. Unsupported links and modified clicks retain native behaviour. Downloads, fragments, external targets and recovery links do not qualify. Hosts must exclude authentication actions and unreviewed routes from their eligibility policy.
+
+One runtime owns at most one speculative request or completed result. A later destination cancels its predecessor. Duplicate intent for the same destination shares that entry. Activation consumes it once. Neither history traversal nor another navigation can reuse it.
+
+The entry expires `maxAgeMs` after request start, including network time. The default is ten seconds. Completion never extends that deadline. Activation also checks age directly, so a delayed timer cannot permit old data. Adoption transfers ownership to ordinary navigation and removes the speculative deadline. Normal cancellation, departure guards and recovery still apply.
+
+The decoded speculative body limit is 524,288 bytes. Each rolling 10,000 ms window admits four speculative requests and reserves that allowance for each request. Cancellation and adoption do not refund admission. This admission window remains independent of `maxAgeMs`.
+
+There is no queue. Explicit requests cancel unrelated speculation and do not wait for admission. After adoption, the ordinary response byte limit applies.
+
+The byte limit bounds accepted body data, not browser transport buffers or total JavaScript heap allocation. Browser transport can receive extra bytes before cancellation takes effect.
+
+Speculation does not parse document fragments or call content validators. It does not initialise islands or change history, focus, scroll or feedback. It acquires no command or navigation guard. It does not suspend live projections. Activation runs ordinary preflight against the current document.
+
+A speculative failure remains silent. Missing approval, unsupported response metadata and completed failures leave activation free to start a fresh ordinary request. An adopted transport failure uses normal explicit recovery, without an automatic repeat. Invalid content retains authoritative document recovery after activation.
+
+### Retention and invalidation policy
+
+`Graft-Prefetch: intent` explicitly permits short-lived application state for one prospective navigation. HTTP responses still require `no-store`. This policy does not enable an HTTP cache, persistent browser storage or cross-navigation reuse. Private hosts must approve route eligibility and the speculative authorisation interval.
+
+Server authorisation occurs when the request reaches the server. Adoption does not make a fresh server authorisation decision. The selected maximum bounds speculative age, not global freshness. Longer retention increases the interval between server authorisation and activation. Hosts must approve that interval for their routes. Command authorisation and concurrency predicates remain independent.
+
+These events discard speculation:
+
+- An explicit GET form or command starts.
+- Another navigation starts without a matching eligible entry.
+- A current live projection arrives, before content validation.
+- The live connection reports disconnection or a terminal stop.
+- The document becomes hidden or receives `pagehide`.
+- The speculative deadline expires.
+- The runtime stops or another runtime replaces it.
+
+A terminal live stop disables further speculation for that document, including replacement runtimes. Ordinary runtime disposal does not establish terminal identity loss. The runtime cannot infer an unobserved identity change from an HttpOnly cookie. Hosts use `invalidatePrefetch()` for other observed identity or domain changes, before another activation.
+
+Data-saver preferences suppress speculation where `navigator.connection.saveData` exists. Admission and byte limits remain active without network hints. No expiry or invalidation schedules another request.
+
 ## Query pending state
 
 `listenForQueryPending` observes `hypergraft:querypending` for enhanced GET form requests. It excludes commands and background live patches. The runtime uses the effective method, including submitter overrides.

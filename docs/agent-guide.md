@@ -307,6 +307,30 @@ Live hosts also need the explicit WebSocket source from `LiveEndpoint::csp_conne
 - Do not patch both a parent target and its descendant in one batch.
 - Do not include a retained target's wrapper in its `children` content.
 
+## Optional intent prefetch
+
+`startHypergraft({ prefetch })` selects an intent policy for enhanced links. The option defaults to off.
+
+- `true`, `{}` or `{ links: "marked" }` requires per-link `data-graft-prefetch` opt-in.
+- `{ routes: ["/items", "/diary"] }` enables all enhanced links to exact approved pathnames.
+- `{ links: "all" }` enables all otherwise eligible enhanced links.
+
+`data-graft-prefetch="false"` excludes individual links in every mode. An opt-in attribute cannot extend a route list. Queries remain part of request identity. GET forms and native links never become speculative through these options.
+
+Server approval uses `outcome::prefetchable_page_patch` or `PatchSet::respond_prefetchable_navigation()`. Both emit `Graft-Prefetch: intent` without a change to `no-store`. Request-start eligibility remains a host responsibility. Server approval arrives too late to prevent an unwanted GET.
+
+Every object option accepts `maxAgeMs`, with a default of 10,000 ms from request start, not completion. An age-only object requires marked links. Valid values are integers from 1 to 2,147,483,647 ms, inclusive. Invalid values throw `RangeError` at startup. The runtime snapshots the age alongside eligibility. The upper bound prevents browser timer overflow.
+
+Activation consumes the entry once and removes its speculative deadline. Longer retention increases the interval between request-time authorisation and activation. The host owns approval for this interval. The runtime allows one speculative request and at most 524,288 decoded bytes.
+
+A rolling ten-second window admits at most four speculative requests, independently of `maxAgeMs`. Cancellation and adoption do not refund admission. Explicit requests bypass admission and cancel unrelated speculation.
+
+Commands and query requests discard speculation at startup. Current live projections and live disconnection also discard it. Terminal live loss disables speculation for the document. Hidden documents, page departure and teardown discard entries. `invalidatePrefetch()` covers other host-observed changes.
+
+Private routes require an approved application-retention policy. The host policy excludes authentication actions and routes with side effects. Speculation does not run document preflight or change the visible page. Activation retains normal content validation and departure guards.
+
+The [full contract](browser-runtime.md#intent-prefetch) defines byte accounting and the authorisation interval.
+
 ## Optional entry effects
 
 `startHypergraft({ enterEffects })` owns identity-aware entry effects for targeted patches. The host supplies named Web Animations definitions. Markup selects a definition through `data-graft-enter="name"` and a stable DOM `id`.

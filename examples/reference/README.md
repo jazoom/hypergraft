@@ -128,6 +128,55 @@ Open `http://127.0.0.1:3003/tasks`.
 23. Remove the request block.
 24. Reload the document.
 
+## Immediate intent prefetch
+
+The example selects `startHypergraft({ prefetch: { links: "all" } })`. Its reviewed task-list and task-detail links require only `data-graft` and a real `href`. Their navigation responses still require `Graft-Prefetch: intent`. Query patches and commands do not carry that approval.
+
+Hosts with a narrower review can select an exact route list through `prefetch: { routes: ["/items"] }`. A per-link `data-graft-prefetch="false"` excludes an exception. The original `prefetch: true` mode still requires marked links. An omitted option or `false` disables speculation.
+
+Pointer entry and keyboard focus start the actual navigation request immediately. Touch press also provides a head start. Speculation leaves the visible page and live projection unchanged. Activation adopts the active request or consumes its completed result once.
+
+The result expires ten seconds after request start by default. It never survives for another navigation. HTTP responses remain `no-store`. The example uses the same [bounded policy](../../docs/browser-runtime.md#intent-prefetch) as private hosts, without an example-only transport.
+
+A host can select another age through `prefetch: { links: "all", maxAgeMs: 5_000 }`. Valid values are integers from 1 to 2,147,483,647 ms, inclusive. Invalid values throw `RangeError` at startup. Longer retention increases the interval between request-time authorisation and activation. The admission window stays independent of this setting.
+
+### Review adoption and expiry
+
+1. Open the task list.
+2. Open the Network panel in the developer tools.
+3. Move the pointer onto a task link.
+4. Make sure that one navigation GET starts before a click.
+5. Make sure that the task list and its live projection remain active.
+6. Click within ten seconds of request start.
+7. Make sure that navigation uses the same request without another GET.
+8. Return to the list.
+9. Use Tab to focus a task link.
+10. Press Enter within ten seconds of request start.
+11. Make sure that keyboard activation also uses one request.
+12. Return to the list.
+13. Move the pointer onto another task link.
+14. Wait more than ten seconds.
+15. Click the link.
+16. Make sure that activation starts a fresh navigation GET.
+
+### Review invalidation and failure
+
+1. Open the task list in two tabs.
+2. In the first tab, move the pointer onto a task link.
+3. In the second tab, create a task before the ten-second deadline.
+4. Make sure that the first tab receives its live update.
+5. Click the first tab's link.
+6. Make sure that a fresh request supplies the destination.
+7. Return to the list.
+8. Block the next task GET in the developer tools.
+9. Move the pointer onto that task link.
+10. Make sure that the speculative failure presents no navigation error.
+11. Remove the request block.
+12. Click the link.
+13. Make sure that ordinary navigation succeeds.
+
+A rolling ten-second window admits four speculative requests. Extra intent remains silent until another user gesture receives admission. Explicit navigation always remains available. A cancelled touch press never navigates. Commands discard speculation before transport starts.
+
 ## Search the task list
 
 The list filter is a canonical GET form. It accepts a search string and a status of `all`, `open` or `done`.

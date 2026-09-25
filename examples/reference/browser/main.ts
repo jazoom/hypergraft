@@ -54,6 +54,7 @@ const bound = bindTransportFeedback(document);
 const stopReadFeedback = bindReadFeedback(document);
 const stopNavigationRecovery = bindNavigationRecovery(document);
 const stop = startHypergraft({
+    prefetch: { links: "all" },
     feedback: bound.feedback,
     enterEffects: {
         task: {

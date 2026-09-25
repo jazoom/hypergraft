@@ -2,6 +2,7 @@ export {
     startHypergraft,
     commandBlockReason,
     cancelNavigation,
+    invalidatePrefetch,
     type CommandBlockReason,
     type HypergraftOptions,
     type TransportFeedback,
@@ -51,6 +52,7 @@ export {
     type AcceptedPatchStatus,
     type ValidateContent,
 } from "./patches";
+export type { PrefetchOptions } from "./prefetch";
 export {
     DEFAULT_LIVE_ENDPOINT,
     LIVE_CLOSE,

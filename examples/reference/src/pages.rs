@@ -238,7 +238,7 @@ pub async fn tasks(
     };
     match graft {
         GraftRequest::Document => document("Tasks", &page),
-        GraftRequest::Navigation => Ok(outcome::page_patch("Tasks", "main", &page)?),
+        GraftRequest::Navigation => Ok(outcome::prefetchable_page_patch("Tasks", "main", &page)?),
         GraftRequest::Patch => Ok(PatchSet::new()
             .with_children(
                 "task-filter",
@@ -274,7 +274,7 @@ pub async fn task(
     };
     match graft {
         PageGraft::Document => document(&title, &page),
-        PageGraft::Navigation => Ok(outcome::page_patch(title, "main", &page)?),
+        PageGraft::Navigation => Ok(outcome::prefetchable_page_patch(title, "main", &page)?),
     }
 }
 

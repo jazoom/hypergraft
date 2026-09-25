@@ -12,6 +12,8 @@ use crate::{
 };
 
 pub const GRAFT_TRANSFER: &str = "Graft-Transfer";
+pub const GRAFT_PREFETCH: &str = "Graft-Prefetch";
+pub const PREFETCH_INTENT: &str = "intent";
 
 /// Stable classification of a failed patch build.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -402,6 +404,18 @@ impl PatchSet {
         if let Some(value) = retry_after {
             value.apply(response.headers_mut());
         }
+        Ok(response)
+    }
+
+    /// The host approves this GET navigation for single-use intent prefetch after authorisation.
+    pub fn respond_prefetchable_navigation(self) -> Result<Response, PatchBuildError> {
+        if self.location.is_some() {
+            return Err(PatchBuildError::InvalidLocation);
+        }
+        let mut response = self.respond(PatchStatus::Ok)?;
+        response
+            .headers_mut()
+            .insert(GRAFT_PREFETCH, HeaderValue::from_static(PREFETCH_INTENT));
         Ok(response)
     }
 

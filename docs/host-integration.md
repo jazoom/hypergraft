@@ -153,6 +153,41 @@ async fn items(graft: PageGraft) -> Result<Response, HostError> {
 }
 ```
 
+## Approve intent prefetch
+
+Review a GET route for side effects and sensitive response requirements.
+
+Keep authentication and authorisation before its handler.
+
+Configure reviewed pathnames through `startHypergraft({ prefetch: { routes: ["/items"] } })` in the browser entry.
+
+Keep `data-graft` and a real `href` on each enhanced link.
+
+For a per-link exception, add `data-graft-prefetch="false"`.
+
+To change retention, set `maxAgeMs` beside `routes` or `links` in the same object.
+
+Use `outcome::prefetchable_page_patch` in the navigation branch of an approved single-target page.
+
+For multiple targets, use `PatchSet::respond_prefetchable_navigation()` instead.
+
+```rust
+match graft {
+    PageGraft::Document => render_document("Items", &page),
+    PageGraft::Navigation => Ok(outcome::prefetchable_page_patch("Items", "main", &page)?),
+}
+```
+
+An alternative `prefetch: true` configuration retains marked-link opt-in through `data-graft-prefetch`. A host can select `prefetch: { links: "all" }` after review of all enhanced destinations. Neither automatic mode includes GET forms. Server approval cannot prevent an unwanted request because it arrives after request startup.
+
+The opt-in response carries `Graft-Prefetch: intent` and retains `no-store`. The multi-target builder rejects command location replacements. The signal applies to navigation only, not a query patch or command result.
+
+The [intent prefetch policy](browser-runtime.md#intent-prefetch) permits one single-use result for ten seconds from request start by default. All object options accept `maxAgeMs`. An age-only object, such as `{ maxAgeMs: 5_000 }`, requires marked links. The runtime snapshots the value at startup.
+
+Valid values are integers from 1 to 2,147,483,647 ms, inclusive. Invalid values throw `RangeError`, rather than silently change retention. The upper bound prevents timer overflow. The four-request admission window remains 10,000 ms regardless of maximum age.
+
+Authorisation occurs at request time, not again at activation. Longer retention increases that interval. Hosts own approval for private routes and invalidation after identity changes outside the runtime's observed lifecycle.
+
 ## Canonical GET form with one targeted projection
 
 ```html

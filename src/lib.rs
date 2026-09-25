@@ -9,9 +9,9 @@ pub mod live;
 
 pub use request::{GRAFT_REQUEST, GraftMetadataError, GraftRequest, PageGraft, PatchGraft};
 pub use response::{
-    DomId, GRAFT_TRANSFER, InvalidDomId, InvalidNavigation, Navigation, PatchBuildError,
-    PatchBuildErrorKind, PatchSet, PatchStatus, RetryAfter, StreamBudget, StreamCapacityError,
-    StreamFrame,
+    DomId, GRAFT_PREFETCH, GRAFT_TRANSFER, InvalidDomId, InvalidNavigation, Navigation,
+    PREFETCH_INTENT, PatchBuildError, PatchBuildErrorKind, PatchSet, PatchStatus, RetryAfter,
+    StreamBudget, StreamCapacityError, StreamFrame,
 };
 
 use axum::{

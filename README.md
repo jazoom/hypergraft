@@ -68,6 +68,10 @@ The [streamed progress recipe](docs/host-integration.md#streamed-command-recipe)
 
 Patch targets use global document identifiers. Identifiers in inserted content and surviving document elements must match `^[A-Za-z][A-Za-z0-9_.:-]{0,127}$`. They must be unique across the final document, including regions outside patch targets.
 
+Intent prefetch requires a host eligibility policy and server response approval. Init options support marked links, exact route lists or all enhanced links. It permits one single-use navigation result for ten seconds from request start by default. Object options accept `maxAgeMs` to change that interval. HTTP responses retain `no-store`.
+
+Private hosts own the route review and authorisation interval. Longer retention increases the interval between request-time authorisation and activation. The independent admission limit remains four requests per ten seconds. The [prefetch contract](docs/browser-runtime.md#intent-prefetch) defines valid ages and invalid-value errors.
+
 Version 1 does not patch the document head. A titled patch updates `document.title` only.
 
 Version 1 does not restore history scroll positions. After a children patch, the previous offset belongs to different content.

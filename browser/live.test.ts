@@ -812,6 +812,70 @@ test("emits idle at startup when the document has no live form", async () => {
     expect(states).toEqual([{ state: "idle" }]);
 });
 
+test.each(["patch", "disconnect", "terminal"])(
+    "live %s discards speculation before another activation",
+    async (cause) => {
+        liveForm("projection", "/items", "item-results");
+        document.body.insertAdjacentHTML(
+            "beforeend",
+            '<main id="main">Old page</main><a href="/next" data-graft data-graft-prefetch>Next</a>',
+        );
+        const link = document.querySelector("a")!;
+        vi.mocked(fetch).mockResolvedValue(
+            new Response(envelope("main", "Prefetched"), {
+                headers: {
+                    "content-type": MEDIA_TYPE,
+                    "cache-control": "no-store",
+                    "Graft-Prefetch": "intent",
+                },
+            }),
+        );
+        cleanup = startHypergraft({ prefetch: true });
+        await vi.waitFor(() =>
+            expect(MockSocket.instances[0]?.sent).toHaveLength(1),
+        );
+        const socket = MockSocket.instances[0]!;
+        link.dispatchEvent(
+            new PointerEvent("pointerover", {
+                bubbles: true,
+                pointerType: "mouse",
+            }),
+        );
+        const signal = vi.mocked(fetch).mock.calls[0]![1]!.signal!;
+        expect(socket.readyState).toBe(MockSocket.OPEN);
+        expect(socket.sent).toHaveLength(1);
+        if (cause === "patch")
+            socket.receive(1, envelope("item-results", "Live truth"));
+        else
+            socket.finishClose(
+                cause === "terminal"
+                    ? LIVE_CLOSE.terminal
+                    : LIVE_CLOSE.retryable,
+            );
+        expect(signal.aborted).toBe(true);
+        if (cause === "terminal") {
+            cleanup = startHypergraft({ prefetch: true });
+            link.dispatchEvent(
+                new PointerEvent("pointerover", {
+                    bubbles: true,
+                    pointerType: "mouse",
+                }),
+            );
+            expect(fetch).toHaveBeenCalledTimes(1);
+        }
+        vi.mocked(fetch).mockResolvedValueOnce(
+            new Response(envelope("main", "Fresh"), {
+                headers: { "content-type": MEDIA_TYPE },
+            }),
+        );
+        link.click();
+        await vi.waitFor(() =>
+            expect(document.getElementById("main")!.textContent).toBe("Fresh"),
+        );
+        expect(fetch).toHaveBeenCalledTimes(2);
+    },
+);
+
 test("discovers at most 64 live forms", async () => {
     for (let index = 0; index < 65; index += 1) {
         liveForm(`form-${index}`, `/items/${index}`, `target-${index}`);

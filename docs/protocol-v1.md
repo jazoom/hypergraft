@@ -39,6 +39,20 @@ A target identifier matches `^[A-Za-z][A-Za-z0-9_.:-]{0,127}$`.
 It is ASCII.
 It is at most 128 bytes.
 
+## Opt-in intent prefetch
+
+The `prefetch` section in the canonical fixture defines an additive response header and its application-state bounds. An approved complete navigation patch uses status 200 and `Graft-Prefetch: intent`. Requests retain the existing navigation metadata. Responses retain `Cache-Control: no-store` and the existing `Vary` tokens.
+
+This signal permits one prospective navigation result in document-local memory until the configured maximum age from request start. The default is 10,000 ms. It permits neither persistent storage nor response reuse across separate navigations. Activation can adopt an active request or consume a completed result once. After adoption, ordinary navigation owns the request and its limits.
+
+The fixture's `prefetch.maxAgeMs` records the configurable default and validation bounds, not a fixed ten-second protocol limit. The browser accepts integers from 1 to 2,147,483,647 ms and throws `RangeError` for invalid values. The upper bound prevents timer overflow. The host owns its freshness policy and the interval between request-time authorisation and activation.
+
+Hosts opt in after route review and normal authorisation. An unmarked response never enters completed speculative state. Redirects, navigation handoffs, streams and non-200 responses receive no speculative reuse approval. Existing clients ignore the header. Envelopes, request kinds and live wire messages remain unchanged.
+
+The runtime admits one speculative entry and one request at a time. Its decoded body limit is 524,288 bytes. Each rolling 10,000 ms window admits at most four speculative requests. Cancellation and adoption do not refund admission. The admission window stays independent of the configured maximum age. Browser transport buffers remain outside the decoded body bound.
+
+The [browser contract](browser-runtime.md#intent-prefetch) defines invalidation, activation preflight and terminal identity handling. HTTP cache directives alone do not define this approved application-state lifetime.
+
 ## Wire limits
 
 The fixture publishes these numerical bounds:

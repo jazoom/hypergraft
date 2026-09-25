@@ -55,6 +55,18 @@ pub fn page_patch<T: Template>(
         .respond(PatchStatus::Ok)
 }
 
+/// The host approves this GET navigation for single-use intent prefetch after authorisation.
+pub fn prefetchable_page_patch<T: Template>(
+    title: impl Into<String>,
+    target: impl AsRef<str>,
+    template: &T,
+) -> Result<Response, PatchBuildError> {
+    PatchSet::new()
+        .title(title)
+        .with_children(target, template)?
+        .respond_prefetchable_navigation()
+}
+
 /// Build one retained-target patch at any accepted status.
 pub fn children_patch<T: Template>(
     status: PatchStatus,

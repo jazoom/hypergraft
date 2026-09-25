@@ -35,6 +35,40 @@ async fn body(response: Response) -> String {
 }
 
 #[test]
+fn prefetch_is_explicit_and_never_changes_the_http_cache_policy() {
+    let policy = &protocol_fixture()["prefetch"];
+    assert_eq!(GRAFT_PREFETCH, policy["responseHeader"].as_str().unwrap());
+    assert_eq!(PREFETCH_INTENT, policy["responseValue"].as_str().unwrap());
+    let content = Content { value: "Read only" };
+    let response = outcome::prefetchable_page_patch("Page", "main", &content).unwrap();
+    assert_eq!(
+        u64::from(response.status().as_u16()),
+        policy["status"].as_u64().unwrap()
+    );
+    assert_eq!(response.headers()[GRAFT_PREFETCH], PREFETCH_INTENT);
+    assert_eq!(
+        response.headers()[header::CACHE_CONTROL],
+        policy["cacheControl"].as_str().unwrap()
+    );
+    assert_eq!(response.headers()[header::VARY], VARY_VALUE);
+    assert!(
+        !outcome::page_patch("Page", "main", &content)
+            .unwrap()
+            .headers()
+            .contains_key(GRAFT_PREFETCH)
+    );
+    let command = PatchSet::new()
+        .with_children("main", &content)
+        .unwrap()
+        .with_replace_location("/next")
+        .unwrap();
+    assert!(matches!(
+        command.respond_prefetchable_navigation(),
+        Err(PatchBuildError::InvalidLocation)
+    ));
+}
+
+#[test]
 fn validates_local_navigation_destinations() {
     for valid in [
         "/dashboard/account/preferences",

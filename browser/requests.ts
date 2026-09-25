@@ -17,7 +17,6 @@ import {
 import { observeIslands, type IslandInitialiser } from "./islands";
 import {
     apply,
-    MAX_RESPONSE_BYTES,
     MEDIA_TYPE,
     PATCH_STATUSES,
     preflight,
@@ -28,6 +27,15 @@ import {
     type ValidateContent,
 } from "./patches";
 import { readStreamFrames } from "./stream";
+import { readBoundedResponse } from "./read-response";
+export { readBoundedResponse } from "./read-response";
+import {
+    createPrefetch,
+    fetchSafe,
+    type NavigationResponse,
+    type Prefetch,
+    type PrefetchOptions,
+} from "./prefetch";
 import {
     createEnterEffects,
     type EnterEffect,
@@ -56,6 +64,11 @@ let documentUnsafe: UnsafeState = { kind: "idle" };
 let activeRuntime: Runtime | undefined;
 let nextNavigationId = 0;
 let nextQueryId = 0;
+let documentPrefetchStopped = false;
+
+export function invalidatePrefetch(): void {
+    activeRuntime?.prefetch?.invalidate();
+}
 
 type Runtime = {
     disposed: boolean;
@@ -75,6 +88,9 @@ type Runtime = {
     stopIslands: () => void;
     live: LiveController;
     enterEffects?: EnterEffects;
+    prefetch?: Prefetch;
+    pointerPosition?: { x: number; y: number };
+    patchedPointer?: { x: number; y: number };
 };
 
 export type CommandBlockReason =
@@ -102,6 +118,7 @@ export interface HypergraftOptions {
     islands?: Record<string, IslandInitialiser>;
     liveEndpoint?: string;
     enterEffects?: Record<string, EnterEffect>;
+    prefetch?: boolean | PrefetchOptions;
 }
 
 function pruneFailedSafeForms(runtime: Runtime): boolean {
@@ -149,7 +166,8 @@ function supportedLink(event: MouseEvent, link: HTMLAnchorElement) {
         !event.ctrlKey &&
         !event.shiftKey &&
         !event.altKey &&
-        !link.download &&
+        !link.hasAttribute("download") &&
+        !link.relList.contains("external") &&
         (!link.target || link.target === "_self")
     );
 }
@@ -245,69 +263,6 @@ function preparePost(form: HTMLFormElement, submitter?: HTMLElement | null) {
     }
 }
 
-export async function readBoundedResponse(response: Response): Promise<string> {
-    const declared = response.headers.get("content-length");
-    if (
-        declared &&
-        /^\d+$/.test(declared) &&
-        Number(declared) > MAX_RESPONSE_BYTES
-    )
-        throw new HypergraftError(
-            "byte-limit",
-            "Hypergraft response byte limit exceeded",
-        );
-    if (!response.body) return "";
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder("utf-8", { fatal: true });
-    let bytes = 0;
-    let text = "";
-    try {
-        while (true) {
-            let chunk: ReadableStreamReadResult<Uint8Array>;
-            try {
-                chunk = await reader.read();
-            } catch (error) {
-                throw new HypergraftError(
-                    "transport",
-                    `Hypergraft response stream failed: ${errorMessage(error)}`,
-                );
-            }
-            const { done, value } = chunk;
-            if (done) break;
-            bytes += value.byteLength;
-            if (bytes > MAX_RESPONSE_BYTES) {
-                try {
-                    await reader.cancel();
-                } catch {
-                    // Cancellation failure must not hide the byte-limit fact.
-                }
-                throw new HypergraftError(
-                    "byte-limit",
-                    "Hypergraft response byte limit exceeded",
-                );
-            }
-            try {
-                text += decoder.decode(value, { stream: true });
-            } catch (error) {
-                throw new HypergraftError(
-                    "utf-8",
-                    `Invalid Hypergraft response: invalid UTF-8 (${errorMessage(error)})`,
-                );
-            }
-        }
-        try {
-            return text + decoder.decode();
-        } catch (error) {
-            throw new HypergraftError(
-                "utf-8",
-                `Invalid Hypergraft response: invalid UTF-8 (${errorMessage(error)})`,
-            );
-        }
-    } finally {
-        reader.releaseLock();
-    }
-}
-
 type ConsumeOutcome =
     | { kind: "navigation"; destination: string }
     | {
@@ -332,6 +287,7 @@ async function consumeEnhanced(
     onProgress?: (batch: PreparedBatch, frame: number) => void,
     pending?: PendingSession,
     beforeApply?: () => boolean,
+    prefetchedText?: string,
 ): Promise<ConsumeOutcome> {
     const consumeOwned =
         pending &&
@@ -344,7 +300,7 @@ async function consumeEnhanced(
         throw tagStatus(error, response.status);
     }
     if (transfer === "complete") {
-        const text = await readBoundedResponse(response);
+        const text = prefetchedText ?? (await readBoundedResponse(response));
         if (isStale()) return { kind: "stale" };
         let prepared: PreparedResponse;
         try {
@@ -369,6 +325,7 @@ async function consumeEnhanced(
                 response.status,
             );
         if (beforeApply && !beforeApply()) return { kind: "stale" };
+        runtime.patchedPointer = runtime.pointerPosition;
         try {
             apply(
                 prepared.batch,
@@ -419,6 +376,7 @@ async function consumeEnhanced(
             );
             if (isStale() || (beforeApply && !beforeApply()))
                 return { kind: "stale" };
+            runtime.patchedPointer = runtime.pointerPosition;
             try {
                 apply(
                     prepared.batch,
@@ -538,21 +496,26 @@ async function safeRequest(
     failedForm?: HTMLFormElement,
     pending?: PendingSession,
     beforeApply?: () => boolean,
+    speculative?: Promise<NavigationResponse | undefined>,
 ): Promise<SafeOutcome> {
     let response: Response;
+    let prefetchedText: string | undefined;
     try {
-        response = await fetch(url, {
-            method: "GET",
-            credentials: "same-origin",
-            cache: "no-store",
-            redirect: "manual",
-            signal: lane.controller?.signal,
-            headers: { "Graft-Request": kind, Accept: MEDIA_TYPE },
-        });
+        const prefetched = speculative ? await speculative : undefined;
+        if (runtime.disposed || lane.sequence !== sequence)
+            return { kind: "stale" };
+        response =
+            prefetched?.response ??
+            (await fetchSafe(url, kind, lane.controller?.signal));
+        prefetchedText = prefetched?.text;
     } catch (error) {
         // Expected aborts stay AbortError so callers skip diagnostics and
         // settlement; every other transport failure carries a typed reason.
-        if (errorName(error) === "AbortError") throw error;
+        if (
+            errorName(error) === "AbortError" ||
+            error instanceof HypergraftError
+        )
+            throw error;
         throw new HypergraftError(
             "transport",
             `Hypergraft request transport failed: ${errorMessage(error)}`,
@@ -603,6 +566,7 @@ async function safeRequest(
             : undefined,
         pending,
         beforeApply,
+        prefetchedText,
     );
     if (consumed.kind === "stale") return { kind: "stale" };
     if (consumed.kind === "navigation") {
@@ -747,6 +711,14 @@ async function navigate(
         ...(element ? { link: element } : {}),
     };
     runtime.navigation = navigation;
+    const speculative =
+        element && runtime.prefetch?.linkUrl(element)
+            ? runtime.prefetch?.take(
+                  url,
+                  runtime.navigationLane.controller.signal,
+              )
+            : undefined;
+    runtime.prefetch?.invalidate();
     emitNavigation({ ...navigation, state: "started" });
     if (isStale()) return;
     runtime.live.suspend();
@@ -777,6 +749,7 @@ async function navigate(
                 runtime.navigationMutated = true;
                 return true;
             },
+            speculative,
         );
         if (
             runtime.disposed ||
@@ -925,6 +898,7 @@ async function submitSafe(
     if (documentUnsafe.kind !== "idle" || runtime.navigationPending) {
         return;
     }
+    runtime.prefetch?.invalidate();
     const url = getFormUrl(form, submitter);
     const button = submitterControl(submitter);
     const lane = runtime.formLanes.get(form) ?? { sequence: 0, error: false };
@@ -1184,6 +1158,7 @@ async function submitUnsafe(
     }
     // Query cleanup can invoke host listeners. Reserve the command first.
     documentUnsafe = { kind: "pending", form };
+    runtime.prefetch?.invalidate();
     runtime.live.suspend();
     cancelActiveSafeForms(runtime);
     if (runtime.disposed) {
@@ -1346,6 +1321,7 @@ function disposeRuntime(runtime: Runtime, replacement: boolean) {
     // must not call options owned by the disposed runtime.
     clearAllSafeErrors(runtime);
     runtime.disposed = true;
+    runtime.prefetch?.invalidate();
     runtime.live.stop();
     runtime.detachListeners();
     clearLiveTimers(runtime);
@@ -1374,10 +1350,12 @@ function createRuntime(
     options: HypergraftOptions,
     documentUrl: string,
     departurePending: boolean,
+    prefetch: Prefetch | undefined,
 ): Runtime {
     const runtime: Runtime = {
         disposed: false,
         options,
+        prefetch,
         navigationLane: { sequence: 0, error: false },
         formLanes: new WeakMap(),
         activeSafeFormLanes: new Set(),
@@ -1408,6 +1386,11 @@ function createRuntime(
         disposed: () => runtime.disposed,
         validateContent: options.validateContent,
         enterEffects: runtime.enterEffects,
+        invalidatePrefetch: (terminal) => {
+            runtime.patchedPointer = runtime.pointerPosition;
+            runtime.prefetch?.invalidate();
+            if (terminal && !runtime.disposed) documentPrefetchStopped = true;
+        },
     });
     if (documentUnsafe.kind !== "idle" || runtime.navigationPending)
         runtime.live.suspend();
@@ -1418,10 +1401,73 @@ function createRuntime(
             "a[data-graft][href]",
         ) as HTMLAnchorElement | null;
         if (!link || !supportedLink(event, link)) return;
-        const url = new URL(link.href);
-        if (!sameOrigin(url) || url.hash) return;
+        let url: URL;
+        try {
+            url = new URL(link.href);
+        } catch {
+            return;
+        }
+        if (!sameOrigin(url) || url.hash || url.username || url.password)
+            return;
         event.preventDefault();
         void navigate(runtime, url, "push", link);
+    };
+    const onPointerMove = (event: PointerEvent) => {
+        if (!runtime.prefetch || event.pointerType === "touch") return;
+        const position = { x: event.clientX, y: event.clientY };
+        runtime.pointerPosition = position;
+        if (
+            runtime.patchedPointer?.x !== position.x ||
+            runtime.patchedPointer.y !== position.y
+        )
+            runtime.patchedPointer = undefined;
+    };
+    const onIntent = (event: PointerEvent | FocusEvent) => {
+        if (
+            !runtime.prefetch ||
+            runtime.disposed ||
+            documentPrefetchStopped ||
+            event.defaultPrevented ||
+            commandBlockReason() ||
+            runtime.activeSafeFormLanes.size
+        )
+            return;
+        if (
+            event instanceof PointerEvent &&
+            (event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey ||
+                (event.type === "pointerover" &&
+                    (event.pointerType === "touch" || event.buttons !== 0)) ||
+                (event.type === "pointerdown" &&
+                    (event.pointerType !== "touch" ||
+                        !event.isPrimary ||
+                        event.button !== 0)))
+        )
+            return;
+        const link =
+            event.target instanceof Element
+                ? event.target.closest<HTMLAnchorElement>("a[href]")
+                : null;
+        if (!link) return;
+        if (
+            event.type === "pointerover" &&
+            event.relatedTarget instanceof Node &&
+            link.contains(event.relatedTarget)
+        )
+            return;
+        if (event instanceof PointerEvent && event.type === "pointerover") {
+            onPointerMove(event);
+            // A patch can place another date link under a stationary pointer without new user intent.
+            if (runtime.patchedPointer) return;
+        }
+        const url = runtime.prefetch.linkUrl(link);
+        if (url) runtime.prefetch.start(url);
+    };
+    const onDiscardPrefetch = () => runtime.prefetch?.invalidate();
+    const onVisibility = () => {
+        if (document.hidden) onDiscardPrefetch();
     };
     const onSubmit = (event: SubmitEvent) => {
         if (runtime.disposed || event.defaultPrevented) return;
@@ -1468,6 +1514,13 @@ function createRuntime(
         void navigate(runtime, url, "pop");
     };
     document.addEventListener("click", onClick);
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerover", onIntent);
+    document.addEventListener("pointerdown", onIntent);
+    document.addEventListener("focusin", onIntent);
+    document.addEventListener("pointercancel", onDiscardPrefetch);
+    document.addEventListener("visibilitychange", onVisibility);
+    addEventListener("pagehide", onDiscardPrefetch);
     document.addEventListener("submit", onSubmit);
     document.addEventListener("input", onLive);
     document.addEventListener("change", onLive);
@@ -1476,6 +1529,13 @@ function createRuntime(
     addEventListener("popstate", onPopState);
     runtime.detachListeners = () => {
         document.removeEventListener("click", onClick);
+        document.removeEventListener("pointermove", onPointerMove);
+        document.removeEventListener("pointerover", onIntent);
+        document.removeEventListener("pointerdown", onIntent);
+        document.removeEventListener("focusin", onIntent);
+        document.removeEventListener("pointercancel", onDiscardPrefetch);
+        document.removeEventListener("visibilitychange", onVisibility);
+        removeEventListener("pagehide", onDiscardPrefetch);
         document.removeEventListener("submit", onSubmit);
         document.removeEventListener("input", onLive);
         document.removeEventListener("change", onLive);
@@ -1488,6 +1548,10 @@ function createRuntime(
 }
 
 export function startHypergraft(options: HypergraftOptions = {}) {
+    // A rejected prefetch policy must not remove the active runtime or its command guard.
+    const prefetch = options.prefetch
+        ? createPrefetch(options.prefetch)
+        : undefined;
     const documentUrl = activeRuntime?.documentUrl ?? location.href;
     const departurePending =
         !!activeRuntime?.navigationPending &&
@@ -1495,7 +1559,12 @@ export function startHypergraft(options: HypergraftOptions = {}) {
             activeRuntime.navigationMutated ||
             activeRuntime.navigation.cause === "history-traversal");
     if (activeRuntime) disposeRuntime(activeRuntime, true);
-    const runtime = createRuntime(options, documentUrl, departurePending);
+    const runtime = createRuntime(
+        options,
+        documentUrl,
+        departurePending,
+        prefetch,
+    );
     activeRuntime = runtime;
     if (options.islands) runtime.stopIslands = observeIslands(options.islands);
     return () => {
@@ -1511,4 +1580,5 @@ export function resetHypergraftForTests() {
         activeRuntime = undefined;
     }
     documentUnsafe = { kind: "idle" };
+    documentPrefetchStopped = false;
 }

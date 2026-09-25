@@ -59,6 +59,7 @@ export type LiveControllerOptions = {
     disposed: () => boolean;
     validateContent?: ValidateContent;
     enterEffects?: EnterEffects;
+    invalidatePrefetch?: (terminal: boolean) => void;
 };
 
 function sameOrigin(url: URL) {
@@ -259,6 +260,8 @@ export function createLiveController(
         if (published && mode === next) return;
         mode = next;
         published = true;
+        if (next === "stopped" || next === "reconnecting")
+            options.invalidatePrefetch?.(next === "stopped");
         emitLiveStateChange(liveStateDetail(next, closeCode, retryDelayMs));
     };
 
@@ -382,6 +385,7 @@ export function createLiveController(
     };
 
     const handlePatch = (sub: Subscription, text: string) => {
+        options.invalidatePrefetch?.(false);
         let batch;
         try {
             batch = preflightLive(text, document, options.validateContent);

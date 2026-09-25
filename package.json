@@ -28,6 +28,8 @@
         "browser/navigation-feedback.ts",
         "browser/patches.ts",
         "browser/requests.ts",
+        "browser/read-response.ts",
+        "browser/prefetch.ts",
         "browser/stream.ts",
         "LICENSE-APACHE",
         "LICENSE-MIT",
