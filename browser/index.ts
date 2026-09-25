@@ -1,12 +1,14 @@
 export {
     startHypergraft,
     commandBlockReason,
+    cancelNavigation,
     type CommandBlockReason,
     type HypergraftOptions,
     type TransportFeedback,
     readBoundedResponse,
 } from "./requests";
 export * from "./events";
+export { bindNavigationRecovery } from "./navigation-feedback";
 export type { EnterAnimation, EnterEffect } from "./enter-effects";
 export {
     DIAGNOSTIC_EVENT,

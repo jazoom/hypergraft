@@ -4,6 +4,7 @@ import {
     type DiagnosticReason,
 } from "./diagnostics";
 import {
+    allowNavigationCommit,
     emitLocationChange,
     emitNavigation,
     emitProgress,
@@ -67,6 +68,8 @@ type Runtime = {
     composing: boolean;
     navigationPending: boolean;
     navigation?: NavigationRequest;
+    navigationMutated: boolean;
+    documentUrl: string;
     queuedHistoryUrl: URL | undefined;
     detachListeners: () => void;
     stopIslands: () => void;
@@ -328,6 +331,7 @@ async function consumeEnhanced(
     allowLocationReplacement: boolean,
     onProgress?: (batch: PreparedBatch, frame: number) => void,
     pending?: PendingSession,
+    beforeApply?: () => boolean,
 ): Promise<ConsumeOutcome> {
     const consumeOwned =
         pending &&
@@ -364,6 +368,7 @@ async function consumeEnhanced(
                 ),
                 response.status,
             );
+        if (beforeApply && !beforeApply()) return { kind: "stale" };
         try {
             apply(
                 prepared.batch,
@@ -412,6 +417,8 @@ async function consumeEnhanced(
                 document,
                 runtime.options.validateContent,
             );
+            if (isStale() || (beforeApply && !beforeApply()))
+                return { kind: "stale" };
             try {
                 apply(
                     prepared.batch,
@@ -530,6 +537,7 @@ async function safeRequest(
     responseUrl?: { current?: string },
     failedForm?: HTMLFormElement,
     pending?: PendingSession,
+    beforeApply?: () => boolean,
 ): Promise<SafeOutcome> {
     let response: Response;
     try {
@@ -594,6 +602,7 @@ async function safeRequest(
               }
             : undefined,
         pending,
+        beforeApply,
     );
     if (consumed.kind === "stale") return { kind: "stale" };
     if (consumed.kind === "navigation") {
@@ -626,6 +635,11 @@ function clearLiveTimers(runtime: Runtime) {
     runtime.liveTimers.clear();
 }
 
+function documentMatchesLocation(documentUrl: string): boolean {
+    // Native fragments do not change the document that navigation can preserve.
+    return location.href.split("#", 1)[0] === documentUrl.split("#", 1)[0];
+}
+
 function endNavigation(runtime: Runtime, detail: NavigationDetail) {
     if (runtime.navigation?.requestId !== detail.requestId) return;
     runtime.navigation = undefined;
@@ -637,6 +651,61 @@ function endNavigation(runtime: Runtime, detail: NavigationDetail) {
     emitNavigation(detail);
 }
 
+function handOffNavigation(
+    runtime: Runtime,
+    navigation: NavigationRequest,
+    destination: string,
+) {
+    endNavigation(runtime, { ...navigation, state: "handed-off", destination });
+    if (runtime.disposed || runtime.navigation) return;
+    if (
+        navigation.cause === "history-traversal" ||
+        !documentMatchesLocation(runtime.documentUrl)
+    ) {
+        if (new URL(destination, location.href).href === location.href)
+            location.reload();
+        else location.replace(destination);
+    } else location.assign(destination);
+}
+
+function resumeAfterNavigation(runtime: Runtime) {
+    if (!runtime.disposed && !commandBlockReason()) runtime.live.resume();
+}
+
+/** Cancellation retires client ownership, not server work. */
+export function cancelNavigation(requestId: number): boolean {
+    const runtime = activeRuntime;
+    const navigation = runtime?.navigation;
+    if (
+        !runtime ||
+        !navigation ||
+        navigation.requestId !== requestId ||
+        documentUnsafe.kind !== "idle"
+    )
+        return false;
+    ++runtime.navigationLane.sequence;
+    runtime.navigationLane.controller?.abort();
+    if (
+        navigation.cause === "history-traversal" ||
+        runtime.navigationMutated ||
+        !documentMatchesLocation(runtime.documentUrl)
+    ) {
+        handOffNavigation(
+            runtime,
+            navigation,
+            runtime.navigationMutated ? navigation.url : location.href,
+        );
+    } else {
+        endNavigation(runtime, {
+            ...navigation,
+            state: "cancelled",
+            reason: "aborted",
+        });
+        resumeAfterNavigation(runtime);
+    }
+    return true;
+}
+
 async function navigate(
     runtime: Runtime,
     url: URL,
@@ -646,9 +715,17 @@ async function navigate(
     if (
         runtime.disposed ||
         documentUnsafe.kind !== "idle" ||
-        (runtime.navigationPending && mode !== "pop")
+        (runtime.navigationPending && !runtime.navigation)
     )
         return;
+    if (mode === "push" && runtime.navigation?.url === url.href) return;
+    // A partially applied stream requires a document, not another patch.
+    if (runtime.navigation && runtime.navigationMutated) {
+        ++runtime.navigationLane.sequence;
+        runtime.navigationLane.controller?.abort();
+        handOffNavigation(runtime, runtime.navigation, url.href);
+        return;
+    }
     const sequence = ++runtime.navigationLane.sequence;
     const isStale = () =>
         runtime.disposed || sequence !== runtime.navigationLane.sequence;
@@ -662,6 +739,7 @@ async function navigate(
         });
     if (isStale()) return;
     runtime.navigationPending = true;
+    runtime.navigationMutated = false;
     const navigation: NavigationRequest = {
         requestId: ++nextNavigationId,
         url: url.href,
@@ -684,6 +762,21 @@ async function navigate(
             runtime.navigationLane,
             sequence,
             responseUrl,
+            undefined,
+            undefined,
+            () => {
+                if (isStale()) return false;
+                if (
+                    !runtime.navigationMutated &&
+                    !allowNavigationCommit(navigation)
+                ) {
+                    cancelNavigation(navigation.requestId);
+                    return false;
+                }
+                if (isStale()) return false;
+                runtime.navigationMutated = true;
+                return true;
+            },
         );
         if (
             runtime.disposed ||
@@ -692,16 +785,12 @@ async function navigate(
         )
             return;
         if (result.kind === "handed-off") {
-            endNavigation(runtime, {
-                ...navigation,
-                state: "handed-off",
-                destination: result.destination,
-            });
-            if (!isStale()) location.assign(result.destination);
+            handOffNavigation(runtime, navigation, result.destination);
             return;
         }
         if (mode === "push")
             history.pushState({ hypergraft: true }, "", result.url);
+        runtime.documentUrl = location.href;
         emitLocationChange({
             url: location.href,
             cause: mode === "pop" ? "history-traversal" : "link-navigation",
@@ -725,20 +814,26 @@ async function navigate(
         }
         window.scrollTo(0, 0);
         if (isStale()) return;
-        runtime.live.resume();
         endNavigation(runtime, { ...navigation, state: "succeeded" });
+        resumeAfterNavigation(runtime);
     } catch (error) {
         if (isStale()) return;
         if (errorName(error) === "AbortError") {
-            runtime.live.resume();
-            endNavigation(runtime, {
-                ...navigation,
-                state: "cancelled",
-                reason: "aborted",
-            });
+            cancelNavigation(navigation.requestId);
             return;
         }
-        emitNavigation({ ...navigation, state: "failed" });
+        const recoverable =
+            mode === "push" &&
+            diagnosticReason(error) === "transport" &&
+            !runtime.navigationMutated &&
+            documentMatchesLocation(runtime.documentUrl);
+        const failure: NavigationDetail = {
+            ...navigation,
+            state: "failed",
+            recovery: recoverable ? "retry" : "document",
+        };
+        if (recoverable) endNavigation(runtime, failure);
+        else emitNavigation(failure);
         if (isStale()) return;
         emitDiagnostic({
             reason: diagnosticReason(error),
@@ -749,14 +844,8 @@ async function navigate(
             targetId: diagnosticTargetId(error),
         });
         if (isStale()) return;
-        endNavigation(runtime, {
-            ...navigation,
-            state: "handed-off",
-            destination: url.href,
-        });
-        if (isStale()) return;
-        if (mode === "push") location.assign(url.href);
-        else location.reload();
+        if (recoverable) resumeAfterNavigation(runtime);
+        else handOffNavigation(runtime, navigation, url.href);
     }
 }
 
@@ -896,6 +985,7 @@ async function submitSafe(
             settlement = result.settlement;
             responseUrl.current = result.url;
             history.replaceState({ hypergraft: true }, "", result.url);
+            runtime.documentUrl = location.href;
             emitLocationChange({
                 url: location.href,
                 cause: "get-form-replacement",
@@ -1140,6 +1230,7 @@ async function submitUnsafe(
                 "",
                 outcome.replaceLocation,
             );
+            runtime.documentUrl = location.href;
             emitLocationChange({
                 url: location.href,
                 cause: "command-patch-replacement",
@@ -1245,6 +1336,9 @@ function handleLiveEvent(runtime: Runtime, event: Event) {
 
 function disposeRuntime(runtime: Runtime, replacement: boolean) {
     if (runtime.disposed) return;
+    const partialNavigation = !!runtime.navigation && runtime.navigationMutated;
+    const handoffPending = runtime.navigationPending && !runtime.navigation;
+    const historyPending = runtime.navigation?.cause === "history-traversal";
     runtime.enterEffects?.destroy();
     runtime.stopIslands();
     runtime.stopIslands = () => undefined;
@@ -1265,10 +1359,22 @@ function disposeRuntime(runtime: Runtime, replacement: boolean) {
     runtime.options = {};
     // A replacement inherits the document-level unsafe guard. A final stop
     // removes interception, so reload before a native POST can bypass it.
-    if (!replacement && documentUnsafe.kind !== "idle") location.reload();
+    if (
+        (!replacement && documentUnsafe.kind !== "idle") ||
+        (documentUnsafe.kind === "idle" &&
+            (handoffPending ||
+                historyPending ||
+                partialNavigation ||
+                !documentMatchesLocation(runtime.documentUrl)))
+    )
+        location.reload();
 }
 
-function createRuntime(options: HypergraftOptions): Runtime {
+function createRuntime(
+    options: HypergraftOptions,
+    documentUrl: string,
+    departurePending: boolean,
+): Runtime {
     const runtime: Runtime = {
         disposed: false,
         options,
@@ -1278,7 +1384,10 @@ function createRuntime(options: HypergraftOptions): Runtime {
         failedSafeForms: new Set(),
         liveTimers: new Map(),
         composing: false,
-        navigationPending: false,
+        navigationPending:
+            departurePending || !documentMatchesLocation(documentUrl),
+        navigationMutated: false,
+        documentUrl,
         queuedHistoryUrl: undefined,
         detachListeners: () => undefined,
         stopIslands: () => undefined,
@@ -1300,12 +1409,13 @@ function createRuntime(options: HypergraftOptions): Runtime {
         validateContent: options.validateContent,
         enterEffects: runtime.enterEffects,
     });
-    if (documentUnsafe.kind !== "idle") runtime.live.suspend();
+    if (documentUnsafe.kind !== "idle" || runtime.navigationPending)
+        runtime.live.suspend();
     history.replaceState({ ...(history.state ?? {}), hypergraft: true }, "");
     const onClick = (event: MouseEvent) => {
         if (runtime.disposed || event.defaultPrevented) return;
         const link = (event.target as Element).closest(
-            "a[data-graft]",
+            "a[data-graft][href]",
         ) as HTMLAnchorElement | null;
         if (!link || !supportedLink(event, link)) return;
         const url = new URL(link.href);
@@ -1378,8 +1488,14 @@ function createRuntime(options: HypergraftOptions): Runtime {
 }
 
 export function startHypergraft(options: HypergraftOptions = {}) {
+    const documentUrl = activeRuntime?.documentUrl ?? location.href;
+    const departurePending =
+        !!activeRuntime?.navigationPending &&
+        (!activeRuntime.navigation ||
+            activeRuntime.navigationMutated ||
+            activeRuntime.navigation.cause === "history-traversal");
     if (activeRuntime) disposeRuntime(activeRuntime, true);
-    const runtime = createRuntime(options);
+    const runtime = createRuntime(options, documentUrl, departurePending);
     activeRuntime = runtime;
     if (options.islands) runtime.stopIslands = observeIslands(options.islands);
     return () => {

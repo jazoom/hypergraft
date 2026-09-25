@@ -89,15 +89,72 @@ The closed state union contains:
 - `started`: the runtime owns the request, before transport starts.
 - `succeeded`: authoritative content, history and focus are complete.
 - `cancelled`: cancellation with reason `aborted` or `superseded`.
-- `failed`: the enhanced request failed, before recovery.
+- `failed`: the enhanced request failed. `recovery` is `retry` or `document`.
 - `handed-off`: document navigation will take over at `destination`.
 - `disposed`: teardown retired an active request synchronously.
 
-Success, cancellation, handoff and disposal end ownership. Failure precedes the recovery decision. The current runtime follows failure with handoff through its existing document fallback. Failure does not promise that the old document remains intact after a partial patch exception.
+Success, cancellation, handoff and disposal end request ownership. A failure with `recovery: "retry"` also ends ownership. It means that transport failed before navigation changed the document, and the URL still identifies the visible page.
+
+A failure with `recovery: "document"` precedes authoritative document handoff. Invalid responses and partial patch exceptions use this path. They do not promise an intact old page.
 
 Handoff also covers navigation envelopes and supported same-origin redirects. It does not claim that the destination document loaded. The current runtime keeps commands blocked while document navigation remains pending. The event excludes response bodies, form values and thrown errors. URLs can contain private data. Hosts must not treat these events as safe telemetry.
 
-Ordinary link activation still waits for an active navigation. History traversal can supersede it. Blocked or native links emit no navigation events. Cancellation emits neither a form settlement nor an error diagnostic. Disposed and superseded responses emit no late navigation events.
+A later supported link or history traversal supersedes active safe navigation. The runtime aborts obsolete transport and rejects late responses by request identity. Duplicate link activation for the active destination starts no additional request. Only successful link navigation pushes a history entry.
+
+Blocked or native links emit no navigation events. Cancellation emits neither a form settlement nor an error diagnostic. Disposed and superseded responses emit no late navigation events.
+
+### Cancellation and explicit recovery
+
+`cancelNavigation(requestId)` returns true only for the matching active navigation. It never cancels an unsafe command. Cancellation ends client ownership, not server work. Cancellation and recoverable failure resume eligible live projections only when the document guard permits it.
+
+A recoverable transport failure leaves the current page and its input intact. The runtime performs no automatic retry. A fresh link activation can retry the destination. Commands never receive this recovery treatment.
+
+`hypergraft:beforenavigation` is a cancellable event before the first navigation patch mutation. `listenBeforeNavigation` receives its `CustomEvent<NavigationRequest>`. A host can call `event.preventDefault()` to reject commitment after a draft changes during transport. The runtime then cancels the navigation. The event contains no form values or response bodies.
+
+Existing link guards still run before request startup. A Retry action remains a real link, so those guards also run on explicit retry. Native document recovery still invokes the browser's departure rules.
+
+### History recovery
+
+The browser changes the URL before a history request completes. Failed or cancelled traversal therefore reloads the current URL instead of presenting intact-page retry. Recovery adds no history entry. It performs no reverse traversal, so it creates no traversal loop.
+
+If a link supersedes traversal before content arrives, the visible document and URL still differ. Failure uses document recovery at that link's destination. Cancellation instead reloads the current URL. A replacement runtime also reloads after an incomplete traversal.
+
+Native fragment changes still identify the same document. They do not force document recovery after a failed link request, cancellation or runtime replacement.
+
+A partial stream or application-time exception requires an authoritative document. Cancellation after partial mutation hands off to the requested destination. A later link also uses document navigation rather than another patch. Runtime disposal reloads partial navigation content.
+
+### Host recovery controls
+
+`bindNavigationRecovery(root)` binds these host-authored slots outside patch targets:
+
+```html
+<p
+    class="visually-hidden"
+    data-graft-navigation-status
+    role="status"
+    aria-atomic="true"
+></p>
+<aside data-graft-navigation-failure hidden>
+    <p data-graft-navigation-message>
+        The connection failed. The current page remains open.
+    </p>
+    <a href="/" data-graft data-graft-navigation-retry>Retry navigation</a>
+    <button type="button" data-graft-navigation-dismiss>Dismiss</button>
+</aside>
+```
+
+The shared read indicator supplies pending feedback without extra navigation controls. The recovery binder fills the retry link only after a recoverable failure. It copies the host-authored message into the persistent status region. The binder clears that region when it clears recovery presentation.
+
+Keep the status region outside the hidden failure panel.
+Hide it visually, not with `hidden` or `display: none`.
+
+Dismiss returns focus to the source link. If the source cannot receive focus, the binder uses a focusable `main` instead.
+
+Ordinary navigation has no Cancel button. Another link replaces the pending request. The browser also provides reload. The `cancelNavigation(requestId)` API remains available for host guards and specialised flows.
+
+New navigation and successful location changes clear earlier recovery presentation. An uncertain command result also clears it, without release of the command guard. The binder's destroy function removes listeners and clears presentation. Hosts call it during integration teardown, alongside the read-feedback destroy function.
+
+Protocol version 1 and its cache policy remain unchanged.
 
 ## Query pending state
 

@@ -1,4 +1,5 @@
 import {
+    bindNavigationRecovery,
     bindReadFeedback,
     bindTransportFeedback,
     listenForLivePatches,
@@ -51,6 +52,7 @@ listenForLivePatches(() => {
 
 const bound = bindTransportFeedback(document);
 const stopReadFeedback = bindReadFeedback(document);
+const stopNavigationRecovery = bindNavigationRecovery(document);
 const stop = startHypergraft({
     feedback: bound.feedback,
     enterEffects: {
@@ -65,6 +67,7 @@ if (import.meta.hot) {
     import.meta.hot.dispose(() => {
         stop();
         stopReadFeedback();
+        stopNavigationRecovery();
         bound.destroy();
     });
 }

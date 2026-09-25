@@ -1,5 +1,6 @@
 import type { AcceptedPatchStatus } from "./patches";
 
+export const BEFORE_NAVIGATION_EVENT = "hypergraft:beforenavigation";
 export const NAVIGATION_EVENT = "hypergraft:navigation";
 export const QUERY_PENDING_EVENT = "hypergraft:querypending";
 export const LOCATION_CHANGE_EVENT = "hypergraft:locationchange";
@@ -18,10 +19,26 @@ export type NavigationRequest = {
 /** Failure precedes recovery. The event excludes response bodies and errors. */
 export type NavigationDetail = NavigationRequest &
     (
-        | { state: "started" | "succeeded" | "failed" | "disposed" }
+        | { state: "started" | "succeeded" | "disposed" }
+        | { state: "failed"; recovery: "retry" | "document" }
         | { state: "cancelled"; reason: "aborted" | "superseded" }
         | { state: "handed-off"; destination: string }
     );
+
+export function allowNavigationCommit(detail: NavigationRequest): boolean {
+    return dispatchEvent(
+        new CustomEvent(BEFORE_NAVIGATION_EVENT, { detail, cancelable: true }),
+    );
+}
+
+export function listenBeforeNavigation(
+    listener: (event: CustomEvent<NavigationRequest>) => void,
+): () => void {
+    const handler = (event: Event) =>
+        listener(event as CustomEvent<NavigationRequest>);
+    addEventListener(BEFORE_NAVIGATION_EVENT, handler);
+    return () => removeEventListener(BEFORE_NAVIGATION_EVENT, handler);
+}
 
 export function emitNavigation(detail: NavigationDetail): void {
     dispatchEvent(new CustomEvent(NAVIGATION_EVENT, { detail }));

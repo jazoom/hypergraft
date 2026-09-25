@@ -58,6 +58,23 @@ h2 {
     margin: 0 0 0.75rem;
 }
 
+[data-graft-navigation-failure] {
+    position: fixed;
+    inset-inline: 1rem;
+    inset-block-end: 1rem;
+    max-width: 32rem;
+    margin-inline: auto;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    background: var(--bg);
+    z-index: 2;
+}
+
+[data-graft-navigation-retry] {
+    display: inline-block;
+    padding: 0.75rem;
+}
+
 #live-status {
     margin: 0 0 1.25rem;
 }

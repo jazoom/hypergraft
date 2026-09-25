@@ -25,6 +25,7 @@
         "browser/islands.ts",
         "browser/live.ts",
         "browser/morph.ts",
+        "browser/navigation-feedback.ts",
         "browser/patches.ts",
         "browser/requests.ts",
         "browser/stream.ts",

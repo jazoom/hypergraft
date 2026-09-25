@@ -196,11 +196,18 @@ test.each([
                 "started",
                 path === "abort" ? "cancelled" : "disposed",
             ]);
+        } else if (path === "transport") {
+            expect(commandBlockReason()).toBeUndefined();
+            expect(assign).not.toHaveBeenCalled();
+            expect(events.at(-1)).toMatchObject({
+                state: "failed",
+                recovery: "retry",
+            });
         } else {
             expect(commandBlockReason()).toBe("pending-navigation");
             expect(assign).toHaveBeenCalledOnce();
             expect(events.map((event) => event.state)).toEqual(
-                path === "transport" || path === "protocol"
+                path === "protocol"
                     ? ["started", "failed", "handed-off"]
                     : ["started", "handed-off"],
             );

@@ -67,7 +67,11 @@ The example uses `bindReadFeedback` and host-authored slots outside `main`. Navi
 
 Reduced motion keeps the bar static. Pending feedback leaves the keyboard focus style intact.
 
-Failure retains the current document fallback. Explicit retry and navigation replacement belong to later work. The [navigation lifecycle](../../docs/browser-runtime.md#navigation-lifecycle) describes failure and handoff separately.
+The example also uses `bindNavigationRecovery`. A later task link replaces an earlier safe request. The shared bar supplies pending feedback without a Cancel button.
+
+A transport failure before document mutation keeps the current page and its draft title. Retry starts a fresh request through a real link. Dismiss hides the failure. Neither action replays a command.
+
+Invalid responses and partial patch failures retain document recovery. Failed or cancelled history traversal reloads the current URL without another history entry. The [navigation lifecycle](../../docs/browser-runtime.md#navigation-lifecycle) describes these boundaries.
 
 ### Run beside another application
 
@@ -87,7 +91,7 @@ Open `http://127.0.0.1:3003/tasks`.
 4. Make sure that the link keeps its normal appearance during the request.
 5. Make sure that the list stays visible until the detail arrives.
 6. Make sure that the top bar appears after 200 ms.
-7. Make sure that both pending indicators disappear after navigation.
+7. Make sure that the bar disappears after navigation.
 8. Use Tab to focus **Back to tasks**.
 9. Press Enter.
 10. Make sure that keyboard activation gives the same feedback.
@@ -96,6 +100,33 @@ Open `http://127.0.0.1:3003/tasks`.
 13. Enable reduced motion.
 14. Repeat the slow navigation.
 15. Make sure that feedback remains visible without animation.
+
+### Review replacement and recovery
+
+1. Open the task list.
+2. Select a high-latency network profile in the developer tools.
+3. Activate **Write the weekly notes**.
+4. Before its response arrives, activate **Prepare the public preview**.
+5. Make sure that only the latest destination appears.
+6. Return to the list.
+7. Enter a draft title without submission.
+8. Block the next task GET in the developer tools.
+9. Activate that task link.
+10. Make sure that the list and draft title remain.
+11. Make sure that the recovery message appears without a document reload.
+12. Remove the request block.
+13. Use Tab to focus **Retry navigation**.
+14. Press Enter.
+15. Make sure that the destination appears.
+16. Press Back once.
+17. Make sure that the list appears without a duplicate history entry.
+18. Repeat the failed request.
+19. Press **Dismiss**.
+20. Make sure that dismissal sends no request.
+21. Block a traversal GET after the browser changes its URL.
+22. Make sure that document recovery uses that URL rather than an intact-page retry message.
+23. Remove the request block.
+24. Reload the document.
 
 ## Search the task list
 
