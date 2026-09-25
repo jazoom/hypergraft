@@ -8,19 +8,24 @@ afterEach(() => {
     resetHypergraftForTests();
     vi.unstubAllGlobals();
     document.body.replaceChildren();
-    history.replaceState({}, "", original);
+    // Discard forward history before Vitest reuses the page for another file.
+    history.pushState({}, "", original);
 });
 
-test("fresh traversal restores anchors after geometry changes and resets missing anchors", async () => {
+test("fresh traversal restores anchors after geometry changes and resets missing anchors", async ({
+    onTestFinished,
+}) => {
     const content = (height: number, anchor = true) =>
         `<div style="height:${height}px"></div><p ${anchor ? 'data-graft-scroll-anchor="row"' : ""}>Row</p><div style="height:2000px"></div>`;
     document.body.innerHTML = `<a data-graft href="?next">Next</a><main id="main" tabindex="-1"><div id="panel" data-graft-scroll style="height:200px;overflow:auto">${content(400)}</div>${content(800)}</main>`;
     let changed = false;
     let missing = false;
     let settled = 0;
-    const stopListener = listenForNavigation((detail) => {
-        if (detail.state === "succeeded") settled++;
-    });
+    onTestFinished(
+        listenForNavigation((detail) => {
+            if (detail.state === "succeeded") settled++;
+        }),
+    );
     const fetcher = vi.fn(
         async () =>
             new Response(
@@ -29,6 +34,8 @@ test("fresh traversal restores anchors after geometry changes and resets missing
             ),
     );
     vi.stubGlobal("fetch", fetcher);
+    // Keep traversal inside test-owned entries, not Vitest's iframe navigation.
+    history.pushState({}, "", "?scroll=initial");
     startHypergraft({ scrollRestoration: true });
     const panel = () => document.getElementById("panel")!;
     panel().scrollTop = 420;
@@ -65,5 +72,4 @@ test("fresh traversal restores anchors after geometry changes and resets missing
     await expect.poll(() => settled).toBe(4);
     expect(scrollY).toBe(0);
     expect(panel().scrollTop).toBe(0);
-    stopListener();
 });

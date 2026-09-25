@@ -43,6 +43,8 @@ function setup() {
 test.each(["pointer", "keyboard"])(
     "real %s intent reuses completed work without early document changes",
     async (kind) => {
+        // A test-owned entry excludes Vitest's iframe navigation from the history length assertion.
+        history.pushState({}, "", original);
         const { link, events } = setup();
         const length = history.length;
         if (kind === "pointer") await userEvent.hover(link);

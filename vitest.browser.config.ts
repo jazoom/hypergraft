@@ -88,6 +88,8 @@ export default defineConfig({
     },
     test: {
         include: ["browser/**/*.browser.test.ts"],
+        // Parallel Firefox pages can lose focus between key events and suppress native button activation.
+        fileParallelism: browserEngine !== "firefox",
         browser: {
             enabled: true,
             provider: playwright({ launchOptions }),
