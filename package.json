@@ -1,6 +1,6 @@
 {
     "name": "hypergraft",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "license": "MIT OR Apache-2.0",
     "description": "Bounded HTML-over-HTTP and WebSocket protocol with a JavaScript-required browser runtime for server-rendered applications",
     "repository": {
