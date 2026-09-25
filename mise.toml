@@ -40,6 +40,10 @@ run = [
   "cargo run -p hypergraft-reference",
 ]
 
+[tasks.release]
+description = "Release both packages: mise run release -- patch|minor|major [--dry-run] or mise run release -- --resume [--dry-run]"
+run = "node scripts/release.mjs"
+
 [tasks.clean]
 alias = "c"
 description = "Format and check the Hypergraft project"

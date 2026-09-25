@@ -63,6 +63,91 @@ Focus tests on these contracts:
 
 Do not add host product tests or tests that restate a trivial map or match.
 
+## Releases
+
+`mise run release` publishes the Rust crate and npm package with the same version. It leaves protocol version 1 unchanged.
+
+The release task requires:
+
+- A clean working tree on `main`, with all intended changes committed.
+- The `origin` remote for `jazoom/hypergraft`, with permission to push `main` and tags.
+- GitHub CLI (`gh`) authentication, with access to CI and permission to create releases.
+- npm and crates.io credentials with permission to publish `hypergraft`.
+- The development tools and Playwright Chromium from the development setup above.
+
+### Prepare a release
+
+Install GitHub CLI before the first release.
+
+Authenticate with each service:
+
+```sh
+gh auth login
+npm login --registry https://registry.npmjs.org
+cargo login --registry crates-io
+```
+
+Preview the next version:
+
+```sh
+mise run release -- patch --dry-run
+mise run release -- minor --dry-run
+mise run release -- major --dry-run
+```
+
+Start the release with the required version increment:
+
+```sh
+mise run release -- patch
+```
+
+At each prompt, enter the proposed version to continue.
+
+### Release behaviour
+
+The preview makes no changes and requires no network access. It does not test credentials, remote version availability or package contents.
+
+A real release rejects mismatched package versions and existing release versions or tags. The first prompt precedes local changes and the push to `main`.
+
+The task updates `Cargo.toml`, `Cargo.lock` and `package.json`. It then runs:
+
+- Dependency installation with the frozen lockfile.
+- `mise run clean` and `mise run test`.
+- The reference application builds.
+- The package publication dry runs.
+
+The task commits the version changes and pushes `main`. It waits up to 60 minutes for successful CI on that exact commit. CI includes Chromium, Firefox and WebKit.
+
+The second prompt precedes publication. The task publishes the crate before the npm package. It then pushes an annotated version tag and creates a GitHub release with generated notes.
+
+The task saves recovery state inside `.git`. It never rolls back commits or registry uploads. Publication across two registries is not atomic.
+
+### Resume an interrupted release
+
+Resolve the reported error before recovery.
+
+If CI failed, rerun the failed jobs on GitHub.
+
+Resume the saved version:
+
+```sh
+mise run release -- --resume
+```
+
+Recovery repeats local checks without another version increment. It omits an upload if the registry contains that version after a recorded publication attempt. It also omits an existing GitHub release.
+
+A forced process exit can leave a release lock. Normal failure removes the lock but retains recovery state.
+
+If the task reports a stale lock, make sure that no release process remains active.
+
+Remove only the stale lock directory:
+
+```sh
+rmdir "$(git rev-parse --git-path hypergraft-release.json.lock)"
+```
+
+Do not delete the recovery state after a publication attempt. The saved version prevents an accidental second release.
+
 ## Pull requests
 
 - Keep each pull request narrow.
