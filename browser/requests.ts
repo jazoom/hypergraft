@@ -3,6 +3,7 @@ import {
     HypergraftError,
     type DiagnosticReason,
 } from "./diagnostics";
+import { elementProperty } from "./dom";
 import {
     allowNavigationCommit,
     emitLocationChange,
@@ -901,6 +902,13 @@ async function submitSafe(
     if (documentUnsafe.kind !== "idle" || runtime.navigationPending) {
         return;
     }
+    // The history option belongs to the submission, not the form after a callback or patch.
+    const reconcileHistory =
+        elementProperty(form, "getAttributeNS").call(
+            form,
+            null,
+            "data-graft-history",
+        ) !== "none";
     runtime.prefetch?.invalidate();
     const url = getFormUrl(form, submitter);
     const button = submitterControl(submitter);
@@ -961,16 +969,18 @@ async function submitSafe(
         if (result.kind === "applied") {
             settlement = result.settlement;
             responseUrl.current = result.url;
-            history.replaceState(
-                { ...history.state, hypergraft: true },
-                "",
-                result.url,
-            );
-            runtime.documentUrl = location.href;
-            emitLocationChange({
-                url: location.href,
-                cause: "get-form-replacement",
-            });
+            if (reconcileHistory) {
+                history.replaceState(
+                    { ...history.state, hypergraft: true },
+                    "",
+                    result.url,
+                );
+                runtime.documentUrl = location.href;
+                emitLocationChange({
+                    url: location.href,
+                    cause: "get-form-replacement",
+                });
+            }
         }
     } catch (error) {
         if (

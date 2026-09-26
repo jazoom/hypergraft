@@ -50,6 +50,8 @@ An in-flight or uncertain unsafe command is not cancellable as though it never h
 
 Same-origin `POST` forms with `application/x-www-form-urlencoded` or `multipart/form-data` are enhanced. Multipart commands send `FormData` without a manual `Content-Type` header. Invalid command forms emit `invalid-command-form` and do not submit natively.
 
+An enhanced GET form with `data-graft-history="none"` patches in place and keeps the current address and history entry. A submitted GET form without that attribute reconciles history. The runtime reads the history option at submission, before a response can change the form.
+
 ### Blocked commands
 
 The runtime never queues or replays an unsafe command automatically. A pending command or navigation blocks another command before transport starts.
@@ -331,7 +333,7 @@ A streamed form request emits `hypergraft:progress` after each applied progress 
 
 A complete form request emits `hypergraft:requestsettled` only after pending and submitter state is final. `RequestSettledDetail` contains the originating form, the effective request URL, the patch kind and one bounded outcome:
 
-- A safe applied patch applies the whole preflighted batch and updates that form's failure state. A submitted GET form reconciles history and emits its location fact. The runtime then restores pending state and emits `applied-patch` with an accepted status and authoritative target identifiers.
+- A safe applied patch applies the whole preflighted batch and updates that form's failure state. A submitted GET form without `data-graft-history="none"` reconciles history and emits its location fact. The runtime then restores pending state and emits `applied-patch` with an accepted status and authoritative target identifiers.
 - A safe failure emits its diagnostic, records the failed source and requests safe feedback. It then restores pending state and emits `safe-failure`.
 - A superseded or aborted safe request emits neither a settlement nor a diagnostic. A valid navigation envelope uses `location.assign` and emits no settlement because the document leaves.
 - A known unsafe patch applies its batch and returns the unsafe lane to idle. If the batch carries `location`, the runtime replaces the current history entry and emits `hypergraft:locationchange`. A queued history traversal takes precedence and suppresses that replacement. The runtime then restores pending state, emits `applied-patch` and starts the queued history navigation.

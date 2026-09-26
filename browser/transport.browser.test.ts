@@ -380,6 +380,31 @@ test("public-ID fallback restores a replacement but skips unsupported selection 
     expect(selection).not.toHaveBeenCalled();
 });
 
+test("named controls cannot replace the GET history option", async () => {
+    const form = commandForm();
+    form.method = "get";
+    form.setAttribute("data-graft-history", "none");
+    form.innerHTML =
+        '<input name="dataset"><input name="getAttributeNS"><button>Search</button>';
+    expect(form.dataset).toBe(form.querySelector('[name="dataset"]'));
+    vi.mocked(fetch).mockResolvedValue(
+        envelope("secondary", '<p id="result">Results</p>'),
+    );
+    const replace = vi.spyOn(history, "replaceState");
+    const settled = vi.fn();
+    addEventListener("hypergraft:requestsettled", settled);
+    try {
+        submit(form);
+        await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce());
+
+        expect(document.getElementById("result")?.textContent).toBe("Results");
+        expect(replace).not.toHaveBeenCalled();
+        expect(location.pathname).toBe("/contract/start");
+    } finally {
+        removeEventListener("hypergraft:requestsettled", settled);
+    }
+});
+
 test.each(["get", "post"])(
     "an applied %s patch clears pending ARIA before settlement",
     async (method) => {

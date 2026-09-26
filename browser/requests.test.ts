@@ -973,6 +973,67 @@ test("a settled safe GET reports the effective URL and applied targets", async (
     });
 });
 
+test("a safe GET with data-graft-history=none patches without replacing the URL", async () => {
+    vi.mocked(fetch).mockResolvedValue(patch("Expanded"));
+    const replace = vi.spyOn(history, "replaceState");
+    const element = form('<input name="q" value="Alex">');
+    element.method = "get";
+    element.action = "/patients";
+    element.dataset.graftHistory = "none";
+
+    submit(element);
+    await flush();
+
+    expect(document.getElementById("result")?.textContent).toBe("Expanded");
+    expect(replace).not.toHaveBeenCalled();
+    expect(location.pathname).toBe("/dashboard/account/preferences");
+});
+
+test.each(["none", null])(
+    "a safe GET keeps its submitted history option (%s) after a form morph",
+    async (historyOption) => {
+        const element = panelForm('<input name="q" value="Alex">');
+        element.method = "get";
+        element.action = "/patients";
+        if (historyOption !== null)
+            element.setAttribute("data-graft-history", historyOption);
+        const nextOption =
+            historyOption === "none" ? "" : ' data-graft-history="none"';
+        vi.mocked(fetch).mockResolvedValue(
+            panelReply(
+                `<form id="task-create" method="get" action="/patients" data-graft${nextOption}><input name="q" value="Alex"></form>`,
+            ),
+        );
+        const details = collectSettled();
+        const replace = vi.spyOn(history, "replaceState");
+        const locationChanged = vi.fn();
+        addEventListener("hypergraft:locationchange", locationChanged);
+        try {
+            submit(element);
+            await flush();
+
+            expect(document.getElementById("task-create")).toBe(element);
+            expect(element.getAttribute("data-graft-history")).toBe(
+                historyOption === "none" ? null : "none",
+            );
+            expect(details[0]).toMatchObject({
+                outcome: "applied-patch",
+                url: "http://localhost:3000/patients?q=Alex",
+            });
+            const replacements = historyOption === "none" ? 0 : 1;
+            expect(replace).toHaveBeenCalledTimes(replacements);
+            expect(locationChanged).toHaveBeenCalledTimes(replacements);
+            expect(location.pathname + location.search).toBe(
+                historyOption === "none"
+                    ? "/dashboard/account/preferences"
+                    : "/patients?q=Alex",
+            );
+        } finally {
+            removeEventListener("hypergraft:locationchange", locationChanged);
+        }
+    },
+);
+
 test("a failed safe GET settles with a failure outcome and no targets", async () => {
     vi.mocked(fetch).mockRejectedValue(new TypeError("Failed to fetch"));
     const details = collectSettled();
