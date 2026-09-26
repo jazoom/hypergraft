@@ -35,6 +35,45 @@ function command(program, args = [], capture = false) {
     return capture ? result.stdout : "";
 }
 
+function authenticatedCommand(program, args) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+        console.log(`> ${program} ${args.join(" ")}`);
+        const result = spawnSync(program, args, {
+            encoding: "utf8",
+            stdio: ["inherit", "pipe", "pipe"],
+        });
+        if (result.stdout) process.stdout.write(result.stdout);
+        if (result.stderr) process.stderr.write(result.stderr);
+        if (result.error) throw result.error;
+        if (result.status === 0) return;
+        const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+        const authenticationFailed =
+            program === "npm"
+                ? /\b(?:E401|ENEEDAUTH)\b/.test(output)
+                : program === "gh"
+                  ? /not logged into|token[^\n]*invalid|\bHTTP 401\b/i.test(
+                        output,
+                    )
+                  : /no token found|please run `cargo login`|status(?: code)?:?\s*401\b|got 401\b|\b401 Unauthorized\b/i.test(
+                        output,
+                    );
+        if (attempt !== 0 || !authenticationFailed)
+            fail(`${program} failed. Exit status: ${result.status}.`);
+        const loginArgs =
+            program === "npm"
+                ? ["login", "--registry", registry]
+                : program === "gh"
+                  ? ["auth", "login", "--hostname", "github.com"]
+                  : ["login", "--registry", "crates-io"];
+        if (!process.stdin.isTTY || !process.stdout.isTTY)
+            fail(
+                `Authentication requires an interactive terminal. Run ${program} ${loginArgs.join(" ")}.`,
+            );
+        console.log(`${program} requires authentication.`);
+        command(program, loginArgs);
+    }
+}
+
 const git = (...args) => command("git", args, true).trim();
 const gh = (...args) => command("gh", [...args, "--repo", repository], true);
 
@@ -231,8 +270,8 @@ async function waitForCI(commit) {
 }
 
 async function release(state, save) {
-    command("gh", ["auth", "status"]);
-    command("npm", ["whoami", "--registry", registry]);
+    authenticatedCommand("gh", ["auth", "status", "--hostname", "github.com"]);
+    authenticatedCommand("npm", ["whoami", "--registry", registry]);
     const origins = [
         git("remote", "get-url", "origin"),
         git("remote", "get-url", "--push", "--all", "origin"),
@@ -294,7 +333,7 @@ async function release(state, save) {
     } else assertReleaseCommit(state);
 
     if (state.crate === "pending")
-        command("cargo", [
+        authenticatedCommand("cargo", [
             "publish",
             "-p",
             "hypergraft",
@@ -340,7 +379,7 @@ async function release(state, save) {
             save();
             assertReleaseCommit(state);
             if (kind === "crate")
-                command("cargo", [
+                authenticatedCommand("cargo", [
                     "publish",
                     "-p",
                     "hypergraft",
@@ -348,7 +387,10 @@ async function release(state, save) {
                     "crates-io",
                     "--locked",
                 ]);
-            else command("npm", ["publish", "--registry", registry]);
+            else {
+                authenticatedCommand("npm", ["whoami", "--registry", registry]);
+                command("npm", ["publish", "--registry", registry]);
+            }
         }
         state[kind] = "published";
         save();

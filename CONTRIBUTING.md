@@ -71,21 +71,13 @@ The release task requires:
 
 - A clean working tree on `main`, with all intended changes committed.
 - The `origin` remote for `jazoom/hypergraft`, with permission to push `main` and tags.
-- GitHub CLI (`gh`) authentication, with access to CI and permission to create releases.
+- A GitHub account with access to CI and permission to create releases.
 - npm and crates.io credentials with permission to publish `hypergraft`.
 - The development tools and Playwright Chromium from the development setup above.
 
 ### Prepare a release
 
 Install GitHub CLI before the first release.
-
-Authenticate with each service:
-
-```sh
-gh auth login
-npm login --registry https://registry.npmjs.org
-cargo login --registry crates-io
-```
 
 Preview the next version:
 
@@ -101,13 +93,21 @@ Start the release with the required version increment:
 mise run release -- patch
 ```
 
-At each prompt, enter the proposed version to continue.
+At each release confirmation prompt, enter the proposed version to continue.
 
 ### Release behaviour
 
 The preview makes no changes and requires no network access. It does not test credentials, remote version availability or package contents.
 
-A real release rejects mismatched package versions and existing release versions or tags. The first prompt precedes local changes and the push to `main`.
+The task starts an interactive login when a service reports absent or invalid credentials:
+
+- `gh auth status` starts `gh auth login --hostname github.com`.
+- `npm whoami` starts `npm login`.
+- Cargo publication starts `cargo login`.
+
+Each command retries once after login. Login requires an interactive terminal. Other failures stop the release.
+
+A real release rejects mismatched package versions and existing release versions or tags. The first release confirmation precedes version changes and the push to `main`.
 
 The task updates `Cargo.toml`, `Cargo.lock` and `package.json`. It then runs:
 
