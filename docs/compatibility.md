@@ -9,15 +9,19 @@ An incompatible wire change requires a new protocol version.
 [`protocol-v1.json`](../protocol-v1.json) is the canonical fixture.
 Read [Protocol version 1](protocol-v1.md) for the wire rules.
 
-## Template engine rollback
+## Child reconciliation
 
-Hypergraft again uses Askama and Morphlex. The [template engine decision](template-engine-decision.md) records the rollback and deployment procedure.
+Hypergraft uses Askama and its own private browser child reconciler. Morphlex is no longer a dependency. The [child reconciler decision](child-reconciler.md) records the matching contract, correctness checks and performance comparison.
 
-The runtime no longer interprets generated reconciliation markers. Open documents require a reload with the restored templates and browser bundle.
+The wire format, Askama output and public browser API are unchanged. There are no generated reconciliation markers. The earlier [template engine rollback](template-engine-decision.md) remains historical evidence, not a plan to replace Askama.
 
-Empty incoming ID attributes now fail the existing ID syntax rule. Earlier inspection incorrectly treated them as absent. The canonical fixture covers all browser preflight entry points.
+Stable IDs retain compatible siblings. Unkeyed elements can now be replaced where Morphlex fell back to a tag match across changed `name`, `href` or `src` hints. Adding or removing an ID also replaces an element. Hosts that depend on control or island identity should provide stable IDs. Neither moving between parents nor moving between patch targets promises retention.
 
-Native form-property guards protect Hypergraft code. They do not change Morphlex internals. Controls that shadow DOM members used by Morphlex can still disrupt its traversal.
+Server-authoritative updates now remove every obsolete attribute, update retained template contents and reset dirty control properties even when markup is unchanged. File inputs inside a `children` patch are cleared. Named form controls no longer interfere with the reconciler's DOM operations.
+
+Deploy the new browser bundle, invalidate cached assets and reload open documents so their matching and control-state behaviour is consistent. No server template migration or protocol version change is needed.
+
+Empty incoming ID attributes still fail the existing ID syntax rule. The canonical fixture covers all browser preflight entry points.
 
 ## Tested engines
 

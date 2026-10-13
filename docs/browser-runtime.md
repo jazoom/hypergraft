@@ -46,7 +46,11 @@ Safe work is cancellable. Teardown invalidates and aborts in-flight safe navigat
 
 An in-flight or uncertain unsafe command is not cancellable as though it never happened. Teardown must not unlock the document-level unsafe guard. That guard is preserved across runtime replacement.
 
-`children` retains its target and morphs preflighted nodes. Server-authored attributes and form properties win. `append` retains its target and adds preflighted nodes as last children. Compatible keyed descendants can stay or move within one target. No identity guarantee crosses targets. A retained node is not evidence that transport completed.
+`children` retains its target and reconciles preflighted nodes with Hypergraft's private child reconciler. Server-authored attributes and form properties win, including unchanged markup over dirty controls. `append` retains its target and adds preflighted nodes as last children.
+
+Compatible elements with the same ID retain identity among siblings. Moving between parents or targets does not promise retained identity. Namespace, local name and native input type must match. Adding, removing or changing an ID replaces that element. Important control, island and list identities need explicit IDs; unkeyed matching is only a reuse optimisation. Read the [matching contract](child-reconciler.md#matching-contract) for unkeyed hints and equal-edge reuse. A retained node is not evidence that transport completed.
+
+Reconciliation includes native template contents and namespaced attributes. Form-control properties are captured from the prepared source before nodes move, then restored after the batch. File inputs are cleared rather than assigned a file value. Temporary pending presentation remains separately owned by transport.
 
 Same-origin `POST` forms with `application/x-www-form-urlencoded` or `multipart/form-data` are enhanced. Multipart commands send `FormData` without a manual `Content-Type` header. Invalid command forms emit `invalid-command-form` and do not submit natively.
 
@@ -78,7 +82,7 @@ The final inspection enforces script rejection and ID validity. It also enforces
 
 Without a content callback, preflight inspects each private fragment once. The document-wide ID scan still follows batch preparation.
 
-Hypergraft accesses native form properties during preflight and adapter operations. These guards prevent named controls from replacing those members. They do not extend into Morphlex internals.
+Hypergraft accesses native form properties during preflight and reconciliation. Named controls cannot replace the DOM members used for traversal, matching, attribute updates or insertion. Other elements retain application overrides and their exceptions.
 
 ## Navigation lifecycle
 

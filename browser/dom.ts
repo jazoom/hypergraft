@@ -5,8 +5,25 @@ type NodeProperty =
     | "isConnected"
     | "appendChild"
     | "cloneNode"
-    | "contains";
-type ElementProperty = "id" | "localName" | "getAttributeNS" | "outerHTML";
+    | "contains"
+    | "parentNode"
+    | "nextSibling"
+    | "insertBefore"
+    | "removeChild"
+    | "isEqualNode";
+type ElementProperty =
+    | "id"
+    | "localName"
+    | "namespaceURI"
+    | "attributes"
+    | "getAttributeNS"
+    | "getAttributeNodeNS"
+    | "hasAttributeNS"
+    | "removeAttributeNS"
+    | "setAttribute"
+    | "setAttributeNS"
+    | "moveBefore"
+    | "outerHTML";
 
 // Form named properties take precedence over native members, even for childNodes.
 // Other elements retain their overrides and application exceptions.

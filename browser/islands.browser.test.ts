@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { observeIslands } from "./islands";
 import { apply, preflightLive } from "./patches";
 
-test("island attribute changes update lifetimes on a retained Morphlex root", async () => {
+test("island attribute changes update lifetimes on a retained root", async () => {
     const host = document.createElement("div");
     host.id = "island-target";
     host.innerHTML = '<section id="island-root"><b>Content</b></section>';

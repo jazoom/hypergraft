@@ -1,7 +1,12 @@
 import { HypergraftError } from "./diagnostics";
 import type { EnterEffects } from "./enter-effects";
 import { elementProperty, nodeProperty } from "./dom";
-import { appendChildren, morphChildren } from "./morph";
+import {
+    appendChildren,
+    captureControls,
+    morphChildren,
+    prepareMorph,
+} from "./morph";
 
 export const PROTOCOL_VERSION = "1";
 export const MEDIA_TYPE = "text/vnd.hypergraft.patches+html";
@@ -461,11 +466,16 @@ export function apply(
               direction: active.selectionDirection,
           }
         : null;
-    for (const patch of batch.patches) {
+    const morphs = batch.patches.map((patch) =>
+        prepareMorph(patch.target, patch.nodes, patch.operation === "children"),
+    );
+    const controls = captureControls(morphs);
+    for (const [index, patch] of batch.patches.entries()) {
         if (patch.operation === "append")
             appendChildren(patch.target, patch.nodes);
-        else morphChildren(patch.target, patch.nodes, consumeOwned);
+        else morphChildren(morphs[index]!, controls, consumeOwned);
     }
+    controls.restore();
     if (batch.title !== undefined) document.title = batch.title;
     const finalControl =
         active && nodeProperty(active, "isConnected")

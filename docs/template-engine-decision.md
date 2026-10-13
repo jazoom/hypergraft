@@ -1,5 +1,7 @@
 # Template engine decision
 
+This document records the earlier compiler rollback. The later [child reconciler decision](child-reconciler.md) replaces Morphlex only; Askama and ordinary HTML remain in place.
+
 ## Decision
 
 Hypergraft returns to Askama and Morphlex. The owned compiler and reconciler did not meet the requirement for better combined performance.
@@ -40,7 +42,7 @@ The rollback retains these engine-independent changes:
 
 The rollback excludes generated identity rules and compiler-specific tests. It also excludes the custom reconciler and its control-state implementation.
 
-Form-property guards cover Hypergraft code, not Morphlex internals. Morphlex still reads some DOM properties directly. Controls named `childNodes` or `querySelectorAll` can interfere with its traversal.
+At the rollback, form-property guards covered Hypergraft code, not Morphlex internals. Controls named `childNodes` or `querySelectorAll` could still interfere with Morphlex traversal. The later child reconciler closes that gap.
 
 The retired `NEXT.md` plan does not authorise further replacement work. A future proposal requires a new plan and performance criteria before implementation.
 

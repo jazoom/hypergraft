@@ -314,8 +314,8 @@ test("retained focus follows an authored ID change without redundant focus", () 
     apply(focusBatch(markup), (element) => {
         if (element === control) {
             visited = true;
-            // Morphlex does not retain controls across authored ID changes.
-            // Simulate that retained-node visit without a new correspondence engine.
+            // ID changes normally replace controls. Exercise a retained node whose
+            // ID changes during application without transferring its focus by ID.
             control.id = "changed";
             document.getElementById("secondary")!.innerHTML = markup;
             control.blur();
