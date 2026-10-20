@@ -33,6 +33,7 @@
         "browser/prefetch.ts",
         "browser/scroll-restoration.ts",
         "browser/stream.ts",
+        "dist/vite",
         "LICENSE-APACHE",
         "LICENSE-MIT",
         "README.md",
@@ -43,14 +44,28 @@
     "exports": {
         "./browser": "./browser/index.ts",
         "./browser/islands": "./browser/islands.ts",
+        "./vite": {
+            "types": "./dist/vite/islands.d.ts",
+            "import": "./dist/vite/islands.js"
+        },
         "./protocol-v1.json": "./protocol-v1.json"
     },
     "scripts": {
-        "test": "vitest run --config vitest.config.ts",
+        "build:tooling": "tsgo --project vite/tsconfig.build.json",
+        "prepare": "pnpm build:tooling",
+        "test": "pnpm build:tooling && vitest run --config vitest.config.ts",
         "test:browser": "vitest run --config vitest.browser.config.ts",
         "check": "tsgo --noEmit --project tsconfig.json",
         "format": "prettier --write --cache --log-level warn .",
         "example:build": "vite build --config examples/reference/vite.config.ts"
+    },
+    "peerDependencies": {
+        "vite": "^8.2.2"
+    },
+    "peerDependenciesMeta": {
+        "vite": {
+            "optional": true
+        }
     },
     "devDependencies": {
         "@typescript/native-preview": "7.0.0-dev.20260628.1",

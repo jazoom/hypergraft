@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 export default defineConfig({
     test: {
-        include: ["browser/**/*.test.ts"],
+        include: ["browser/**/*.test.ts", "vite/**/*.test.ts"],
         exclude: ["browser/**/*.browser.test.ts"],
     },
 });

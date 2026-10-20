@@ -20,6 +20,8 @@ mise install
 pnpm install --frozen-lockfile
 ```
 
+Dependency installation also builds the optional Node-side Vite plugin from TypeScript into `dist/vite`. This output is ignored by Git and included in the npm package. `pnpm build:tooling` refreshes it after a plugin edit; package preparation rebuilds it before publication. A host using a sibling `file:` dependency must reinstall that dependency after rebuilding the tooling.
+
 Run the anonymous example:
 
 ```sh

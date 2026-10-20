@@ -15,7 +15,7 @@ import {
     emitRequestSettled,
     type RequestSettledDetail,
 } from "./events";
-import { observeIslands, type IslandInitialiser } from "./islands";
+import { observeIslands, type IslandRegistry } from "./islands";
 import {
     apply,
     MEDIA_TYPE,
@@ -118,7 +118,7 @@ export interface TransportFeedback {
 export interface HypergraftOptions {
     validateContent?: ValidateContent;
     feedback?: TransportFeedback;
-    islands?: Record<string, IslandInitialiser>;
+    islands?: IslandRegistry;
     liveEndpoint?: string;
     enterEffects?: Record<string, EnterEffect>;
     prefetch?: boolean | PrefetchOptions;

@@ -593,6 +593,129 @@ Islands can use applied target identifiers to narrow work. They must treat serve
 
 The reference application does not use islands. The next section is a separate recipe.
 
+## Co-located island modules
+
+Keep browser behaviour beside the feature's server code and templates. File locations belong to the host; Hypergraft needs only a registry of names and initialisers.
+
+```text
+src/features/editor/
+  page.rs
+  browser.ts
+  browser.test.ts
+  templates/index.html
+```
+
+A feature's `browser.ts` exports `islands` and may be a thin registration and wiring module. Keep distinct behaviours in focused sibling modules, with tests beside their implementations. Choose boundaries by responsibility, not current file size. A single focused implementation can stay in `browser.ts`. Keep templates in the same feature directory.
+
+The export can be an `IslandRegistry` or a synchronous factory that receives explicit host services and returns an `IslandRegistry`:
+
+```ts
+import type { IslandRegistry } from "hypergraft/browser";
+
+export const islands = {
+    editor(root, { signal }) {
+        root.addEventListener(
+            "click",
+            (event) => {
+                if (
+                    event.target instanceof Element &&
+                    event.target.closest("[data-select-text]")
+                )
+                    root.querySelector<HTMLTextAreaElement>(
+                        "textarea",
+                    )?.select();
+            },
+            { signal },
+        );
+    },
+} satisfies IslandRegistry;
+```
+
+For host dependencies, use a factory instead:
+
+```ts
+import type { IslandRegistry } from "hypergraft/browser";
+import type { BrowserServices } from "../../browser-services";
+
+export function islands(services: BrowserServices): IslandRegistry {
+    return {
+        editor(root, { signal }) {
+            root.addEventListener(
+                "change",
+                () => services.notify("Draft changed"),
+                { signal },
+            );
+        },
+    };
+}
+```
+
+Use `collectIslands` before runtime startup. Vite can discover these modules without a plugin:
+
+```ts
+import {
+    collectIslands,
+    startHypergraft,
+    type IslandModule,
+} from "hypergraft/browser";
+import type { BrowserServices } from "./browser-services";
+
+const modules = import.meta.glob<IslandModule<BrowserServices>>(
+    "./features/**/browser.ts",
+    { eager: true },
+);
+const services: BrowserServices = {
+    notify: (message) => console.info(message),
+};
+const islands = collectIslands(modules, services);
+const stop = startHypergraft({ islands });
+```
+
+The glob must be a literal path relative to the importing file. Include every feature root and any shared island modules. Keep helpers and tests outside this filename convention. Configure the host's TypeScript and test tools to include the co-located files. Vite's generic describes the discovered modules; it does not check their exports, so type each module's island map or factory too.
+
+### Vite build watch
+
+Vite's development server refreshes glob imports when files appear or disappear. Its `build --watch` mode needs extra support for this. The optional `hypergraft/vite` entry supplies that support for Vite 8.2.2 and later compatible releases:
+
+```ts
+import { defineConfig } from "vite";
+import { watchIslandModules } from "hypergraft/vite";
+
+export default defineConfig({
+    plugins: [
+        watchIslandModules({
+            importer: "src/main.ts",
+            roots: ["src/features"],
+        }),
+    ],
+});
+```
+
+`importer` is the real TypeScript file containing the eager glob. `roots` lists the existing, stable source directories that contain its `browser.ts` modules. Both are relative to Vite's root. Include every source root covered by the glob; exclude build output and dependency directories. The glob still decides which modules to import. The plugin adds no virtual module or second registration API.
+
+The plugin runs only during build watch. It detects additions, removals and renames of `browser.ts` files, including nested feature directories. A private temporary file invalidates the glob importer without changing application source. Existing module edits remain ordinary Vite dependencies. Source directory links are not followed during discovery. The plugin closes its filesystem watchers, cancels its pending refresh and removes its temporary file when the build watcher closes. Directory-scan and filesystem-watcher errors are reported through Vite.
+
+Vite remains an optional peer dependency. Hosts using explicit imports or another bundler need only `hypergraft/browser`. The Node-side plugin is published as JavaScript with TypeScript declarations; browser modules remain TypeScript. Hypergraft builds the plugin during local dependency installation, tests and package preparation. When using a sibling `file:` dependency, run `pnpm build:tooling` in Hypergraft after editing the plugin, then reinstall the host dependencies to refresh their local copy.
+
+### Explicit imports
+
+Other bundlers can use explicit imports. A module without services needs no second argument:
+
+```ts
+import { collectIslands, startHypergraft } from "hypergraft/browser";
+import * as editor from "./features/editor/browser";
+
+startHypergraft({ islands: collectIslands({ editor }) });
+```
+
+`IslandModule<Services>` describes the module export. `IslandRegistry` is a read-only name-to-initialiser map. Factories run once per `collectIslands` call, not per root. They must only construct definitions, without listeners, requests or mounted state. Initialisers still own each root's state and lifetime. Imports must also remain free of mounting side effects.
+
+`collectIslands` takes only own enumerable module entries and island declarations. It snapshots definitions into a frozen, null-prototype registry. Duplicate names throw `TypeError` with both source keys, even when the initialisers are equal. Missing exports, non-plain maps, empty names and non-function initialisers also throw `TypeError`. Factory errors propagate. Collect before starting the runtime or binding its feedback so a configuration failure does not leave a partial Hypergraft setup.
+
+Discovery is eager and synchronous. It adds neither lazy loading nor a second runtime. Markup still names an island with `data-island`; patches still reject scripts. No CSP exception or protocol change is needed.
+
+Co-location does not change ownership. Use root-local selectors and delegated listeners. Tie work to the mount signal. Keep cooperating behaviour and its reconciliation order in a shared owner. A retained root can represent a different record: the host must reset record-bound state when its identity changes. Draft persistence and business rules remain host concerns.
+
 ## Island recipe
 
 A transient island can propose through a real form. The gesture preview is client-owned only until the request settles.

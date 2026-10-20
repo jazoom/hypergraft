@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { observeIslands } from "./islands";
+import { collectIslands, observeIslands } from "./islands";
 import { apply, preflightLive } from "./patches";
 
 test("island attribute changes update lifetimes on a retained root", async () => {
@@ -17,7 +17,12 @@ test("island attribute changes update lifetimes on a retained root", async () =>
         mounted.push(element);
         return { destroy: () => aborted.push(signal.aborted) };
     };
-    const dispose = observeIslands({ first: initialise, second: initialise });
+    const dispose = observeIslands(
+        collectIslands({
+            first: { islands: { first: initialise } },
+            second: { islands: () => ({ second: initialise }) },
+        }),
+    );
     const update = async (attribute: string) => {
         apply(
             preflightLive(

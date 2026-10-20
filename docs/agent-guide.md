@@ -254,6 +254,18 @@ export function dispose(): void {
 }
 ```
 
+## Co-locate browser behaviour
+
+Keep feature TypeScript and its tests beside the feature's server code and templates. A `browser.ts` module exports `islands`: either an `IslandRegistry` map or a synchronous factory from typed host services to that map. Keep root state inside initialisers, not module imports or registration factories.
+
+`collectIslands(modules, services)` combines those exports before `startHypergraft({ islands })`. Omit `services` when no factory requires it. Duplicate names and malformed module exports fail at registration. Vite hosts can discover `**/browser.ts` with eager `import.meta.glob<IslandModule<BrowserServices>>`; other hosts can pass explicit module imports. No protocol change is required. Vite's build-watch mode can use `watchIslandModules` from the optional `hypergraft/vite` entry to discover added, removed or renamed feature modules without a restart. Configure the glob importer and its source roots once; Vite's development server already handles these changes.
+
+Thin `browser.ts` modules for registration and wiring are allowed. Keep distinct behaviours in focused sibling modules, with tests beside their implementations; choose boundaries by responsibility, not current file size. A single focused implementation can stay in `browser.ts`. Keep feature tests local rather than mounting unrelated features through a shared application test setup.
+
+Hypergraft still owns mounting, reconciliation delivery and lifetime cancellation. Hosts still own record identity, draft memory, dependencies and reconciliation order. A retained root does not guarantee a retained record identity. Never execute scripts from patched templates.
+
+Read [Co-located island modules](browser-runtime.md#co-located-island-modules) for the complete recipe and configuration requirements.
+
 ## Host security requirements
 
 - Enforce Origin after classification and before body extraction or domain work.
@@ -391,6 +403,7 @@ Leave these components to Hypergraft:
 | Add live projections                                   | [Live GET recipe](host-integration.md#live-get-projection), then [Live](live.md)   |
 | Add streamed progress                                  | [Streamed command recipe](host-integration.md#streamed-command-recipe)             |
 | Add an island                                          | [Island recipe](browser-runtime.md#island-recipe)                                  |
+| Co-locate feature TypeScript                           | [Co-located island modules](browser-runtime.md#co-located-island-modules)          |
 | Use lifecycle events or diagnose uncertainty           | [Browser runtime](browser-runtime.md)                                              |
 | Change CSP or investigate Trusted Types                | [Security](security.md)                                                            |
 | Change Hypergraft itself                               | [`AGENTS.md`](../AGENTS.md) and [`CONTRIBUTING.md`](../CONTRIBUTING.md)            |

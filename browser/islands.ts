@@ -29,6 +29,53 @@ export type IslandInitialiser = (
     root: HTMLElement,
     context: IslandMountContext,
 ) => IslandInstance | (() => void) | void;
+export type IslandRegistry = Readonly<Record<string, IslandInitialiser>>;
+
+export interface IslandModule<Services = void> {
+    readonly islands: IslandRegistry | ((services: Services) => IslandRegistry);
+}
+
+export function collectIslands(
+    modules: Readonly<Record<string, IslandModule>>,
+): IslandRegistry;
+export function collectIslands<Services>(
+    modules: Readonly<Record<string, IslandModule<Services>>>,
+    services: Services,
+): IslandRegistry;
+export function collectIslands<Services>(
+    modules: Readonly<Record<string, IslandModule<Services>>>,
+    services?: Services,
+): IslandRegistry {
+    const registry: Record<string, IslandInitialiser> = Object.create(null);
+    const sources = new Map<string, string>();
+    for (const [source, module] of Object.entries(modules)) {
+        const exported = module?.islands;
+        const islands =
+            typeof exported === "function"
+                ? exported(services as Services)
+                : exported;
+        if (
+            !islands ||
+            typeof islands !== "object" ||
+            ![null, Object.prototype].includes(Object.getPrototypeOf(islands))
+        )
+            throw new TypeError(
+                `Island module "${source}" must supply an island map`,
+            );
+        for (const [name, initialise] of Object.entries(islands)) {
+            if (sources.has(name))
+                throw new TypeError(
+                    `Island "${name}" is declared by both "${sources.get(name)}" and "${source}"`,
+                );
+            if (!name || typeof initialise !== "function")
+                throw new TypeError(`Invalid island "${name}" in "${source}"`);
+            sources.set(name, source);
+            registry[name] = initialise;
+        }
+    }
+    return Object.freeze(registry);
+}
+
 export type IslandErrorReporter = (
     name: string,
     phase: "mount" | "reconcile" | "destroy",
@@ -44,7 +91,7 @@ function normaliseInstance(
 
 /** Observe and reconcile host-registered islands without modifying server-authored markup. */
 export function observeIslands(
-    initialisers: Record<string, IslandInitialiser>,
+    initialisers: IslandRegistry,
     report: IslandErrorReporter = (name, phase, error) =>
         console.error(`Island "${name}" failed to ${phase}:`, error),
 ): () => void {

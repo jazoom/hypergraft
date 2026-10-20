@@ -25,7 +25,10 @@ export {
     type BoundTransportFeedback,
 } from "./feedback";
 export {
+    collectIslands,
     observeIslands,
+    type IslandModule,
+    type IslandRegistry,
     type IslandErrorReporter,
     type IslandInitialiser,
     type IslandInstance,
