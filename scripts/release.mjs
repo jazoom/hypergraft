@@ -217,6 +217,10 @@ function assertReleaseCommit(state) {
     const head = git("rev-parse", "HEAD");
     if (state.commit && head !== state.commit)
         fail("HEAD differs from the saved release commit.");
+    if (state.commit) {
+        assertReleaseVersion(state);
+        return;
+    }
     if (
         git("show", "-s", "--format=%P", "HEAD") !== state.base ||
         git("show", "-s", "--format=%s", "HEAD") !== `Release ${state.version}`
@@ -231,6 +235,37 @@ function assertReleaseCommit(state) {
         if (readFileSync(file, "utf8") !== updated)
             fail(`Unexpected release contents in ${file}.`);
     state.commit = head;
+}
+
+function assertReleaseVersion(state) {
+    const lockVersion = readFileSync("Cargo.lock", "utf8").match(
+        /^\[\[package\]\]\nname = "hypergraft"\nversion = "([^"]+)"/m,
+    )?.[1];
+    if (currentVersion() !== state.version || lockVersion !== state.version)
+        fail("Package versions must still match the saved release version.");
+}
+
+async function adoptReleaseFixes(state, save) {
+    const head = git("rev-parse", "HEAD");
+    if (!state.commit || head === state.commit) return;
+    clean();
+    if (!ancestor(state.commit, head))
+        fail("HEAD must descend from the saved release commit.");
+    assertReleaseVersion(state);
+    // Once an upload starts, all packages and the tag must keep the same source.
+    if (state.crate !== "pending" || state.npm !== "pending")
+        fail("Cannot adopt release fixes after a publication attempt.");
+    const tag = `v${state.version}`;
+    if (tagCommit(tag, false) || tagCommit(tag, true))
+        fail(`Cannot adopt release fixes because ${tag} already exists.`);
+    for (const kind of ["crate", "npm"])
+        if (await published(kind, state.version))
+            fail(
+                `Cannot adopt release fixes: ${kind} ${state.version} already exists.`,
+            );
+    console.log(`Adopting release fixes: ${state.commit} → ${head}`);
+    state.commit = head;
+    save();
 }
 
 async function waitForCI(commit) {
@@ -309,6 +344,8 @@ async function release(state, save) {
         );
         save();
     }
+
+    await adoptReleaseFixes(state, save);
 
     // A crash can occur after Git creates the commit but before the state file records it.
     if (git("rev-parse", "HEAD") !== state.base) {

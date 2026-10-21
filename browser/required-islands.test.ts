@@ -93,22 +93,20 @@ test.each([
             html = html.replace('version="1"', 'version="1" location="/saved"');
         if (path === "stream")
             html = html.replace('version="1"', 'version="1" phase="final"');
-        const fetch = vi
-            .spyOn(globalThis, "fetch")
-            .mockResolvedValue(
-                new Response(
-                    path === "stream"
-                        ? `${new TextEncoder().encode(html).length}\n${html}`
-                        : html,
-                    {
-                        headers: {
-                            "Content-Type": MEDIA_TYPE,
-                            "Graft-Transfer":
-                                path === "stream" ? "stream" : "complete",
-                        },
+        const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(
+                path === "stream"
+                    ? `${new TextEncoder().encode(html).length}\n${html}`
+                    : html,
+                {
+                    headers: {
+                        "Content-Type": MEDIA_TYPE,
+                        "Graft-Transfer":
+                            path === "stream" ? "stream" : "complete",
                     },
-                ),
-            );
+                },
+            ),
+        );
         const facts: string[] = [];
         stops.push(
             listenForRequestSettled((detail) => facts.push(detail.outcome)),
