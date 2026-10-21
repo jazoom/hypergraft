@@ -5,6 +5,7 @@ import {
     readFile,
     rename,
     rm,
+    symlink,
     writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -28,6 +29,12 @@ test("the packaged Vite plugin refreshes discovered islands without touching sou
             join(installed, "dist/vite"),
             { recursive: true },
         );
+        await mkdir(join(installed, "node_modules"));
+        for (const name of ["oxc-parser", "vite"])
+            await symlink(
+                new URL(`../node_modules/${name}`, import.meta.url).pathname,
+                join(installed, "node_modules", name),
+            );
         const configFile = join(root, "vite.config.mjs");
         await writeFile(
             configFile,

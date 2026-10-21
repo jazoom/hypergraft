@@ -398,6 +398,28 @@ function parseEnvelope(
             }
         }
     }
+    validateFinalIds(patches, insertionIds, liveDocument);
+    return {
+        kind: "patches",
+        batch: {
+            title: set.hasAttribute("title")
+                ? set.getAttribute("title")!
+                : undefined,
+            replaceLocation: set.hasAttribute("location")
+                ? navigationDestination(set.getAttribute("location")!)
+                : undefined,
+            patches,
+        },
+        phase,
+        status,
+    };
+}
+
+function validateFinalIds(
+    patches: PreparedPatch[],
+    insertionIds: Set<string>,
+    liveDocument: Document,
+) {
     const survivingIds = new Set<string>();
     for (const element of liveDocument.querySelectorAll("[id]")) {
         if (
@@ -421,20 +443,48 @@ function parseEnvelope(
             fail("target-content", "final ID collision");
         survivingIds.add(id);
     }
-    return {
-        kind: "patches",
-        batch: {
-            title: set.hasAttribute("title")
-                ? set.getAttribute("title")!
-                : undefined,
-            replaceLocation: set.hasAttribute("location")
-                ? navigationDestination(set.getAttribute("location")!)
-                : undefined,
-            patches,
-        },
-        phase,
-        status,
-    };
+}
+
+// An asynchronous dependency wait can invalidate both targets and surviving IDs.
+// Recheck private prepared content without invoking host callbacks a second time.
+export function revalidateBatch(
+    batch: PreparedBatch,
+    liveDocument: Document = document,
+): void {
+    const insertionIds = new Set<string>();
+    let nodeCount = 0;
+    for (const patch of batch.patches) {
+        const matches = liveDocument.querySelectorAll(
+            `[id="${CSS.escape(patch.targetId)}"]`,
+        );
+        if (matches.length !== 1 || matches[0] !== patch.target)
+            fail("target-content", "changed target", patch.targetId);
+        for (const other of batch.patches)
+            if (
+                other !== patch &&
+                nodeProperty(patch.target, "contains").call(
+                    patch.target,
+                    other.target,
+                )
+            )
+                fail("target-content", "overlapping targets", patch.targetId);
+        const fragment = liveDocument.createDocumentFragment();
+        for (const node of patch.nodes) {
+            if (nodeProperty(node, "isConnected"))
+                fail("target-content", "connected source", patch.targetId);
+            fragment.appendChild(node);
+        }
+        const inspected = inspectContent(fragment, patch.targetId);
+        nodeCount += inspected.count;
+        if (nodeCount > MAX_INSERTED_NODES)
+            fail("target-content", "node bound exceeded", patch.targetId);
+        for (const id of inspected.ids) {
+            if (insertionIds.has(id))
+                fail("target-content", "duplicate inserted ID", patch.targetId);
+            insertionIds.add(id);
+        }
+    }
+    validateFinalIds(batch.patches, insertionIds, liveDocument);
 }
 
 function supportsTextSelection(

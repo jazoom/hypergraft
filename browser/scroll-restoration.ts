@@ -110,6 +110,9 @@ export function createScrollRestoration() {
             if (positions.size > 50)
                 positions.delete(positions.keys().next().value!);
         },
+        committed() {
+            current = entry();
+        },
         restore(traversal: boolean) {
             current = entry();
             const snapshot = traversal ? positions.get(current) : undefined;

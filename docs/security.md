@@ -19,6 +19,14 @@ Image and style sources belong to the host. A host can add a script nonce when a
 Do not add `allow-duplicates` to `trusted-types`.
 Do not install a global passthrough policy.
 
+## Required island readiness
+
+[Automatic required modules](required-islands.md) use build-declared import paths, never URLs taken from HTML. They preserve script rejection and the existing CSP. One server-rendered workspace starts inert; capture-phase and transport guards block affected submissions before payload construction. Disabled/read-only controls and ancestor locks remain independently owned. A plain recovery link outside the workspace works even if the bootstrap fails to load. Unknown names, mismatched exports and failed required setup do not enable the workspace. This is a client readiness rule, not a replacement for Origin checks, authentication, authorisation or concurrency predicates.
+
+Complete page navigation commits only after bounded content validation and its departure guard; it keeps the new workspace gated while required code loads. Failure stays on that page with explicit reload recovery. Targeted responses still wait before application and recheck prepared content, current targets and final document identifiers without repeating host validators.
+
+Approved intent prefetch can parse bounded HTML and import build-declared required modules, but never mounts speculative content or releases readiness. Host validators run at activation, not speculation. HTML expiry, authorisation intervals and admission limits are unchanged; a started JavaScript import cannot be cancelled or removed from the browser module cache. A command whose response cannot be applied remains uncertain and is never automatically repeated. Cold live responses are discarded, not retained for delayed application; a new identity must provide a covering children snapshot. Incremental or failed recovery requires an authoritative reload.
+
 ## Lazy island readiness
 
 Optional lazy islands load host-selected code through standard dynamic imports under the existing script policy. They require no inline script, `unsafe-inline`, `unsafe-eval` or new Trusted Types policy. Do not derive import paths from untrusted markup. Keep imported module evaluation free of application side effects: a load can complete after its root or runtime has gone.

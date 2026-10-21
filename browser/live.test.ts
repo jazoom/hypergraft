@@ -4,6 +4,7 @@ import fixture from "../protocol-v1.json";
 import {
     LIVE_PATCH_EVENT,
     listenForLiveStateChanges,
+    listenForLivePatches,
     type AppliedLivePatchDetail,
     type LiveStateChangeDetail,
 } from "./events";
@@ -25,6 +26,8 @@ import {
 } from "./live";
 import { MAX_RESPONSE_BYTES, MEDIA_TYPE } from "./patches";
 import { resetHypergraftForTests, startHypergraft } from "./requests";
+import { defineIslandModules } from "./required-islands";
+import type { IslandInitialiser } from "./islands";
 
 class MockSocket extends EventTarget {
     static instances: MockSocket[] = [];
@@ -988,3 +991,540 @@ test("discovers at most 64 live forms", async () => {
     const socket = MockSocket.instances[0]!;
     await vi.waitFor(() => expect(socket.sent).toHaveLength(64));
 });
+
+test("live workspace patches wait for retained initial roots without blocking independent projections", async () => {
+    document.body.innerHTML =
+        '<aside data-graft-workspace-feedback><p data-graft-workspace-failure hidden>Failed</p></aside><main data-graft-workspace inert><div data-island="editor"></div><section id="item-results"></section></main>';
+    liveForm("one", "/items", "item-results");
+    liveForm("two", "/safety", "safety-results");
+    let resolve!: (module: { islands: { editor: IslandInitialiser } }) => void;
+    const loading = new Promise<{ islands: { editor: IslandInitialiser } }>(
+        (yes) => {
+            resolve = yes;
+        },
+    );
+    const mount = vi.fn();
+    const patches: AppliedLivePatchDetail[] = [];
+    stopListeners.push(listenForLivePatches((detail) => patches.push(detail)));
+    cleanup = startHypergraft({
+        islands: defineIslandModules([
+            { names: ["editor"], load: () => loading },
+        ]),
+    });
+    await vi.waitFor(() =>
+        expect(MockSocket.instances[0]?.sent).toHaveLength(2),
+    );
+    const socket = MockSocket.instances[0]!;
+    socket.receive(1, envelope("item-results", "Discarded"));
+    expect(document.getElementById("item-results")!.textContent).toBe("");
+    socket.receive(2, envelope("safety-results", "Independent"));
+    expect(patches.map((patch) => patch.url)).toEqual([
+        new URL("/safety", location.href).href,
+    ]);
+    expect(
+        document.querySelector<HTMLElement>("[data-graft-workspace-failure]")!
+            .hidden,
+    ).toBe(true);
+    resolve({ islands: { editor: mount } });
+    await vi.waitFor(() =>
+        expect(
+            socket.sent
+                .map((text) => JSON.parse(text))
+                .filter(
+                    (message) =>
+                        message.type === "subscribe" &&
+                        message.url === "/items",
+                ),
+        ).toHaveLength(2),
+    );
+    socket.receive(3, envelope("item-results", "Fresh snapshot"));
+    expect(mount).toHaveBeenCalledOnce();
+    expect(document.getElementById("item-results")!.textContent).toBe(
+        "Fresh snapshot",
+    );
+    expect(patches).toHaveLength(2);
+    expect(
+        document.querySelector("[data-graft-workspace]")!.hasAttribute("inert"),
+    ).toBe(false);
+    expect(
+        document.querySelector<HTMLElement>("[data-graft-workspace-failure]")!
+            .hidden,
+    ).toBe(true);
+});
+
+test.each(["preflight", "conflict", "reconcile"])(
+    "a %s failure during cold recovery stays unavailable after unrelated mutations",
+    async (failure) => {
+        document.body.innerHTML =
+            "<main data-graft-workspace inert></main><aside data-graft-workspace-live-failure hidden>Reload</aside>";
+        liveForm("one", "/items", "item-results");
+        liveForm("two", "/safety", "safety-results");
+        let resolve!: (module: {
+            islands: { cold: IslandInitialiser };
+        }) => void;
+        const loading = new Promise<{ islands: { cold: IslandInitialiser } }>(
+            (yes) => {
+                resolve = yes;
+            },
+        );
+        cleanup = startHypergraft({
+            islands: defineIslandModules([
+                { names: ["cold"], load: () => loading },
+            ]),
+            onIslandError: vi.fn(),
+        });
+        await vi.waitFor(() =>
+            expect(MockSocket.instances[0]?.sent).toHaveLength(2),
+        );
+        const socket = MockSocket.instances[0]!;
+        const response = envelope(
+            "item-results",
+            '<div data-island="cold"></div>',
+        );
+        socket.receive(2, envelope("safety-results", "Independent"));
+        socket.receive(1, response);
+        resolve({
+            islands: {
+                cold: () => ({
+                    destroy() {},
+                    reconcile() {
+                        throw new Error("Failed setup");
+                    },
+                }),
+            },
+        });
+        await vi.waitFor(() =>
+            expect(
+                socket.sent
+                    .map((text) => JSON.parse(text))
+                    .filter(
+                        (message) =>
+                            message.type === "subscribe" &&
+                            message.url === "/items",
+                    ),
+            ).toHaveLength(2),
+        );
+        socket.receive(
+            3,
+            failure === "preflight"
+                ? response.replace('version="1"', 'version="2"')
+                : failure === "conflict"
+                  ? response.replace(
+                        "</graft-patch-set>",
+                        '<graft-patch operation="children" target="safety-results"><template>Conflict</template></graft-patch></graft-patch-set>',
+                    )
+                  : response,
+        );
+        document.body.append(document.createElement("p"));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(
+            socket.sent
+                .map((text) => JSON.parse(text))
+                .filter(
+                    (message) =>
+                        message.type === "subscribe" &&
+                        message.url === "/items",
+                ),
+        ).toHaveLength(2);
+        expect(
+            document.querySelector<HTMLElement>(
+                "[data-graft-workspace-live-failure]",
+            )!.hidden,
+        ).toBe(false);
+    },
+);
+
+test.each(["ready", "failure", "terminal"])(
+    "live reconciliation-created roots keep completion pending until %s recovery",
+    async (ending) => {
+        document.body.innerHTML =
+            '<main data-graft-workspace inert><div data-island="editor"></div><section id="item-results"></section></main><aside data-graft-workspace-live-failure hidden>Reload</aside>';
+        liveForm("one", "/items", "item-results");
+        liveForm("two", "/safety", "safety-results");
+        let resolve!: (module: {
+            islands: { cold: IslandInitialiser };
+        }) => void;
+        let reject!: (reason: Error) => void;
+        const loading = new Promise<{ islands: { cold: IslandInitialiser } }>(
+            (yes, no) => {
+                resolve = yes;
+                reject = no;
+            },
+        );
+        const mount = vi.fn();
+        const patches: AppliedLivePatchDetail[] = [];
+        stopListeners.push(
+            listenForLivePatches((detail) => patches.push(detail)),
+        );
+        cleanup = startHypergraft({
+            islands: defineIslandModules([
+                {
+                    names: ["editor"],
+                    module: {
+                        islandLoading: "eager",
+                        islands: {
+                            editor: (root) => ({
+                                destroy() {},
+                                reconcile(context) {
+                                    if (
+                                        context.cause === "live-patch" &&
+                                        context.detail.targetIds.includes(
+                                            "item-results",
+                                        ) &&
+                                        !root.firstElementChild
+                                    )
+                                        root.innerHTML =
+                                            '<div data-island="cold"></div>';
+                                },
+                            }),
+                        },
+                    },
+                },
+                { names: ["cold"], load: () => loading },
+            ]),
+        });
+        await vi.waitFor(() =>
+            expect(MockSocket.instances[0]?.sent).toHaveLength(2),
+        );
+        const socket = MockSocket.instances[0]!;
+        socket.receive(1, envelope("item-results", "Applied, not ready"));
+        expect(document.getElementById("item-results")!.textContent).toBe(
+            "Applied, not ready",
+        );
+        expect(patches).toEqual([]);
+        expect(
+            document
+                .querySelector("[data-graft-workspace]")!
+                .hasAttribute("inert"),
+        ).toBe(true);
+        socket.receive(1, envelope("item-results", "Retired frame"));
+        socket.receive(2, envelope("safety-results", "Independent"));
+        expect(patches.map((patch) => patch.url)).toEqual([
+            new URL("/safety", location.href).href,
+        ]);
+        if (ending === "terminal") socket.finishClose(LIVE_CLOSE.terminal);
+        if (ending === "failure") reject(new Error("Unavailable"));
+        else resolve({ islands: { cold: mount } });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (ending === "ready") {
+            socket.receive(3, envelope("item-results", "Fresh snapshot"));
+            expect(document.getElementById("item-results")!.textContent).toBe(
+                "Fresh snapshot",
+            );
+            expect(patches).toHaveLength(2);
+            expect(mount).toHaveBeenCalledOnce();
+            expect(
+                document
+                    .querySelector("[data-graft-workspace]")!
+                    .hasAttribute("inert"),
+            ).toBe(false);
+        } else {
+            expect(patches).toHaveLength(1);
+            expect(mount).not.toHaveBeenCalled();
+            expect(
+                document
+                    .querySelector("[data-graft-workspace]")!
+                    .hasAttribute("inert"),
+            ).toBe(true);
+            expect(
+                socket.sent
+                    .map((text) => JSON.parse(text))
+                    .filter(
+                        (message) =>
+                            message.type === "subscribe" &&
+                            message.url === "/items",
+                    ),
+            ).toHaveLength(1);
+            if (ending === "failure")
+                expect(
+                    document.querySelector<HTMLElement>(
+                        "[data-graft-workspace-live-failure]",
+                    )!.hidden,
+                ).toBe(false);
+        }
+    },
+);
+
+test.each([
+    { interruption: "command", operation: "children", dependency: "available" },
+    { interruption: "command", operation: "append", dependency: "available" },
+    { interruption: "query", operation: "append", dependency: "available" },
+    {
+        interruption: "command",
+        operation: "children",
+        dependency: "unavailable",
+    },
+])(
+    "cold recovery retains its snapshot requirement across a $interruption before $operation with code $dependency",
+    async ({ interruption, operation, dependency }) => {
+        document.body.innerHTML =
+            '<main data-graft-workspace inert></main><aside data-graft-workspace-live-failure hidden>Reload</aside><form id="save" data-graft method="post" action="/save"></form><aside id="result"></aside>';
+        const form = liveForm("one", "/items", "item-results");
+        form.setAttribute("data-graft-history", "none");
+        let resolve!: (module: {
+            islands: { cold: IslandInitialiser };
+        }) => void;
+        let reject!: (error: Error) => void;
+        const load = new Promise<{ islands: { cold: IslandInitialiser } }>(
+            (yes, no) => {
+                resolve = yes;
+                reject = no;
+            },
+        );
+        let respond!: (response: Response) => void;
+        vi.mocked(fetch).mockReturnValue(
+            new Promise((yes) => {
+                respond = yes;
+            }),
+        );
+        const mount = vi.fn();
+        cleanup = startHypergraft({
+            islands: defineIslandModules([
+                { names: ["cold"], load: () => load },
+            ]),
+        });
+        await vi.waitFor(() =>
+            expect(MockSocket.instances[0]?.sent).toHaveLength(1),
+        );
+        const old = MockSocket.instances[0]!;
+        old.receive(
+            1,
+            envelope("item-results", '<div data-island="cold">Discarded</div>'),
+        );
+        (interruption === "command"
+            ? (document.getElementById("save") as HTMLFormElement)
+            : form
+        ).requestSubmit();
+        if (dependency === "available") resolve({ islands: { cold: mount } });
+        else reject(new Error("late import failure"));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(mount).not.toHaveBeenCalled();
+        expect(MockSocket.instances).toHaveLength(1);
+        expect(
+            document.querySelector<HTMLElement>(
+                "[data-graft-workspace-live-failure]",
+            )!.hidden,
+        ).toBe(true);
+        respond(
+            new Response(envelope("result", "Saved"), {
+                headers: { "Content-Type": MEDIA_TYPE },
+            }),
+        );
+        await vi.waitFor(() =>
+            expect(MockSocket.instances[1]?.sent).toHaveLength(1),
+        );
+        const current = MockSocket.instances[1]!;
+        old.receive(1, envelope("item-results", "Late old response"));
+        expect(document.getElementById("item-results")!.textContent).toBe("");
+        current.receive(
+            1,
+            envelope(
+                "item-results",
+                '<div data-island="cold">Current</div>',
+            ).replace('operation="children"', `operation="${operation}"`),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const recovered =
+            operation === "children" && dependency === "available";
+        expect(document.getElementById("item-results")!.textContent).toBe(
+            recovered ? "Current" : "",
+        );
+        expect(mount).toHaveBeenCalledTimes(recovered ? 1 : 0);
+        expect(
+            document.querySelector<HTMLElement>(
+                "[data-graft-workspace-live-failure]",
+            )!.hidden,
+        ).toBe(recovered);
+    },
+);
+
+test("replacement during live reconciliation suppresses the retired patch event", async () => {
+    liveForm("one", "/items", "item-results");
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        '<div data-island="editor"></div>',
+    );
+    const patches: AppliedLivePatchDetail[] = [];
+    const listener = (event: Event) =>
+        patches.push((event as CustomEvent<AppliedLivePatchDetail>).detail);
+    addEventListener(LIVE_PATCH_EVENT, listener);
+    stopListeners.push(() => removeEventListener(LIVE_PATCH_EVENT, listener));
+    cleanup = startHypergraft({
+        islands: {
+            editor: () => ({
+                destroy() {},
+                reconcile() {
+                    cleanup = startHypergraft();
+                },
+            }),
+        },
+    });
+    await vi.waitFor(() =>
+        expect(MockSocket.instances[0]?.sent).toHaveLength(1),
+    );
+    MockSocket.instances[0]!.receive(
+        1,
+        envelope("item-results", "Old runtime"),
+    );
+    expect(patches).toEqual([]);
+    await vi.waitFor(() =>
+        expect(MockSocket.instances[1]?.sent).toHaveLength(1),
+    );
+    MockSocket.instances[1]!.receive(
+        1,
+        envelope("item-results", "Current runtime"),
+    );
+    expect(patches).toHaveLength(1);
+});
+
+test.each(["snapshot", "append", "failure", "terminal", "removed"] as const)(
+    "cold live dependencies keep independent projections responsive and recover through %s",
+    async (outcome) => {
+        document.body.innerHTML =
+            "<main data-graft-workspace inert></main><aside data-graft-workspace-live-failure hidden>Reload</aside>";
+        const form = liveForm("one", "/items", "item-results");
+        liveForm("two", "/safety", "safety-results");
+        let resolve!: (module: {
+            islands: { cold: IslandInitialiser };
+        }) => void;
+        let reject!: (reason: Error) => void;
+        const load = new Promise<{ islands: { cold: IslandInitialiser } }>(
+            (yes, no) => {
+                resolve = yes;
+                reject = no;
+            },
+        );
+        const mount = vi.fn();
+        cleanup = startHypergraft({
+            islands: defineIslandModules([
+                { names: ["cold"], load: () => load },
+            ]),
+        });
+        await vi.waitFor(() =>
+            expect(MockSocket.instances[0]?.sent).toHaveLength(2),
+        );
+        const socket = MockSocket.instances[0]!;
+        socket.receive(
+            1,
+            envelope("item-results", '<div data-island="cold">Obsolete</div>'),
+        );
+        expect(document.getElementById("item-results")!.textContent).toBe("");
+        expect(socket.sent.map((text) => JSON.parse(text))).toContainEqual({
+            v: "1",
+            type: "unsubscribe",
+            id: 1,
+        });
+        socket.receive(2, envelope("safety-results", "Safety update"));
+        expect(document.getElementById("safety-results")!.textContent).toBe(
+            "Safety update",
+        );
+        if (outcome === "terminal") socket.finishClose(LIVE_CLOSE.terminal);
+        if (outcome === "removed") {
+            form.remove();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        if (outcome === "failure") reject(new Error("unavailable"));
+        else resolve({ islands: { cold: mount } });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        socket.receive(
+            1,
+            envelope(
+                "item-results",
+                '<div data-island="cold">Late old response</div>',
+            ),
+        );
+        expect(document.getElementById("item-results")!.textContent).toBe("");
+        if (outcome === "snapshot" || outcome === "append") {
+            const subscriptions = socket.sent
+                .map((text) => JSON.parse(text))
+                .filter(
+                    (message) =>
+                        message.type === "subscribe" &&
+                        message.url === "/items",
+                );
+            expect(subscriptions).toHaveLength(2);
+            const fresh = subscriptions[1]!.id as number;
+            expect(fresh).not.toBe(1);
+            let response = envelope(
+                "item-results",
+                '<div data-island="cold">Current snapshot</div>',
+            );
+            if (outcome === "append")
+                response = response.replace(
+                    'operation="children"',
+                    'operation="append"',
+                );
+            socket.receive(fresh, response);
+            expect(mount).toHaveBeenCalledTimes(outcome === "snapshot" ? 1 : 0);
+            expect(document.getElementById("item-results")!.textContent).toBe(
+                outcome === "snapshot" ? "Current snapshot" : "",
+            );
+        } else {
+            expect(mount).not.toHaveBeenCalled();
+            expect(
+                socket.sent
+                    .map((text) => JSON.parse(text))
+                    .filter(
+                        (message) =>
+                            message.type === "subscribe" &&
+                            message.url === "/items",
+                    ),
+            ).toHaveLength(1);
+        }
+        if (outcome === "failure" || outcome === "append") {
+            expect(
+                document.querySelector<HTMLElement>(
+                    "[data-graft-workspace-live-failure]",
+                )!.hidden,
+            ).toBe(false);
+            const command = document.createElement("form");
+            command.setAttribute("data-graft", "");
+            command.method = "post";
+            command.action = "/save";
+            document.body.append(command);
+            vi.mocked(fetch).mockImplementation(
+                async () =>
+                    new Response(envelope("safety-results", "Saved"), {
+                        headers: { "Content-Type": MEDIA_TYPE },
+                    }),
+            );
+            command.requestSubmit();
+            await vi.waitFor(() =>
+                expect(
+                    MockSocket.instances
+                        .at(-1)
+                        ?.sent.some(
+                            (text) =>
+                                JSON.parse(text).type === "subscribe" &&
+                                JSON.parse(text).url === "/safety",
+                        ),
+                ).toBe(true),
+            );
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(
+                MockSocket.instances
+                    .flatMap((socket) => socket.sent)
+                    .map((text) => JSON.parse(text))
+                    .filter(
+                        (message) =>
+                            message.type === "subscribe" &&
+                            message.url === "/items",
+                    ),
+            ).toHaveLength(outcome === "append" ? 2 : 1);
+            const link = document.createElement("a");
+            link.setAttribute("data-graft", "");
+            link.href = "/next";
+            document.body.append(link);
+            const sockets = MockSocket.instances.length;
+            link.click();
+            await vi.waitFor(() =>
+                expect(MockSocket.instances).toHaveLength(sockets + 1),
+            );
+            expect(
+                document.querySelector<HTMLElement>(
+                    "[data-graft-workspace-live-failure]",
+                )!.hidden,
+            ).toBe(false);
+        }
+    },
+);

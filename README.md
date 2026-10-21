@@ -58,6 +58,7 @@ The example README has longer walkthroughs:
 - [Protocol version 1](docs/protocol-v1.md) and [`protocol-v1.json`](protocol-v1.json)
 - [Host integration](docs/host-integration.md)
 - [Browser runtime](docs/browser-runtime.md)
+- [Required island modules](docs/required-islands.md): automatic Vite discovery, workspace readiness and dependency loading.
 - [Live](docs/live.md)
 - [Security](docs/security.md)
 - [Compatibility](docs/compatibility.md)

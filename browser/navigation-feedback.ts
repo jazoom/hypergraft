@@ -21,6 +21,10 @@ export function bindNavigationRecovery(root: ParentNode): () => void {
     const message = slot("[data-graft-navigation-message]", HTMLElement);
     const status = slot("[data-graft-navigation-status]", HTMLElement);
     const retry = slot("[data-graft-navigation-retry]", HTMLAnchorElement);
+    const documentLink = slot(
+        "[data-graft-navigation-document]",
+        HTMLAnchorElement,
+    );
     const dismiss = slot("[data-graft-navigation-dismiss]", HTMLButtonElement);
     if (
         !failure ||
@@ -76,6 +80,7 @@ export function bindNavigationRecovery(root: ParentNode): () => void {
         if (detail.state === "failed" && detail.recovery === "retry") {
             failed = detail;
             retry.href = detail.url;
+            if (documentLink) documentLink.href = detail.url;
             failure.hidden = false;
             status.textContent = message.textContent?.trim() ?? "";
         }

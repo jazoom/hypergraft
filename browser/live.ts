@@ -4,6 +4,7 @@ import type { EnterEffects } from "./enter-effects";
 import {
     emitLivePatch,
     emitLiveStateChange,
+    type AppliedLivePatchDetail,
     type LiveCloseClassification,
     type LiveStateChangeDetail,
 } from "./events";
@@ -47,6 +48,12 @@ type Subscription = {
     url: string;
     targets: string[];
 };
+type ColdSubscription = {
+    url: string;
+    state: "loading" | "snapshot" | "unavailable";
+    targets: string[];
+    controller: AbortController;
+};
 
 export type LiveController = {
     reconcile(): void;
@@ -62,6 +69,17 @@ export type LiveControllerOptions = {
     disposed: () => boolean;
     validateContent?: ValidateContent;
     enterEffects?: EnterEffects;
+    prepareDependencies?: (
+        batch: PreparedBatch,
+        signal: AbortSignal,
+    ) => Promise<void> | undefined;
+    beforeApply?: (batch: PreparedBatch) => (applied: boolean) => void;
+    applyIslands?: (
+        batch: PreparedBatch,
+        detail: AppliedLivePatchDetail,
+        signal: AbortSignal,
+    ) => Promise<void> | undefined;
+    projectionUnavailable?: () => void;
     invalidatePrefetch?: (terminal: boolean, preserve?: () => boolean) => void;
 };
 
@@ -233,6 +251,24 @@ export function createLiveController(
     const byId = new Map<number, Subscription>();
     // Retirement must not retain detached forms after request cancellation.
     let retiredForms = new WeakMap<HTMLFormElement, number>();
+    const coldForms = new Map<HTMLFormElement, ColdSubscription>();
+    const clearCold = (form?: HTMLFormElement) => {
+        for (const [key, waiting] of coldForms)
+            if (!form || key === form) {
+                coldForms.delete(key);
+                waiting.controller.abort();
+            }
+    };
+
+    const pauseCold = (form?: HTMLFormElement) => {
+        for (const [key, waiting] of coldForms)
+            if ((!form || key === form) && waiting.state === "loading") {
+                waiting.controller.abort();
+                // Retire the wait, not the missing snapshot. The next response
+                // must cover lost targets and prepare any still-cold modules again.
+                waiting.state = "snapshot";
+            }
+    };
 
     const clearRetry = () => {
         if (retryTimer !== undefined) clearTimeout(retryTimer);
@@ -280,6 +316,7 @@ export function createLiveController(
     ) => {
         if (published && mode === next) return;
         mode = next;
+        if (next === "stopped") clearCold();
         published = true;
         if (next === "stopped" || next === "reconnecting")
             options.invalidatePrefetch?.(next === "stopped");
@@ -405,6 +442,98 @@ export function createLiveController(
         return false;
     };
 
+    const failRecovery = (sub: Subscription) => {
+        const recovering = coldForms.get(sub.form);
+        if (recovering) {
+            recovering.state = "unavailable";
+            recovering.controller.abort();
+        }
+        unsubscribe(sub.form, true);
+        if (recovering) options.projectionUnavailable?.();
+    };
+
+    const retireForDependencies = (
+        sub: Subscription,
+        batch: PreparedBatch,
+        loading: Promise<void>,
+        controller: AbortController,
+        release?: (applied: boolean) => void,
+    ) => {
+        const finish = (applied: boolean) => {
+            const callback = release;
+            release = undefined;
+            controller.signal.removeEventListener("abort", abort);
+            callback?.(applied);
+        };
+        const abort = () => finish(false);
+        controller.signal.addEventListener("abort", abort, { once: true });
+        if (options.disposed() || controller.signal.aborted) {
+            finish(false);
+            void loading.catch(() => {});
+            return;
+        }
+        if (
+            !coldForms.has(sub.form) &&
+            coldForms.size >= MAX_LIVE_SUBSCRIPTIONS
+        ) {
+            controller.abort();
+            void loading.catch(() => {});
+            retiredForms.set(sub.form, 0);
+            unsubscribe(sub.form, true);
+            options.projectionUnavailable?.();
+            return;
+        }
+        options.invalidatePrefetch?.(false);
+        const waiting: ColdSubscription = {
+            url: sub.url,
+            state: "loading",
+            controller,
+            targets: [
+                ...new Set([
+                    ...sub.targets,
+                    ...batch.patches.map((patch) => patch.targetId),
+                ]),
+            ],
+        };
+        coldForms.set(sub.form, waiting);
+        unsubscribe(sub.form, true);
+        emitDiagnostic({
+            reason: "transport",
+            requestKind: "patch",
+            unsafe: false,
+            url: new URL(sub.url, location.href).href,
+            element: sub.form,
+        });
+        const current = () =>
+            !options.disposed() &&
+            mode !== "stopped" &&
+            !controller.signal.aborted &&
+            coldForms.get(sub.form) === waiting &&
+            sub.form.isConnected;
+        // Never announce the retired frame. Even a lifecycle-created dependency
+        // requires a fresh identity and a covering snapshot before live completion.
+        void loading.then(
+            () => {
+                const url = current() ? liveFormUrl(sub.form) : undefined;
+                finish(!!url && localUrl(url) === waiting.url);
+                if (!current()) return;
+                if (!url || localUrl(url) !== waiting.url) {
+                    clearCold(sub.form);
+                    reconcile();
+                    return;
+                }
+                waiting.state = "snapshot";
+                reconcile();
+            },
+            () => {
+                finish(false);
+                if (!current()) return;
+                waiting.state = "unavailable";
+                options.projectionUnavailable?.();
+            },
+        );
+    };
+
     const handlePatch = (sub: Subscription, text: string) => {
         // A host validator can synchronously start navigation or change the content.
         if (options.validateContent) options.invalidatePrefetch?.(false);
@@ -432,7 +561,58 @@ export function createLiveController(
                         ? error.targetId
                         : undefined,
             });
+            failRecovery(sub);
+            return;
+        }
+        if (options.disposed() || byId.get(sub.id) !== sub || mode !== "open")
+            return;
+        const recovering = coldForms.get(sub.form);
+        if (
+            recovering &&
+            !recovering.targets.every((id) =>
+                batch.patches.some(
+                    (patch) =>
+                        patch.targetId === id && patch.operation === "children",
+                ),
+            )
+        ) {
+            emitDiagnostic({
+                reason: "target-content",
+                requestKind: "patch",
+                unsafe: false,
+                url: new URL(sub.url, location.href).href,
+                element: sub.form,
+            });
+            failRecovery(sub);
+            return;
+        }
+        const controller = new AbortController();
+        try {
+            const loading = options.prepareDependencies?.(
+                batch,
+                controller.signal,
+            );
+            if (loading) {
+                retireForDependencies(sub, batch, loading, controller);
+                return;
+            }
+        } catch {
+            options.invalidatePrefetch?.(false);
+            emitDiagnostic({
+                reason: "target-content",
+                requestKind: "patch",
+                unsafe: false,
+                url: new URL(sub.url, location.href).href,
+                element: sub.form,
+            });
+            coldForms.set(sub.form, {
+                url: sub.url,
+                state: "unavailable",
+                targets: [],
+                controller,
+            });
             unsubscribe(sub.form, true);
+            options.projectionUnavailable?.();
             return;
         }
         for (const patch of batch.patches) {
@@ -446,13 +626,46 @@ export function createLiveController(
                     element: sub.form,
                     targetId: patch.targetId,
                 });
-                unsubscribe(sub.form, true);
+                failRecovery(sub);
                 return;
             }
         }
+        const targetIds = batch.patches.map((patch) => patch.targetId);
+        const detail = {
+            form: sub.form,
+            url: new URL(sub.url, location.href).href,
+            targetIds,
+        };
+        let release: ((applied: boolean) => void) | undefined;
+        let applied = false;
         try {
+            release = options.beforeApply?.(batch);
             apply(batch, undefined, options.enterEffects);
+            const loading = options.applyIslands?.(
+                batch,
+                detail,
+                controller.signal,
+            );
+            if (loading) {
+                const complete = release;
+                release = undefined;
+                retireForDependencies(
+                    sub,
+                    batch,
+                    loading,
+                    controller,
+                    complete,
+                );
+                return;
+            }
+            applied = true;
         } catch (error) {
+            if (
+                options.disposed() ||
+                byId.get(sub.id) !== sub ||
+                mode !== "open"
+            )
+                return;
             options.invalidatePrefetch?.(false);
             emitDiagnostic({
                 reason: "apply-failure",
@@ -461,11 +674,15 @@ export function createLiveController(
                 url: new URL(sub.url, location.href).href,
                 element: sub.form,
             });
-            unsubscribe(sub.form, true);
+            failRecovery(sub);
             return;
+        } finally {
+            release?.(applied);
         }
+        if (options.disposed() || byId.get(sub.id) !== sub || mode !== "open")
+            return;
         retryAttempt = 0;
-        const targetIds = batch.patches.map((patch) => patch.targetId);
+        coldForms.delete(sub.form);
         for (const targetId of targetIds)
             if (!sub.targets.includes(targetId)) sub.targets.push(targetId);
         emitLivePatch({
@@ -602,6 +819,7 @@ export function createLiveController(
             ),
         ];
         const valid: HTMLFormElement[] = [];
+        let admitted = 0;
         for (const form of found) {
             if (
                 retiredForms.has(form) ||
@@ -620,7 +838,8 @@ export function createLiveController(
                 });
                 continue;
             }
-            if (valid.length >= MAX_LIVE_SUBSCRIPTIONS) {
+            if (admitted >= MAX_LIVE_SUBSCRIPTIONS) {
+                clearCold(form);
                 emitDiagnostic({
                     reason: "invalid-live-form",
                     requestKind: "patch",
@@ -630,12 +849,23 @@ export function createLiveController(
                 });
                 continue;
             }
+            admitted += 1;
+            const cold = coldForms.get(form);
+            if (cold && cold.state !== "snapshot") continue;
             valid.push(form);
         }
         return valid;
     };
 
     const reconcile = () => {
+        for (const [form, waiting] of coldForms) {
+            const url =
+                form.isConnected &&
+                form.matches("form[data-graft][data-graft-live]")
+                    ? liveFormUrl(form)
+                    : undefined;
+            if (!url || localUrl(url) !== waiting.url) clearCold(form);
+        }
         if (options.disposed() || mode === "stopped" || mode === "suspended")
             return;
         const desired = discover();
@@ -707,6 +937,7 @@ export function createLiveController(
     return {
         reconcile,
         retireForm(form, sequence) {
+            pauseCold(form);
             retiredForms.set(form, sequence);
             unsubscribe(form, true);
             if (subs.size === 0 && mode !== "suspended" && mode !== "stopped") {
@@ -723,6 +954,7 @@ export function createLiveController(
         suspend() {
             if (mode === "stopped" || mode === "suspended") return;
             clearRetry();
+            pauseCold();
             abandonSocket();
             announce("suspended");
         },
@@ -731,6 +963,12 @@ export function createLiveController(
             announce("idle");
             retryAttempt = 0;
             reconcile();
+            if (
+                [...coldForms.values()].some(
+                    (cold) => cold.state === "unavailable",
+                )
+            )
+                options.projectionUnavailable?.();
         },
         stop() {
             if (mode !== "stopped" || !published) announce("stopped");

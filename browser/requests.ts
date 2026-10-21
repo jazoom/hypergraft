@@ -16,10 +16,11 @@ import {
     type RequestSettledDetail,
 } from "./events";
 import {
-    observeIslands,
+    createIslandObserver,
+    type IslandController,
+    type IslandReconcileContext,
     type IslandDefinition,
     type IslandErrorReporter,
-    type IslandObserver,
     type IslandRegistry,
 } from "./islands";
 import {
@@ -29,6 +30,7 @@ import {
     preflight,
     preflightFrame,
     transferKind,
+    revalidateBatch,
     type PreparedBatch,
     type PreparedResponse,
     type ValidateContent,
@@ -54,6 +56,36 @@ import {
     DEFAULT_LIVE_ENDPOINT,
     type LiveController,
 } from "./live";
+
+import {
+    createRequiredIslands,
+    isRequiredRegistry,
+    type RequiredIslandRegistry,
+    type RequiredIslands,
+} from "./required-islands";
+
+function reconcileIslands(
+    runtime: Runtime,
+    context: IslandReconcileContext,
+    owner: unknown,
+    signal: AbortSignal = runtime.islandLifetime.signal,
+): Promise<void> | undefined {
+    if (runtime.required)
+        return runtime.required.finish(context, owner, signal);
+    else {
+        if (
+            context.cause !== "patch" ||
+            context.detail.outcome === "applied-patch"
+        )
+            runtime.islands?.scan(document);
+        runtime.islands?.reconcile(context);
+    }
+}
+
+function mountIslands(runtime: Runtime, owner: unknown, signal: AbortSignal) {
+    if (runtime.required) return runtime.required.mounted(owner, signal);
+    else runtime.islands?.scan(document);
+}
 
 type Lane = {
     controller?: AbortController;
@@ -90,11 +122,13 @@ type Runtime = {
     navigationPending: boolean;
     navigation?: NavigationRequest;
     navigationMutated: boolean;
+    navigationCommitted: boolean;
     documentUrl: string;
     queuedHistoryUrl: URL | undefined;
     detachListeners: () => void;
     islandLifetime: AbortController;
-    islands?: IslandObserver;
+    islands?: IslandController;
+    required?: RequiredIslands;
     live: LiveController;
     enterEffects?: EnterEffects;
     prefetch?: Prefetch;
@@ -125,7 +159,7 @@ export interface TransportFeedback {
 export interface HypergraftOptions {
     validateContent?: ValidateContent;
     feedback?: TransportFeedback;
-    islands?: IslandRegistry<IslandDefinition>;
+    islands?: IslandRegistry<IslandDefinition> | RequiredIslandRegistry;
     onIslandError?: IslandErrorReporter;
     liveEndpoint?: string;
     enterEffects?: Record<string, EnterEffect>;
@@ -300,7 +334,12 @@ async function consumeEnhanced(
     pending?: PendingSession,
     beforeApply?: () => boolean,
     prefetchedText?: string,
+    signal: AbortSignal = runtime.islandLifetime.signal,
+    navigationApplied?: () => void,
 ): Promise<ConsumeOutcome> {
+    const owner = pending ?? runtime.navigationLane;
+    const prepareDependencies = (batch: PreparedBatch) =>
+        runtime.required?.prepareBatch(batch, signal);
     const consumeOwned =
         pending &&
         ((element: Element, source: Element) =>
@@ -336,16 +375,53 @@ async function consumeEnhanced(
                 ),
                 response.status,
             );
-        if (beforeApply && !beforeApply()) return { kind: "stale" };
+        try {
+            // Only complete page navigation commits before its required code.
+            const waiting = navigationApplied
+                ? undefined
+                : prepareDependencies(prepared.batch);
+            if (waiting) {
+                await waiting;
+                if (isStale()) return { kind: "stale" };
+                revalidateBatch(prepared.batch);
+            }
+            if (isStale() || (beforeApply && !beforeApply()))
+                return { kind: "stale" };
+            if (runtime.required && beforeApply)
+                revalidateBatch(prepared.batch);
+        } catch (error) {
+            throw tagStatus(error, response.status);
+        }
         runtime.patchedPointer = runtime.pointerPosition;
         try {
+            runtime.required?.begin(prepared.batch, owner);
             apply(
                 prepared.batch,
                 consumeOwned,
                 runtime.enterEffects,
                 requestKind === "patch",
             );
+            if (isStale()) return { kind: "stale" };
+            navigationApplied?.();
+            if (isStale()) return { kind: "stale" };
+            if (navigationApplied && runtime.required) {
+                runtime.required.navigationCommitted(owner);
+                if (isStale()) return { kind: "stale" };
+                // Mount current roots, not the detached snapshot. Client code may
+                // insert or remove roots while an import is in flight.
+                let waiting: Promise<void> | undefined;
+                while (
+                    (waiting = runtime.required.prepare([document], signal))
+                ) {
+                    await waiting;
+                    if (isStale()) return { kind: "stale" };
+                }
+            }
+            const mounting = mountIslands(runtime, owner, signal);
+            if (mounting) await mounting;
         } catch (error) {
+            if (isStale()) return { kind: "stale" };
+            runtime.required?.fail();
             throw tagStatus(
                 new HypergraftError("apply-failure", errorMessage(error)),
                 response.status,
@@ -376,6 +452,7 @@ async function consumeEnhanced(
     let sawFinal = false;
     let settlement: AppliedSettlement | undefined;
     let frame = 0;
+    let mutated = false;
     try {
         for await (const text of readStreamFrames(response)) {
             if (isStale()) return { kind: "stale" };
@@ -386,19 +463,32 @@ async function consumeEnhanced(
                 document,
                 runtime.options.validateContent,
             );
+            const waiting = prepareDependencies(prepared.batch);
+            if (waiting) {
+                await waiting;
+                if (isStale()) return { kind: "stale" };
+                revalidateBatch(prepared.batch);
+            }
             if (isStale() || (beforeApply && !beforeApply()))
                 return { kind: "stale" };
+            if (runtime.required && beforeApply)
+                revalidateBatch(prepared.batch);
             runtime.patchedPointer = runtime.pointerPosition;
             try {
+                runtime.required?.begin(prepared.batch, owner);
+                mutated = true;
                 apply(
                     prepared.batch,
                     consumeOwned,
                     runtime.enterEffects,
                     requestKind === "patch",
                 );
+                const mounting = mountIslands(runtime, owner, signal);
+                if (mounting) await mounting;
             } catch (error) {
                 throw new HypergraftError("apply-failure", errorMessage(error));
             }
+            if (isStale()) return { kind: "stale" };
             frame += 1;
             if (prepared.phase === "progress") {
                 pending?.retainTransport();
@@ -415,11 +505,14 @@ async function consumeEnhanced(
             };
         }
     } catch (error) {
+        if (mutated && !isStale()) runtime.required?.fail();
         throw error;
     }
     if (isStale()) return { kind: "stale" };
-    if (!sawFinal || !settlement)
+    if (!sawFinal || !settlement) {
+        if (mutated) runtime.required?.fail();
         throw new HypergraftError("protocol", "incomplete stream");
+    }
     return { kind: "applied", settlement };
 }
 
@@ -509,6 +602,7 @@ async function safeRequest(
     pending?: PendingSession,
     beforeApply?: () => boolean,
     speculative?: Promise<NavigationResponse | undefined>,
+    navigationApplied?: (url: string) => void,
 ): Promise<SafeOutcome> {
     let response: Response;
     let prefetchedText: string | undefined;
@@ -579,6 +673,9 @@ async function safeRequest(
         pending,
         beforeApply,
         prefetchedText,
+        lane.controller?.signal,
+        navigationApplied &&
+            (() => navigationApplied(response.url || url.href)),
     );
     if (consumed.kind === "stale") return { kind: "stale" };
     if (consumed.kind === "navigation") {
@@ -661,7 +758,14 @@ export function cancelNavigation(requestId: number): boolean {
         return false;
     ++runtime.navigationLane.sequence;
     runtime.navigationLane.controller?.abort();
-    if (
+    if (runtime.navigationCommitted) {
+        runtime.required?.abandon(runtime.navigationLane);
+        endNavigation(runtime, {
+            ...navigation,
+            state: "cancelled",
+            reason: "aborted",
+        });
+    } else if (
         navigation.cause === "history-traversal" ||
         runtime.navigationMutated ||
         !documentMatchesLocation(runtime.documentUrl)
@@ -696,7 +800,11 @@ async function navigate(
         return;
     if (mode === "push" && runtime.navigation?.url === url.href) return;
     // A partially applied stream requires a document, not another patch.
-    if (runtime.navigation && runtime.navigationMutated) {
+    if (
+        runtime.navigation &&
+        runtime.navigationMutated &&
+        !runtime.navigationCommitted
+    ) {
         ++runtime.navigationLane.sequence;
         runtime.navigationLane.controller?.abort();
         handOffNavigation(runtime, runtime.navigation, url.href);
@@ -706,6 +814,8 @@ async function navigate(
     const isStale = () =>
         runtime.disposed || sequence !== runtime.navigationLane.sequence;
     runtime.navigationLane.controller?.abort();
+    if (runtime.navigationCommitted)
+        runtime.required?.abandon(runtime.navigationLane);
     runtime.navigationLane.controller = new AbortController();
     if (runtime.navigation)
         endNavigation(runtime, {
@@ -716,6 +826,7 @@ async function navigate(
     if (isStale()) return;
     runtime.navigationPending = true;
     runtime.navigationMutated = false;
+    runtime.navigationCommitted = false;
     const navigation: NavigationRequest = {
         requestId: ++nextNavigationId,
         url: url.href,
@@ -738,6 +849,13 @@ async function navigate(
     cancelActiveSafeForms(runtime);
     if (isStale()) return;
     const responseUrl: { current?: string } = {};
+    const commitLocation = (destination: string, complete = true) => {
+        if (mode === "push")
+            history.pushState({ hypergraft: true }, "", destination);
+        runtime.documentUrl = location.href;
+        runtime.navigationCommitted = complete;
+        runtime.scroll?.committed();
+    };
     try {
         const result = await safeRequest(
             runtime,
@@ -763,6 +881,7 @@ async function navigate(
                 return true;
             },
             speculative,
+            commitLocation,
         );
         if (
             runtime.disposed ||
@@ -774,13 +893,28 @@ async function navigate(
             handOffNavigation(runtime, navigation, result.destination);
             return;
         }
-        if (mode === "push")
-            history.pushState({ hypergraft: true }, "", result.url);
-        runtime.documentUrl = location.href;
-        emitLocationChange({
+        if (!runtime.navigationCommitted) {
+            commitLocation(result.url, false);
+            runtime.required?.navigationCommitted(runtime.navigationLane);
+        }
+        const locationDetail = {
             url: location.href,
-            cause: mode === "pop" ? "history-traversal" : "link-navigation",
-        });
+            cause:
+                mode === "pop"
+                    ? ("history-traversal" as const)
+                    : ("link-navigation" as const),
+        };
+        const reconciling = reconcileIslands(
+            runtime,
+            { cause: "location", detail: locationDetail },
+            runtime.navigationLane,
+            runtime.navigationLane.controller!.signal,
+        );
+        if (reconciling) await reconciling;
+        if (isStale()) return;
+        runtime.required?.end(runtime.navigationLane);
+        if (isStale()) return;
+        emitLocationChange(locationDetail);
         if (isStale()) return;
         // A successful page replacement is authoritative for the whole
         // page; failures whose forms disappeared must not survive it.
@@ -817,7 +951,10 @@ async function navigate(
             state: "failed",
             recovery: recoverable ? "retry" : "document",
         };
-        if (recoverable) endNavigation(runtime, failure);
+        const workspaceRecovery =
+            runtime.navigationCommitted && !!runtime.required;
+        if (workspaceRecovery) runtime.required!.fail();
+        if (recoverable || workspaceRecovery) endNavigation(runtime, failure);
         else emitNavigation(failure);
         if (isStale()) return;
         emitDiagnostic({
@@ -830,7 +967,10 @@ async function navigate(
         });
         if (isStale()) return;
         if (recoverable) resumeAfterNavigation(runtime);
-        else handOffNavigation(runtime, navigation, url.href);
+        else if (!workspaceRecovery)
+            handOffNavigation(runtime, navigation, url.href);
+    } finally {
+        if (!isStale()) runtime.required?.end(runtime.navigationLane);
     }
 }
 
@@ -906,7 +1046,12 @@ async function submitSafe(
     form: HTMLFormElement,
     submitter?: HTMLElement | null,
 ) {
-    if (runtime.disposed || !form.isConnected) return;
+    if (
+        runtime.disposed ||
+        !form.isConnected ||
+        runtime.required?.blocked(form)
+    )
+        return;
     if (documentUnsafe.kind !== "idle" || runtime.navigationPending) {
         return;
     }
@@ -946,6 +1091,7 @@ async function submitSafe(
     };
     lane.cancelPending = () => {
         pending.restore();
+        runtime.required?.abandon(pending);
         finishQuery();
         runtime.live.restoreForm(form, sequence);
     };
@@ -956,6 +1102,8 @@ async function submitSafe(
     // records only the outcome and the status of a received unparseable
     // response. Superseded requests and navigation hand-offs emit nothing.
     let settlement: Settlement | undefined;
+    let changedLocation:
+        { url: string; cause: "get-form-replacement" } | undefined;
     try {
         emitQueryPending({ requestId, form, pending: true });
         if (isStale()) return;
@@ -984,10 +1132,18 @@ async function submitSafe(
                     result.url,
                 );
                 runtime.documentUrl = location.href;
-                emitLocationChange({
+                pending.restore();
+                changedLocation = {
                     url: location.href,
                     cause: "get-form-replacement",
-                });
+                };
+                const reconciling = reconcileIslands(
+                    runtime,
+                    { cause: "location", detail: changedLocation },
+                    pending,
+                    lane.controller!.signal,
+                );
+                if (reconciling) await reconciling;
             }
         }
     } catch (error) {
@@ -1015,20 +1171,52 @@ async function submitSafe(
         // An older request for this form must not clear the replacement's
         // active-lane registration or pending-state cleanup callback.
         if (!runtime.disposed && sequence === lane.sequence) {
-            runtime.activeSafeFormLanes.delete(lane);
-            lane.cancelPending = undefined;
             // Cancellation and handoff also end the temporary form state.
             pending.restore();
+            const endPending = () => {
+                if (isStale()) return;
+                runtime.activeSafeFormLanes.delete(lane);
+                lane.cancelPending = undefined;
+                runtime.required?.end(pending);
+            };
             if (settlement) {
-                emitRequestSettled({
+                let detail: RequestSettledDetail = {
                     requestKind: "patch",
                     form,
                     url: responseUrl.current ?? url.href,
                     ...settlement,
-                });
-            }
-            runtime.live.restoreForm(form, sequence);
+                };
+                try {
+                    const reconciling = reconcileIslands(
+                        runtime,
+                        { cause: "patch", detail },
+                        pending,
+                        lane.controller!.signal,
+                    );
+                    if (reconciling) await reconciling;
+                } catch {
+                    if (!isStale()) {
+                        showError(runtime, lane, form);
+                        detail = {
+                            requestKind: "patch",
+                            form,
+                            url: detail.url,
+                            outcome: "safe-failure",
+                        };
+                    }
+                }
+                endPending();
+                if (
+                    !isStale() &&
+                    detail.outcome === "applied-patch" &&
+                    changedLocation
+                )
+                    emitLocationChange(changedLocation);
+                if (!isStale()) emitRequestSettled(detail);
+            } else endPending();
+            if (!isStale()) runtime.live.restoreForm(form, sequence);
         }
+        if (isStale()) runtime.required?.abandon(pending);
         finishQuery();
     }
 }
@@ -1191,20 +1379,69 @@ async function submitUnsafe(
         return;
     }
     const pending = pendingState(form, prepared.submitter);
-    const outcome = await unsafeRequest(runtime, form, prepared, pending);
-    if (runtime.disposed) {
+    const reloadIfDisposed = () => {
+        if (!runtime.disposed) return false;
         pending.restore();
-        // The command may have reached the server, but a disposed runtime
-        // cannot apply or report its response. Reload authoritative state
-        // rather than leaving a replacement runtime silently locked.
+        // Replacement during response handling or reconciliation cannot settle
+        // the old command. Keep its lock until an authoritative document loads.
         documentUnsafe = { kind: "uncertain", form };
         location.reload();
-        return;
-    }
+        return true;
+    };
+    let outcome = await unsafeRequest(runtime, form, prepared, pending);
+    if (reloadIfDisposed()) return;
     if (outcome.kind === "handed-off") {
         pending.restore();
         return;
     }
+    let changedLocation:
+        { url: string; cause: "command-patch-replacement" } | undefined;
+    if (outcome.kind === "applied") {
+        pending.restore();
+        try {
+            if (outcome.replaceLocation && !runtime.queuedHistoryUrl) {
+                history.replaceState(
+                    { ...(history.state ?? {}), hypergraft: true },
+                    "",
+                    outcome.replaceLocation,
+                );
+                runtime.documentUrl = location.href;
+                changedLocation = {
+                    url: location.href,
+                    cause: "command-patch-replacement",
+                };
+                const reconciling = reconcileIslands(
+                    runtime,
+                    { cause: "location", detail: changedLocation },
+                    pending,
+                );
+                if (reconciling) await reconciling;
+                if (reloadIfDisposed()) return;
+            }
+            const reconciling = reconcileIslands(
+                runtime,
+                {
+                    cause: "patch",
+                    detail: {
+                        requestKind: "patch",
+                        form,
+                        url: outcome.url,
+                        ...outcome.settlement,
+                    },
+                },
+                pending,
+            );
+            if (reconciling) await reconciling;
+        } catch {
+            outcome = {
+                kind: "uncertain",
+                url: outcome.url,
+                settlement: uncertainSettlement(outcome.settlement.status),
+                reason: "apply-failure",
+            };
+        }
+    }
+    if (reloadIfDisposed()) return;
     if (outcome.kind === "uncertain") {
         documentUnsafe = { kind: "uncertain", form };
         form.setAttribute("data-graft-uncertain", "");
@@ -1221,23 +1458,28 @@ async function submitUnsafe(
         });
         showUncertain(runtime);
     } else {
-        // Known patches release the global lane before pending state is
-        // restored, as both facts must be final before settlement.
         documentUnsafe = { kind: "idle" };
-        if (outcome.replaceLocation && !runtime.queuedHistoryUrl) {
-            history.replaceState(
-                { ...(history.state ?? {}), hypergraft: true },
-                "",
-                outcome.replaceLocation,
-            );
-            runtime.documentUrl = location.href;
-            emitLocationChange({
-                url: location.href,
-                cause: "command-patch-replacement",
-            });
-        }
-        pending.restore();
     }
+    if (runtime.disposed) return;
+    runtime.required?.end(pending);
+    if (runtime.disposed) return;
+    if (outcome.kind === "applied" && changedLocation)
+        emitLocationChange(changedLocation);
+    if (runtime.disposed) return;
+    if (outcome.kind === "uncertain")
+        (runtime.required
+            ? runtime.required.notifyFailure
+            : (context: IslandReconcileContext) =>
+                  reconcileIslands(runtime, context, pending))({
+            cause: "patch",
+            detail: {
+                requestKind: "patch",
+                form,
+                url: outcome.url,
+                ...outcome.settlement,
+            },
+        });
+    if (runtime.disposed) return;
     emitRequestSettled({
         requestKind: "patch",
         form,
@@ -1311,7 +1553,15 @@ function handleLiveEvent(runtime: Runtime, event: Event) {
         cancelEditedQuery(runtime, event);
     if (runtime.disposed || !control || !matchesTrigger || runtime.composing)
         return;
-    const form = control.closest("form[data-graft]") as HTMLFormElement | null;
+    const associated =
+        control instanceof HTMLInputElement ||
+        control instanceof HTMLSelectElement ||
+        control instanceof HTMLTextAreaElement ||
+        control instanceof HTMLButtonElement
+            ? control.form
+            : control.closest("form");
+    const form = associated?.matches("form[data-graft]") ? associated : null;
+    if (form && runtime.required?.blocked(form)) return;
     const delayText = control.dataset.graftDebounce ?? "0";
     const hasReference = control.hasAttribute("data-graft-submit-with");
     const submitter =
@@ -1355,9 +1605,14 @@ function handleLiveEvent(runtime: Runtime, event: Event) {
 
 function disposeRuntime(runtime: Runtime, replacement: boolean) {
     if (runtime.disposed || runtime.islandLifetime.signal.aborted) return;
-    const partialNavigation = !!runtime.navigation && runtime.navigationMutated;
+    const partialNavigation =
+        !!runtime.navigation &&
+        runtime.navigationMutated &&
+        !runtime.navigationCommitted;
     const handoffPending = runtime.navigationPending && !runtime.navigation;
-    const historyPending = runtime.navigation?.cause === "history-traversal";
+    const historyPending =
+        runtime.navigation?.cause === "history-traversal" &&
+        !runtime.navigationCommitted;
     // Abort first so island cleanup cannot enter teardown a second time.
     runtime.islandLifetime.abort();
     runtime.islands = undefined;
@@ -1414,6 +1669,7 @@ function createRuntime(
         navigationPending:
             departurePending || !documentMatchesLocation(documentUrl),
         navigationMutated: false,
+        navigationCommitted: false,
         documentUrl,
         queuedHistoryUrl: undefined,
         detachListeners: () => undefined,
@@ -1435,6 +1691,26 @@ function createRuntime(
         disposed: () => runtime.disposed,
         validateContent: options.validateContent,
         enterEffects: runtime.enterEffects,
+        prepareDependencies: (batch, signal) =>
+            runtime.required?.prepareBatch(
+                batch,
+                AbortSignal.any([runtime.islandLifetime.signal, signal]),
+            ),
+        projectionUnavailable: () => runtime.required?.projectionUnavailable(),
+        beforeApply: (batch) => {
+            runtime.required?.begin(batch, batch);
+            return (applied) => {
+                if (!applied) runtime.required?.abandon(batch);
+                runtime.required?.end(batch);
+            };
+        },
+        applyIslands: (batch, detail, signal) =>
+            reconcileIslands(
+                runtime,
+                { cause: "live-patch", detail },
+                batch,
+                AbortSignal.any([runtime.islandLifetime.signal, signal]),
+            ),
         invalidatePrefetch: (terminal, preserve) => {
             runtime.patchedPointer = runtime.pointerPosition;
             runtime.prefetch?.invalidate(terminal ? undefined : preserve);
@@ -1522,6 +1798,10 @@ function createRuntime(
         if (runtime.disposed || event.defaultPrevented) return;
         const form = event.target as HTMLFormElement;
         if (!form.matches("form[data-graft]")) return;
+        if (runtime.required?.blocked(form)) {
+            event.preventDefault();
+            return;
+        }
         const values = effectiveFormValues(form, event.submitter);
         if (values.method === "get") {
             if (values.encoding !== "application/x-www-form-urlencoded") return;
@@ -1599,28 +1879,47 @@ function createRuntime(
 
 export function startHypergraft(options: HypergraftOptions = {}) {
     // A rejected prefetch policy must not remove the active runtime or its command guard.
+    let runtime: Runtime | undefined;
     const prefetch = options.prefetch
-        ? createPrefetch(options.prefetch)
+        ? createPrefetch(options.prefetch, (response, text, signal) => {
+              if (!runtime?.required || runtime.disposed) return;
+              // Speculation uses protocol validation only. Host callbacks still
+              // run once, at activation against the then-current document.
+              const prepared = preflight(response, text);
+              if (prepared.kind !== "patches" || prepared.batch.replaceLocation)
+                  return;
+              void runtime.required
+                  .prepare(
+                      prepared.batch.patches.flatMap((patch) => patch.nodes),
+                      AbortSignal.any([signal, runtime.islandLifetime.signal]),
+                  )
+                  ?.catch(() => undefined);
+          })
         : undefined;
     const documentUrl = activeRuntime?.documentUrl ?? location.href;
     const departurePending =
         !!activeRuntime?.navigationPending &&
         (!activeRuntime.navigation ||
-            activeRuntime.navigationMutated ||
-            activeRuntime.navigation.cause === "history-traversal");
+            (!activeRuntime.navigationCommitted &&
+                (activeRuntime.navigationMutated ||
+                    activeRuntime.navigation.cause === "history-traversal")));
     if (activeRuntime) disposeRuntime(activeRuntime, true);
-    const runtime = createRuntime(
-        options,
-        documentUrl,
-        departurePending,
-        prefetch,
-    );
+    runtime = createRuntime(options, documentUrl, departurePending, prefetch);
     activeRuntime = runtime;
-    if (options.islands)
-        runtime.islands = observeIslands(
+    if (isRequiredRegistry(options.islands)) {
+        runtime.required = createRequiredIslands(
+            options.islands,
+            runtime.islandLifetime.signal,
+            options.onIslandError,
+        );
+        runtime.islands = runtime.required.observer;
+        runtime.required.start();
+    } else if (options.islands)
+        runtime.islands = createIslandObserver(
             options.islands,
             options.onIslandError,
             runtime.islandLifetime.signal,
+            {},
         );
     return Object.assign(
         () => {

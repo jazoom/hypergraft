@@ -10,6 +10,31 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Plugin } from "vite";
 
+export { islandModules, type IslandModulesOptions } from "./modules.js";
+
+export function discoverIslandFiles(roots: readonly string[]): string[] {
+    const files = new Set<string>();
+    const visit = (directory: string) => {
+        let entries;
+        try {
+            entries = readdirSync(directory, { withFileTypes: true });
+        } catch (error) {
+            // Editors can rename a directory between its parent's scan and this read.
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+            throw error;
+        }
+        for (const entry of entries) {
+            if (entry.name === "node_modules") continue;
+            const path = join(directory, entry.name);
+            if (entry.isDirectory()) visit(path);
+            else if (entry.isFile() && entry.name === "browser.ts")
+                files.add(path);
+        }
+    };
+    for (const root of roots) visit(root);
+    return [...files].sort();
+}
+
 export interface IslandWatchOptions {
     importer: string;
     roots: readonly string[];
@@ -26,28 +51,7 @@ export function watchIslandModules(options: IslandWatchOptions): Plugin {
     let failure: Error | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const watchers: FSWatcher[] = [];
-    const discover = () => {
-        const files = new Set<string>();
-        const visit = (directory: string) => {
-            let entries;
-            try {
-                entries = readdirSync(directory, { withFileTypes: true });
-            } catch (error) {
-                // Editors can rename a directory between its parent's scan and this read.
-                if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-                throw error;
-            }
-            for (const entry of entries) {
-                if (entry.name === "node_modules") continue;
-                const path = join(directory, entry.name);
-                if (entry.isDirectory()) visit(path);
-                else if (entry.isFile() && entry.name === "browser.ts")
-                    files.add(path);
-            }
-        };
-        for (const root of roots) visit(root);
-        return JSON.stringify([...files].sort());
-    };
+    const discover = () => JSON.stringify(discoverIslandFiles(roots));
     const stop = () => {
         clearTimeout(timer);
         for (const watcher of watchers.splice(0)) watcher.close();

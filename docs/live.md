@@ -16,6 +16,8 @@ Pending factories count against subscription admission before their asynchronous
 
 Nested invalidation listeners abort when their parent projection task is cancelled or dropped. Repeated unsubscribe and shutdown cleanup is idempotent.
 
+Automatic required islands can retire a cold projection without blocking other subscriptions. After code loads, a new subscription identity performs a fresh guarded refresh. The browser requires a `children` snapshot covering the previously observed and discarded targets before applying that recovery. Version 1 permits `append`, so subscription restart alone is not proof of a complete snapshot. Incremental or failed recovery remains visibly stale and requires explicit document recovery, without a resubscription loop. See [Required island modules](required-islands.md#live-recovery).
+
 Live patches target retained regions in the current document. Keep a live GET form outside its patch target. An open socket does not prove that every projection is current.
 
 ## Session lease and shutdown

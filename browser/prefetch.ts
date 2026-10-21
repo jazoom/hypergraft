@@ -83,7 +83,14 @@ function prefetchLinkUrl(
     return url;
 }
 
-export function createPrefetch(options: true | PrefetchOptions) {
+export function createPrefetch(
+    options: true | PrefetchOptions,
+    prepareDependencies?: (
+        response: Response,
+        text: string,
+        signal: AbortSignal,
+    ) => void,
+) {
     const maxAgeMs =
         options === true || options.maxAgeMs === undefined
             ? DEFAULT_PREFETCH_MAX_AGE_MS
@@ -170,7 +177,22 @@ export function createPrefetch(options: true | PrefetchOptions) {
                         entry.adopted ? MAX_RESPONSE_BYTES : PREFETCH_MAX_BYTES,
                     signal: entry.controller.signal,
                 });
-                if (entry.controller.signal.aborted) return;
+                if (
+                    entry.controller.signal.aborted ||
+                    (!entry.adopted &&
+                        performance.now() - entry.started >= maxAgeMs)
+                )
+                    return;
+                try {
+                    prepareDependencies?.(
+                        response,
+                        text,
+                        entry.controller.signal,
+                    );
+                } catch {
+                    // Invalid speculative content or unavailable code is silent.
+                    // Activation still owns validation and visible recovery.
+                }
                 return { response, text };
             } catch (error) {
                 // After adoption, ordinary navigation owns transport failures and recovery.

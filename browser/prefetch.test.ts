@@ -8,6 +8,8 @@ import {
     type NavigationDetail,
 } from "./events";
 import { MEDIA_TYPE } from "./patches";
+import { defineIslandModules } from "./required-islands";
+import type { IslandInitialiser } from "./islands";
 import {
     DEFAULT_PREFETCH_MAX_AGE_MS,
     GRAFT_PREFETCH,
@@ -104,6 +106,217 @@ afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+});
+
+test.each(["hover", "focus"])(
+    "%s prefetch loads required modules without mounting, and activation joins code without delaying visible HTML",
+    async (gesture) => {
+        document
+            .getElementById("main")!
+            .setAttribute("data-graft-workspace", "");
+        link.removeAttribute("data-graft-prefetch");
+        let resolve!: (module: {
+            islands: { editor: IslandInitialiser };
+        }) => void;
+        const loading = new Promise<{ islands: { editor: IslandInitialiser } }>(
+            (yes) => {
+                resolve = yes;
+            },
+        );
+        const mount = vi.fn();
+        const load = vi.fn(() => loading);
+        const validate = vi.fn();
+        cleanup.push(
+            startHypergraft({
+                prefetch: { links: "all" },
+                islands: defineIslandModules([{ names: ["editor"], load }]),
+                validateContent: validate,
+            }),
+        );
+        vi.mocked(fetch).mockResolvedValue(
+            reply('<div data-island="editor">New page</div>'),
+        );
+        if (gesture === "hover") intent();
+        else link.focus();
+        await settle();
+        expect(load).toHaveBeenCalledOnce();
+        expect(mount).not.toHaveBeenCalled();
+        expect(validate).not.toHaveBeenCalled();
+        expect(events).toEqual([]);
+        expect(document.getElementById("main")!.textContent).toBe("Old page");
+        expect(document.getElementById("main")!.hasAttribute("inert")).toBe(
+            false,
+        );
+        expect(location.pathname).toBe("/start");
+        link.click();
+        await settle();
+        expect(document.getElementById("main")!.textContent).toBe("New page");
+        expect(location.pathname).toBe("/next");
+        expect(events.map((event) => event.state)).toEqual(["started"]);
+        expect(validate).toHaveBeenCalledOnce();
+        expect(mount).not.toHaveBeenCalled();
+        resolve({ islands: { editor: mount } });
+        await settle();
+        expect(mount).toHaveBeenCalledOnce();
+        expect(load).toHaveBeenCalledOnce();
+        expect(fetch).toHaveBeenCalledOnce();
+        expect(events.map((event) => event.state)).toEqual([
+            "started",
+            "succeeded",
+        ]);
+    },
+);
+
+test.each([
+    "unapproved",
+    "invalid",
+    "template",
+    "expired",
+    "late-expiry",
+    "data-saver",
+    "excluded",
+])("%s speculation cannot load required code", async (kind) => {
+    document.getElementById("main")!.setAttribute("data-graft-workspace", "");
+    const load = vi.fn(async () => ({ islands: { editor() {} } }));
+    cleanup.push(
+        startHypergraft({
+            prefetch: { links: "all", maxAgeMs: 50 },
+            islands: defineIslandModules([{ names: ["editor"], load }]),
+        }),
+    );
+    const request = pending();
+    if (kind === "data-saver")
+        Object.defineProperty(navigator, "connection", {
+            configurable: true,
+            value: { saveData: true },
+        });
+    if (kind === "excluded") link.setAttribute("data-graft-prefetch", "false");
+    intent();
+    if (kind === "expired") await vi.advanceTimersByTimeAsync(50);
+    if (kind === "late-expiry") vi.setSystemTime(Date.now() + 50);
+    request.resolve(
+        reply(
+            kind === "template"
+                ? '<template><div data-island="editor"></div></template>'
+                : `<div data-island="editor"></div>${kind === "invalid" ? "<script></script>" : ""}`,
+            kind === "unapproved" ? { [GRAFT_PREFETCH]: "" } : {},
+        ),
+    );
+    await settle();
+    expect(load).not.toHaveBeenCalled();
+    if (kind === "data-saver") Reflect.deleteProperty(navigator, "connection");
+});
+
+test.each(["expiry", "invalidate", "replacement"])(
+    "%s discards speculative HTML while late code cannot mount or announce readiness",
+    async (ending) => {
+        document
+            .getElementById("main")!
+            .setAttribute("data-graft-workspace", "");
+        let resolve!: (module: {
+            islands: { editor: IslandInitialiser };
+        }) => void;
+        const loading = new Promise<{ islands: { editor: IslandInitialiser } }>(
+            (yes) => {
+                resolve = yes;
+            },
+        );
+        const mount = vi.fn();
+        const load = vi.fn(() => loading);
+        const islands = defineIslandModules([{ names: ["editor"], load }]);
+        cleanup.push(
+            startHypergraft({
+                prefetch: { links: "all", maxAgeMs: 50 },
+                islands,
+            }),
+        );
+        vi.mocked(fetch).mockResolvedValue(
+            reply('<div data-island="editor">Speculative</div>'),
+        );
+        intent();
+        await settle();
+        expect(load).toHaveBeenCalledOnce();
+        if (ending === "expiry") await vi.advanceTimersByTimeAsync(50);
+        else if (ending === "invalidate") invalidatePrefetch();
+        else
+            cleanup.push(
+                startHypergraft({ prefetch: { links: "all" }, islands }),
+            );
+        resolve({ islands: { editor: mount } });
+        await settle();
+        expect(mount).not.toHaveBeenCalled();
+        expect(events).toEqual([]);
+        expect(document.getElementById("main")!.textContent).toBe("Old page");
+        vi.mocked(fetch).mockResolvedValue(reply("Fresh"));
+        link.click();
+        await settle();
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(document.getElementById("main")!.textContent).toBe("Fresh");
+    },
+);
+
+test("speculative module rejection is silent until activation, without a repeated GET or automatic retry", async () => {
+    document.getElementById("main")!.setAttribute("data-graft-workspace", "");
+    const load = vi.fn(async () => {
+        throw new Error("unavailable");
+    });
+    const diagnostics = vi.fn();
+    cleanup.push(
+        listenForDiagnostics(diagnostics),
+        startHypergraft({
+            prefetch: { links: "all" },
+            islands: defineIslandModules([{ names: ["editor"], load }]),
+        }),
+    );
+    vi.mocked(fetch).mockResolvedValue(
+        reply('<div data-island="editor">New page</div>'),
+    );
+    intent();
+    await settle();
+    expect(diagnostics).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+    expect(document.getElementById("main")!.hasAttribute("inert")).toBe(false);
+    link.click();
+    await settle();
+    expect(events.map((event) => event.state)).toEqual(["started", "failed"]);
+    expect(document.getElementById("main")!.textContent).toBe("New page");
+    expect(location.pathname).toBe("/next");
+    expect(load).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledOnce();
+});
+
+test("required module speculation cannot bypass the HTML admission and byte limits", async () => {
+    document.getElementById("main")!.setAttribute("data-graft-workspace", "");
+    const loads = Array.from(
+        { length: PREFETCH_MAX_REQUESTS + 1 },
+        (_, index) =>
+            vi.fn(async () => ({ islands: { [`module-${index}`]: () => {} } })),
+    );
+    cleanup.push(
+        startHypergraft({
+            prefetch: { links: "all" },
+            islands: defineIslandModules(
+                loads.map((load, index) => ({
+                    names: [`module-${index}`],
+                    load,
+                })),
+            ),
+        }),
+    );
+    for (let index = 0; index < loads.length; index++) {
+        link.href = `/target-${index}`;
+        vi.mocked(fetch).mockResolvedValue(
+            reply(
+                `<div data-island="module-${index}"></div>${index === 0 ? "x".repeat(PREFETCH_MAX_BYTES) : ""}`,
+            ),
+        );
+        intent();
+        await settle();
+    }
+    expect(fetch).toHaveBeenCalledTimes(PREFETCH_MAX_REQUESTS);
+    expect(loads.map((load) => load.mock.calls.length)).toEqual([
+        0, 1, 1, 1, 0,
+    ]);
 });
 
 test("prefetch policy stays in lock-step with the server fixture", () => {

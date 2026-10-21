@@ -254,13 +254,19 @@ export function dispose(): void {
 }
 ```
 
-## Co-locate browser behaviour
+## Automatic required behaviour
+
+Vite hosts can configure `islandModules({ roots })` from `hypergraft/vite`, import `islands` from `virtual:hypergraft/islands`, and pass it to `startHypergraft`. Declare a literal typed `islands` object in each `browser.ts`, using normal static imports. Omitted loading metadata means required dependency loading; `export const islandLoading = "eager"` protects independently available shell or safety behaviour. Direct stylesheet imports remain eager. Do not duplicate discovery with a host glob/watch list.
+
+Render exactly one `data-graft-workspace` boundary initially `inert` and `aria-busy="true"`, with shared status and an ordinary reload link outside it. Required initialisers must throw after cleanup on failed setup; returning normally claims successful mounting. Complete page navigation applies validated HTML and commits its URL immediately, then loads required modules behind the gate. Failure stays on the new page with native reload recovery. Targeted updates, commands and streams still load before application and recheck targets after waiting. Internal reconciliation finishes before public completion and scroll restoration. Commands are never replayed. Read [Required island modules](required-islands.md) for markup, failure handling, live snapshots, watch support and compatibility.
+
+## Manual co-located browser behaviour
 
 Keep feature TypeScript and its tests beside the feature's server code and templates. A `browser.ts` module exports `islands`: either an `IslandRegistry` map or a synchronous factory from typed host services to that map. Keep root state inside initialisers, not module imports or registration factories.
 
 `collectIslands(modules, services)` combines those exports before `startHypergraft({ islands })`. Omit `services` when no factory requires it. Duplicate names and malformed module exports fail at registration. Vite hosts can discover `**/browser.ts` with eager `import.meta.glob<IslandModule<BrowserServices>>`; other hosts can pass explicit module imports. No protocol change is required. Vite's build-watch mode can use `watchIslandModules` from the optional `hypergraft/vite` entry to discover added, removed or renamed feature modules without a restart. Configure the glob importer and its source roots once; Vite's development server already handles these changes.
 
-**Keep islands eager by default.** Defer only a substantial optional implementation with a measured loading or startup benefit that outweighs extra requests, delayed interaction, layout changes, failure handling and tests. Small clipboard helpers and simple form controls rarely qualify. Being safe to load later does not itself justify doing so. Inspect generated chunks for accidental eager imports and measure the user-facing benefit, not just the entry chunk size.
+**For manual registries, keep islands eager by default.** Defer only a substantial optional implementation with a measured loading or startup benefit that outweighs extra requests, delayed interaction, layout changes, failure handling and tests. Small clipboard helpers and simple form controls rarely qualify. Being safe to load later does not itself justify doing so. Inspect generated chunks for accidental eager imports and measure the user-facing benefit, not just the entry chunk size.
 
 Eager initialisers remain synchronous. For a justified lazy candidate, use `preview: lazyIsland(() => import("./preview").then((module) => module.initPreview))`. Keep registration eager: the loader resolves to a synchronous initialiser, not a module or registry. Type mixed maps as `IslandRegistry<IslandDefinition>` and typed glob modules as `IslandModule<BrowserServices, IslandDefinition>`; the existing default types remain eager-only. No Vite plugin is needed. Runtime loads and successful code are shared per definition; state and mount signals are separate per root. Ended roots and runtimes ignore late results. Stopping also ends active scans and skips loaders that have not started. Mount uses current DOM and does not replay earlier reconciliation facts.
 
@@ -272,7 +278,7 @@ Lazy loading does not disable controls, delay transport or replay gestures. Keep
 
 Thin `browser.ts` modules for registration and wiring are allowed. Keep distinct behaviours in focused sibling modules, with tests beside their implementations; choose boundaries by responsibility, not current file size. A single focused implementation can stay in `browser.ts`. Keep feature tests local rather than mounting unrelated features through a shared application test setup.
 
-Hypergraft still owns mounting, reconciliation delivery and lifetime cancellation. Hosts still own record identity, draft memory, dependencies and reconciliation order. A retained root does not guarantee a retained record identity. Never execute scripts from patched templates.
+Hypergraft still owns mounting, reconciliation delivery and lifetime cancellation. Hosts still own record identity, draft memory and coordination within each feature. Required modules use the runtime's documented mounting and reconciliation order. A retained root does not guarantee a retained record identity. Never execute scripts from patched templates.
 
 Read [Co-located island modules](browser-runtime.md#co-located-island-modules) for the complete recipe and configuration requirements.
 
@@ -349,7 +355,9 @@ A rolling ten-second window admits at most four speculative requests, independen
 
 Commands and query requests discard speculation at startup. Current live projections and live disconnection also discard it. Terminal live loss disables speculation for the document. Hidden documents, page departure and teardown discard entries. `invalidatePrefetch()` covers other host-observed changes.
 
-Private routes require an approved application-retention policy. The host policy excludes authentication actions and routes with side effects. Speculation does not run document preflight or change the visible page. Activation retains normal content validation and departure guards.
+Private routes require an approved application-retention policy. Ordinary route review must establish that eligible GETs are safe without a later click; no separate per-route approval workflow is required. Exclude authentication actions, one-use-token URLs, side effects and unsuitable expensive requests before request startup.
+
+Approved speculation parses bounded HTML with protocol validation and starts discovered required module imports. It never mounts speculative roots, runs host content validators or changes the visible page. Activation retains normal content validation and departure guards, reuses eligible HTML once and joins in-flight code without waiting to display the page. Started imports cannot be cancelled, but ended speculation cannot mount roots or announce readiness. Manual registries and optional lazy islands keep their existing behaviour.
 
 The [full contract](browser-runtime.md#intent-prefetch) defines byte accounting and the authorisation interval.
 

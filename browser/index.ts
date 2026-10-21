@@ -9,6 +9,11 @@ export {
     readBoundedResponse,
 } from "./requests";
 export * from "./events";
+export {
+    defineIslandModules,
+    type RequiredIslandRegistry,
+    type RequiredIslandModule,
+} from "./required-islands";
 export { bindNavigationRecovery } from "./navigation-feedback";
 export { bindLiveFeedback } from "./live-feedback";
 export type { EnterAnimation, EnterEffect } from "./enter-effects";

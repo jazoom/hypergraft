@@ -101,17 +101,17 @@ The closed state union contains:
 
 Success, cancellation, handoff and disposal end request ownership. A failure with `recovery: "retry"` also ends ownership. It means that transport failed before navigation changed the document, and the URL still identifies the visible page.
 
-A failure with `recovery: "document"` precedes authoritative document handoff. Invalid responses and partial patch exceptions use this path. They do not promise an intact old page.
+A failure with `recovery: "document"` requires an authoritative document. Before complete page commitment, invalid responses and partial patch exceptions hand off automatically. After complete commitment, required module or lifecycle failures instead end request ownership and leave the new page gated with shared native reload recovery. They neither reload automatically nor promise an intact old page.
 
 Handoff also covers navigation envelopes and supported same-origin redirects. It does not claim that the destination document loaded. The current runtime keeps commands blocked while document navigation remains pending. The event excludes response bodies, form values and thrown errors. URLs can contain private data. Hosts must not treat these events as safe telemetry.
 
-A later supported link or history traversal supersedes active safe navigation. The runtime aborts obsolete transport and rejects late responses by request identity. Duplicate link activation for the active destination starts no additional request. Only successful link navigation pushes a history entry.
+A later supported link or history traversal supersedes active safe navigation. The runtime aborts obsolete transport and rejects late responses by request identity. Duplicate link activation for the active destination starts no additional request. Complete link navigation pushes its history entry as soon as validated HTML is applied, before required code finishes. The URL identifies the visible page during loading or failure. Public location completion, focus/scroll restoration and navigation success wait for required mounting and reconciliation.
 
 Blocked or native links emit no navigation events. Cancellation emits neither a form settlement nor an error diagnostic. Disposed and superseded responses emit no late navigation events.
 
 ### Cancellation and explicit recovery
 
-`cancelNavigation(requestId)` returns true only for the matching active navigation. It never cancels an unsafe command. Cancellation ends client ownership, not server work. Cancellation and recoverable failure resume eligible live projections only when the document guard permits it.
+`cancelNavigation(requestId)` returns true only for the matching active navigation. It never cancels an unsafe command. Cancellation ends client ownership, not server work. Before commitment, cancellation and recoverable failure resume eligible live projections only when the document guard permits it. After complete commitment, cancellation keeps the new URL and content gated with explicit reload recovery; it does not roll back history. Live work remains suspended until a later successful navigation or document recovery.
 
 A recoverable transport failure leaves the current page and its input intact. The runtime performs no automatic retry. A fresh link activation can retry the destination. Commands never receive this recovery treatment.
 
@@ -121,13 +121,13 @@ Existing link guards still run before request startup. A Retry action remains a 
 
 ### History recovery
 
-The browser changes the URL before a history request completes. Failed or cancelled traversal therefore reloads the current URL instead of presenting intact-page retry. Recovery adds no history entry. It performs no reverse traversal, so it creates no traversal loop.
+The browser changes the URL before a history request completes. Failed or cancelled traversal before commitment therefore reloads the current URL instead of presenting intact-page retry. Once complete HTML has committed, required loading failures or cancellation stay on that new page with workspace recovery, just like link navigation. Recovery adds no history entry. It performs no reverse traversal, so it creates no traversal loop.
 
 If a link supersedes traversal before content arrives, the visible document and URL still differ. Failure uses document recovery at that link's destination. Cancellation instead reloads the current URL. A replacement runtime also reloads after an incomplete traversal.
 
 Native fragment changes still identify the same document. They do not force document recovery after a failed link request, cancellation or runtime replacement.
 
-A partial stream or application-time exception requires an authoritative document. Cancellation after partial mutation hands off to the requested destination. A later link also uses document navigation rather than another patch. Runtime disposal reloads partial navigation content.
+A partial stream or exception during batch application requires an authoritative document. Cancellation after partial mutation hands off to the requested destination. A later link also uses document navigation rather than another patch. Runtime disposal reloads partial navigation content.
 
 ### Host recovery controls
 
@@ -153,6 +153,8 @@ The shared read indicator supplies pending feedback without extra navigation con
 
 Keep the status region outside the hidden failure panel.
 Hide it visually, not with `hidden` or `display: none`.
+
+An optional ordinary anchor marked `data-graft-navigation-document` receives the failed destination URL too. Keep it free of `data-graft` so users can recover in a new document when a browser-cached import failure cannot recover through retry.
 
 Dismiss returns focus to the source link. If the source cannot receive focus, the binder uses a focusable `main` instead.
 
@@ -197,13 +199,13 @@ Route matching uses exact `URL.pathname` values. It does not expand prefixes, wi
 
 `data-graft-prefetch="false"` excludes a link in every mode. Unknown attribute values also exclude it. The runtime checks current eligibility again at activation. No mode speculates on GET forms or native unenhanced links.
 
-The host owns request-start approval. Response approval arrives after the request and cannot prevent unwanted GET side effects. The all-links mode requires a host-wide route review or explicit per-link exclusions.
+The host owns request-start approval. Response approval arrives after the request and cannot prevent unwanted GET side effects. In all-links mode, ordinary route review must ensure that navigation GETs are safe without a later click. This is not a separate approval workflow or route allowlist. Use explicit per-link exclusions for side effects, one-use-token URLs and unsuitable expensive requests.
 
 Pointer entry and keyboard focus start the request immediately. There is no dwell timer or debounce. A primary touch press also starts speculation. A cancelled touch press discards it without navigation.
 
 A patch can place a new link under a stationary pointer. That layout-induced event does not establish new intent. A later pointer movement permits another pointer entry. The runtime does not automatically prefetch adjacent dates after navigation.
 
-The runtime requests the exact destination and query with the normal navigation representation. Requests use same-origin credentials, `cache: "no-store"` and manual redirects. Unsupported links and modified clicks retain native behaviour. Downloads, fragments, external targets and recovery links do not qualify. Hosts must exclude authentication actions and unreviewed routes from their eligibility policy.
+The runtime requests the exact destination and query with the normal navigation representation. Requests use same-origin credentials, `cache: "no-store"` and manual redirects. Unsupported links and modified clicks retain native behaviour. Downloads, fragments, external targets and recovery links do not qualify. Hosts must exclude authentication actions, one-use-token URLs, side effects and unsuitable expensive requests from their eligibility policy.
 
 One runtime owns at most one speculative request or completed result. A later destination cancels its predecessor. Duplicate intent for the same destination shares that entry. Activation consumes it once. Neither history traversal nor another navigation can reuse it.
 
@@ -215,7 +217,11 @@ There is no queue. Explicit requests cancel unrelated speculation and do not wai
 
 The byte limit bounds accepted body data, not browser transport buffers or total JavaScript heap allocation. Browser transport can receive extra bytes before cancellation takes effect.
 
-Speculation does not parse document fragments or call content validators. It does not initialise islands or change history, focus, scroll or feedback. It acquires no command or navigation guard. It does not suspend live projections. Activation runs ordinary preflight against the current document.
+With automatic required islands, approved speculation parses the bounded HTML using protocol validation and starts build-declared modules named by active `data-island` roots. Native template contents remain inactive. It does not call host content validators, initialise islands or change readiness, history, focus, scroll or feedback. It acquires no command or navigation guard and does not suspend live projections. Manual registries and optional lazy islands keep HTML-only speculation.
+
+HTML becomes available for activation independently of those imports. Activation runs ordinary preflight and host validation against the current document, applies the page immediately and joins in-flight or available code behind its workspace gate. A speculative module failure stays silent until activation needs that module. Invalid speculative content cannot trigger imports and still uses ordinary recovery if activated.
+
+Speculative HTML retains the same deadline, single-use rule, byte limit and admission budget. Module loads start only from admitted, approved, bounded responses. Already started imports cannot be cancelled; their code may remain in the browser module cache after HTML expires or is invalidated. They cannot mount speculative content or announce readiness. Hover/focus lead time can reduce post-click network waiting, but immediate clicks and touch give less lead time; measure visible and usable milestones separately.
 
 A speculative failure remains silent. Missing approval, unsupported response metadata and completed failures leave activation free to start a fresh ordinary request. An adopted transport failure uses normal explicit recovery, without an automatic repeat. Invalid content retains authoritative document recovery after activation.
 
@@ -340,7 +346,7 @@ A complete form request emits `hypergraft:requestsettled` only after pending and
 - A safe applied patch applies the whole preflighted batch and updates that form's failure state. A submitted GET form without `data-graft-history="none"` reconciles history and emits its location fact. The runtime then restores pending state and emits `applied-patch` with an accepted status and authoritative target identifiers.
 - A safe failure emits its diagnostic, records the failed source and requests safe feedback. It then restores pending state and emits `safe-failure`.
 - A superseded or aborted safe request emits neither a settlement nor a diagnostic. A valid navigation envelope uses `location.assign` and emits no settlement because the document leaves.
-- A known unsafe patch applies its batch and returns the unsafe lane to idle. If the batch carries `location`, the runtime replaces the current history entry and emits `hypergraft:locationchange`. A queued history traversal takes precedence and suppresses that replacement. The runtime then restores pending state, emits `applied-patch` and starts the queued history navigation.
+- A known unsafe patch applies its batch. If it carries `location`, the runtime replaces the current history entry unless a queued history traversal takes precedence. It restores pending state and completes internal island reconciliation before returning the unsafe lane to idle and emitting public location and `applied-patch` facts. It then starts eligible queued history navigation. A required lifecycle failure instead retains unsafe uncertainty.
 - An unsafe malformed, failed or post-preflight application result marks the form uncertain and keeps the global unsafe lock. It restores pending state, emits its diagnostic, requests uncertainty feedback, then emits `uncertain-unsafe-result`. Queued navigation remains blocked.
 
 Failure statuses are included only when the received status is accepted by version 1. Failures never claim targets. The URL is the received response URL when there was a response. Otherwise it is the attempted URL. Settlements contain no HTML, values or thrown errors.
@@ -515,6 +521,8 @@ Protocol version 1, reconnect limits and stream settlement rules remain unchange
 
 The unsafe document guard remains authoritative across runtime replacement.
 
+A replacement during required loading after complete page commitment retires the old wait and initialises the current document under a new workspace gate. It does not reload or revert its URL. The disposed request emits no late completion. Incomplete traversal before commitment and partial streams retain authoritative document recovery.
+
 If `documentUnsafe.kind` is `pending` or `uncertain`, the replacement runtime suspends live work before its first live reconciliation. It emits `suspended` as its initial state. It does not emit `connecting` or `open` before the required document reload. Neither startup nor mutation observation can open a socket during that suspension.
 
 A final stop reloads immediately when an unsafe command is still pending or uncertain. If an old command returns after replacement, the replacement reloads authoritative state. The disposed runtime cannot apply the response. A disposed command response does not resume the replacement runtime.
@@ -579,9 +587,11 @@ The [anonymous task list](../examples/reference/README.md) does not use this ges
 
 ## Islands
 
+For automatic required loading, use the Vite registry and single workspace boundary described in [Required island modules](required-islands.md). This is separate from the manual registry and optional lazy policy below. Runtime-owned islands receive lifecycle facts directly before public completion events; standalone observers continue to consume those events.
+
 `observeIslands` scans host-authored `data-island` roots. It does not add binding attributes. An initialiser receives its root and an `IslandMountContext` with one lifetime `AbortSignal`. Hypergraft aborts the signal before destruction after removal, a name change or runtime teardown. Event listeners can use the signal and return `void`.
 
-Other initialisers can return an `IslandInstance`, a cleanup callback or `void`. Mount, reconciliation and destruction failures are isolated per island. Connected roots mount once. Applied patches scan their targets before reconciliation. Location changes scan the document before reconciliation. A retained node that gains `data-island` through morph mounts after the patch. Moved roots keep their instances. Disconnected roots are cleaned up.
+Other initialisers can return an `IslandInstance`, a cleanup callback or `void`. Manual mount, reconciliation and destruction failures are isolated per island. Automatic required mount or reconciliation failure keeps the owning workspace unavailable and uses explicit recovery. Connected roots mount once. Applied patches scan their targets before reconciliation. Location changes scan the document before reconciliation. A retained node that gains `data-island` through morph mounts after the patch. Moved roots keep their instances. Disconnected roots are cleaned up.
 
 The observer also detects `data-island` attribute changes on connected roots. Additions mount an instance. Name changes end the previous lifetime, and attribute removal destroys the instance.
 
@@ -724,7 +734,7 @@ Co-location does not change ownership. Use root-local selectors and delegated li
 
 ## Optional lazy islands
 
-**Keep islands eager by default.** Eager initialisers mount synchronously during scans. Lazy loading is justified only when a substantial optional implementation has a measured loading or startup cost and can safely arrive later. Being safe to defer is necessary, but is not itself a performance benefit.
+**For manual registries, keep islands eager by default.** Automatic required modules use the separate [workspace readiness contract](required-islands.md), not `lazyIsland`. Eager initialisers mount synchronously during scans. Lazy loading is justified only when a substantial optional implementation has a measured loading or startup cost and can safely arrive later. Being safe to defer is necessary, but is not itself a performance benefit.
 
 Compare the benefit with extra requests, delayed interaction, possible layout changes, failure handling and tests. Small clipboard helpers or simple form controls rarely justify those costs. A substantial optional preview or syntax-highlighting engine may be a better candidate. Keep cooperating behaviour under its existing owner rather than splitting every helper into an island.
 

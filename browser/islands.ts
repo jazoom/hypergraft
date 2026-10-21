@@ -1,4 +1,15 @@
 import { emitDiagnostic } from "./diagnostics";
+import { elementProperty, nodeProperty } from "./dom";
+
+function islandName(root: HTMLElement): string | undefined {
+    return (
+        elementProperty(root, "getAttributeNS").call(
+            root,
+            null,
+            "data-island",
+        ) ?? undefined
+    );
+}
 import {
     LIVE_PATCH_EVENT,
     LOCATION_CHANGE_EVENT,
@@ -141,10 +152,29 @@ function normaliseInstance(
 /** Observe and reconcile host-registered islands without modifying server-authored markup. */
 export function observeIslands(
     initialisers: IslandRegistry<IslandDefinition>,
+    report?: IslandErrorReporter,
+    signal?: AbortSignal,
+): IslandObserver {
+    return createIslandObserver(initialisers, report, signal);
+}
+
+export interface IslandController extends IslandObserver {
+    scan(root: ParentNode, include?: (root: HTMLElement) => boolean): void;
+    reconcile(
+        context: IslandReconcileContext,
+        include?: (root: HTMLElement) => boolean,
+    ): void;
+    mounted(root: HTMLElement): boolean;
+    assertHealthy(include?: (root: HTMLElement) => boolean): void;
+}
+
+export function createIslandObserver(
+    initialisers: IslandRegistry<IslandDefinition>,
     report: IslandErrorReporter = (name, phase, error) =>
         console.error(`Island "${name}" failed to ${phase}:`, error),
     signal?: AbortSignal,
-): IslandObserver {
+    internal?: { changed?: () => void; required?: boolean },
+): IslandController {
     const instances = new Map<
         HTMLElement,
         {
@@ -154,11 +184,22 @@ export function observeIslands(
         }
     >();
     let disposed = false;
+    const failures = new Map<HTMLElement, string>();
+    const failed = (
+        name: string,
+        phase: "mount" | "reconcile",
+        error: unknown,
+        root: HTMLElement,
+    ) => {
+        if (internal?.required) failures.set(root, name);
+        report(name, phase, error, root);
+    };
     const pending = new Map<HTMLElement, { name: string; failed: boolean }>();
     const loads = new Map<LazyIsland, Promise<IslandInitialiser | undefined>>();
     const reportedUnknown = new WeakMap<HTMLElement, string>();
     const destroyRoot = (root: HTMLElement, fallbackName: string) => {
         pending.delete(root);
+        failures.delete(root);
         const mounted = instances.get(root);
         instances.delete(root);
         if (!mounted) return;
@@ -175,6 +216,7 @@ export function observeIslands(
             ? initialisers[name]
             : undefined;
         if (!initialise) {
+            if (internal?.required) return;
             if (reportedUnknown.get(element) !== name) {
                 reportedUnknown.set(element, name);
                 emitDiagnostic({
@@ -260,29 +302,40 @@ export function observeIslands(
             controller.abort();
             if (waiting && pending.get(element) === waiting)
                 waiting.failed = true;
-            if (!disposed) report(name, "mount", error, element);
+            if (!disposed) failed(name, "mount", error, element);
         }
     };
-    const scan = (root: ParentNode) => {
+    const scan = (
+        root: ParentNode,
+        include: (root: HTMLElement) => boolean = () => true,
+    ) => {
         if (disposed) return;
         const candidates = new Set<HTMLElement>();
-        if (root instanceof HTMLElement && root.hasAttribute("data-island"))
+        if (root instanceof HTMLElement && islandName(root) !== undefined)
             candidates.add(root);
-        for (const element of root.querySelectorAll<HTMLElement>(
-            "[data-island]",
-        ))
-            candidates.add(element);
+        const descendants =
+            root instanceof HTMLFormElement
+                ? (Element.prototype.querySelectorAll.call(
+                      root,
+                      "[data-island]",
+                  ) as NodeListOf<HTMLElement>)
+                : root.querySelectorAll<HTMLElement>("[data-island]");
+        for (const element of descendants) candidates.add(element);
         for (const element of [...instances.keys(), ...pending.keys()]) {
-            if (root.contains(element) || root === element)
+            if (
+                nodeProperty(root, "contains").call(root, element) ||
+                root === element
+            )
                 candidates.add(element);
         }
         for (const element of candidates) {
             if (disposed) return;
-            if (!element.isConnected) continue;
-            const name = element.hasAttribute("data-island")
-                ? (element.dataset.island ?? "")
-                : undefined;
+            if (!nodeProperty(element, "isConnected")) continue;
+            const name = islandName(element);
             const mounted = instances.get(element) ?? pending.get(element);
+            if (failures.has(element) && failures.get(element) === name)
+                continue;
+            failures.delete(element);
             if (name === undefined) {
                 if (mounted) destroyRoot(element, mounted.name);
                 continue;
@@ -291,23 +344,41 @@ export function observeIslands(
                 if (mounted.name === name) continue;
                 destroyRoot(element, mounted.name);
             }
-            mountRoot(element, name);
+            if (include(element)) mountRoot(element, name);
         }
     };
     const clean = () => {
+        for (const [root, name] of failures)
+            if (!nodeProperty(root, "isConnected") || islandName(root) !== name)
+                failures.delete(root);
         for (const [root, mounted] of [...instances, ...pending])
-            if (!root.isConnected) destroyRoot(root, mounted.name);
+            if (
+                !nodeProperty(root, "isConnected") ||
+                islandName(root) !== mounted.name
+            )
+                destroyRoot(root, mounted.name);
     };
-    const reconcile = (context: IslandReconcileContext) => {
+    const reconcile = (
+        context: IslandReconcileContext,
+        include: (root: HTMLElement) => boolean = () => true,
+    ) => {
         clean();
-        for (const [root, mounted] of instances)
+        for (const [root, mounted] of instances) {
+            if (!include(root)) continue;
             try {
                 mounted.instance.reconcile?.(context);
             } catch (error) {
-                report(mounted.name, "reconcile", error, root);
+                if (internal?.required) destroyRoot(root, mounted.name);
+                failed(mounted.name, "reconcile", error, root);
             }
+        }
     };
     const observer = new MutationObserver((records) => {
+        if (internal?.changed) {
+            clean();
+            internal.changed();
+            return;
+        }
         for (const record of records) {
             if (
                 record.type === "attributes" &&
@@ -356,6 +427,7 @@ export function observeIslands(
     const stop = () => {
         if (disposed) return;
         disposed = true;
+        failures.clear();
         pending.clear();
         loads.clear();
         observer.disconnect();
@@ -367,7 +439,20 @@ export function observeIslands(
         for (const [root, mounted] of [...instances])
             destroyRoot(root, mounted.name);
     };
-    const handle: IslandObserver = Object.assign(stop, {
+    const handle: IslandController = Object.assign(stop, {
+        scan,
+        reconcile,
+        mounted(root: HTMLElement) {
+            return (
+                instances.has(root) &&
+                instances.get(root)?.name === islandName(root)
+            );
+        },
+        assertHealthy(include: (root: HTMLElement) => boolean = () => true) {
+            clean();
+            if ([...failures.keys()].some(include))
+                throw new Error("Required island initialisation failed");
+        },
         retryIsland(root: HTMLElement): boolean {
             const waiting = pending.get(root);
             if (
@@ -387,7 +472,7 @@ export function observeIslands(
     }
     // Install teardown before eager mounting: an initialiser may end its owner.
     signal?.addEventListener("abort", stop, { once: true });
-    scan(document);
+    if (!internal?.changed) scan(document);
     if (!disposed) {
         observer.observe(document.body, {
             childList: true,
@@ -395,10 +480,12 @@ export function observeIslands(
             attributes: true,
             attributeFilter: ["data-island"],
         });
-        addEventListener(REQUEST_SETTLED_EVENT, settled);
-        addEventListener(LOCATION_CHANGE_EVENT, location);
-        addEventListener(PROGRESS_EVENT, progress);
-        addEventListener(LIVE_PATCH_EVENT, livePatch);
+        if (!internal) {
+            addEventListener(REQUEST_SETTLED_EVENT, settled);
+            addEventListener(LOCATION_CHANGE_EVENT, location);
+            addEventListener(PROGRESS_EVENT, progress);
+            addEventListener(LIVE_PATCH_EVENT, livePatch);
+        }
     }
     return handle;
 }

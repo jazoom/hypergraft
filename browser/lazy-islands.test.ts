@@ -143,12 +143,15 @@ test.each(["eager", "lazy"] as const)(
         });
         stops.push(stop);
         await mutations();
-        emitRequestSettled({
-            requestKind: "patch",
-            form: document.createElement("form"),
-            url: location.href,
-            outcome: "safe-failure",
-        });
+        const form = document.createElement("form");
+        form.setAttribute("data-graft", "");
+        form.method = "get";
+        document.body.append(form);
+        vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(
+            new Error("offline"),
+        );
+        form.requestSubmit();
+        await mutations();
         mounted.remove();
         await mutations();
         stop();
