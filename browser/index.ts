@@ -26,8 +26,12 @@ export {
 } from "./feedback";
 export {
     collectIslands,
+    lazyIsland,
     observeIslands,
+    type IslandDefinition,
+    type LazyIsland,
     type IslandModule,
+    type IslandObserver,
     type IslandRegistry,
     type IslandErrorReporter,
     type IslandInitialiser,

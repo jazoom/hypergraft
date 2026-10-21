@@ -29,24 +29,64 @@ export type IslandInitialiser = (
     root: HTMLElement,
     context: IslandMountContext,
 ) => IslandInstance | (() => void) | void;
-export type IslandRegistry = Readonly<Record<string, IslandInitialiser>>;
+const lazyDefinition = Symbol("lazy-island");
 
-export interface IslandModule<Services = void> {
-    readonly islands: IslandRegistry | ((services: Services) => IslandRegistry);
+export interface LazyIsland {
+    readonly [lazyDefinition]: true;
+    readonly load: () => Promise<IslandInitialiser>;
+}
+
+/** Keep registration eager while deferring a root's implementation. */
+export function lazyIsland(load: () => Promise<IslandInitialiser>): LazyIsland {
+    if (typeof load !== "function")
+        throw new TypeError("A lazy island requires a loader");
+    return Object.freeze({ [lazyDefinition]: true as const, load });
+}
+
+export type IslandDefinition = IslandInitialiser | LazyIsland;
+export type IslandRegistry<
+    Definition extends IslandDefinition = IslandInitialiser,
+> = Readonly<Record<string, Definition>>;
+
+function isLazy(definition: IslandDefinition): definition is LazyIsland {
+    return (
+        typeof definition === "object" &&
+        definition !== null &&
+        definition[lazyDefinition] === true &&
+        typeof definition.load === "function"
+    );
+}
+
+export interface IslandModule<
+    Services = void,
+    Definition extends IslandDefinition = IslandInitialiser,
+> {
+    readonly islands:
+        | IslandRegistry<Definition>
+        | ((services: Services) => IslandRegistry<Definition>);
 }
 
 export function collectIslands(
-    modules: Readonly<Record<string, IslandModule>>,
-): IslandRegistry;
+    modules: Readonly<Record<string, IslandModule<void, IslandInitialiser>>>,
+): IslandRegistry<IslandInitialiser>;
 export function collectIslands<Services>(
-    modules: Readonly<Record<string, IslandModule<Services>>>,
+    modules: Readonly<
+        Record<string, IslandModule<Services, IslandInitialiser>>
+    >,
     services: Services,
-): IslandRegistry;
+): IslandRegistry<IslandInitialiser>;
+export function collectIslands(
+    modules: Readonly<Record<string, IslandModule<void, IslandDefinition>>>,
+): IslandRegistry<IslandDefinition>;
 export function collectIslands<Services>(
-    modules: Readonly<Record<string, IslandModule<Services>>>,
+    modules: Readonly<Record<string, IslandModule<Services, IslandDefinition>>>,
+    services: Services,
+): IslandRegistry<IslandDefinition>;
+export function collectIslands<Services>(
+    modules: Readonly<Record<string, IslandModule<Services, IslandDefinition>>>,
     services?: Services,
-): IslandRegistry {
-    const registry: Record<string, IslandInitialiser> = Object.create(null);
+): IslandRegistry<IslandDefinition> {
+    const registry: Record<string, IslandDefinition> = Object.create(null);
     const sources = new Map<string, string>();
     for (const [source, module] of Object.entries(modules)) {
         const exported = module?.islands;
@@ -67,7 +107,10 @@ export function collectIslands<Services>(
                 throw new TypeError(
                     `Island "${name}" is declared by both "${sources.get(name)}" and "${source}"`,
                 );
-            if (!name || typeof initialise !== "function")
+            if (
+                !name ||
+                (typeof initialise !== "function" && !isLazy(initialise))
+            )
                 throw new TypeError(`Invalid island "${name}" in "${source}"`);
             sources.set(name, source);
             registry[name] = initialise;
@@ -80,7 +123,13 @@ export type IslandErrorReporter = (
     name: string,
     phase: "mount" | "reconcile" | "destroy",
     error: unknown,
+    root: HTMLElement,
 ) => void;
+
+export interface IslandObserver {
+    (): void;
+    retryIsland(root: HTMLElement): boolean;
+}
 
 function normaliseInstance(
     result: ReturnType<IslandInitialiser>,
@@ -91,10 +140,11 @@ function normaliseInstance(
 
 /** Observe and reconcile host-registered islands without modifying server-authored markup. */
 export function observeIslands(
-    initialisers: IslandRegistry,
+    initialisers: IslandRegistry<IslandDefinition>,
     report: IslandErrorReporter = (name, phase, error) =>
         console.error(`Island "${name}" failed to ${phase}:`, error),
-): () => void {
+    signal?: AbortSignal,
+): IslandObserver {
     const instances = new Map<
         HTMLElement,
         {
@@ -103,8 +153,12 @@ export function observeIslands(
             instance: IslandInstance;
         }
     >();
+    let disposed = false;
+    const pending = new Map<HTMLElement, { name: string; failed: boolean }>();
+    const loads = new Map<LazyIsland, Promise<IslandInitialiser | undefined>>();
     const reportedUnknown = new WeakMap<HTMLElement, string>();
     const destroyRoot = (root: HTMLElement, fallbackName: string) => {
+        pending.delete(root);
         const mounted = instances.get(root);
         instances.delete(root);
         if (!mounted) return;
@@ -112,11 +166,14 @@ export function observeIslands(
         try {
             mounted.instance.destroy();
         } catch (error) {
-            report(mounted.name || fallbackName, "destroy", error);
+            report(mounted.name || fallbackName, "destroy", error, root);
         }
     };
     const mountRoot = (element: HTMLElement, name: string) => {
-        const initialise = initialisers[name];
+        if (disposed) return;
+        const initialise = Object.hasOwn(initialisers, name)
+            ? initialisers[name]
+            : undefined;
         if (!initialise) {
             if (reportedUnknown.get(element) !== name) {
                 reportedUnknown.set(element, name);
@@ -128,21 +185,86 @@ export function observeIslands(
             }
             return;
         }
+        if (isLazy(initialise)) {
+            const waiting = { name, failed: false };
+            pending.set(element, waiting);
+            let loading = loads.get(initialise);
+            if (!loading) {
+                loading = Promise.resolve()
+                    .then(() => (disposed ? undefined : initialise.load()))
+                    .then((loaded) => {
+                        if (disposed) return;
+                        if (typeof loaded !== "function")
+                            throw new TypeError(
+                                `Lazy island "${name}" must load an initialiser`,
+                            );
+                        return loaded;
+                    });
+                loads.set(initialise, loading);
+                void loading.catch(() => {
+                    loads.delete(initialise);
+                });
+            }
+            const current = () =>
+                !disposed &&
+                pending.get(element) === waiting &&
+                element.isConnected &&
+                element.getAttribute("data-island") === name;
+            void loading.then(
+                (loaded) => {
+                    if (!current() || !loaded) return;
+                    mount(element, name, loaded);
+                    if (instances.has(element)) pending.delete(element);
+                },
+                (error: unknown) => {
+                    // Keep failed roots recorded: unrelated mutations must not retry them.
+                    if (!current()) return;
+                    waiting.failed = true;
+                    report(name, "mount", error, element);
+                },
+            );
+            return;
+        }
+        mount(element, name, initialise);
+    };
+    const mount = (
+        element: HTMLElement,
+        name: string,
+        initialise: IslandInitialiser,
+    ) => {
+        const waiting = pending.get(element);
         const controller = new AbortController();
+        const mounted = {
+            name,
+            controller,
+            instance: normaliseInstance(undefined),
+        };
+        instances.set(element, mounted);
         try {
-            instances.set(element, {
-                name,
-                controller,
-                instance: normaliseInstance(
-                    initialise(element, { signal: controller.signal }),
-                ),
-            });
+            const instance = normaliseInstance(
+                initialise(element, { signal: controller.signal }),
+            );
+            // An initialiser may synchronously replace or dispose its runtime.
+            if (instances.get(element) !== mounted) {
+                controller.abort();
+                try {
+                    instance.destroy();
+                } catch (error) {
+                    report(name, "destroy", error, element);
+                }
+                return;
+            }
+            mounted.instance = instance;
         } catch (error) {
+            if (instances.get(element) === mounted) instances.delete(element);
             controller.abort();
-            report(name, "mount", error);
+            if (waiting && pending.get(element) === waiting)
+                waiting.failed = true;
+            if (!disposed) report(name, "mount", error, element);
         }
     };
     const scan = (root: ParentNode) => {
+        if (disposed) return;
         const candidates = new Set<HTMLElement>();
         if (root instanceof HTMLElement && root.hasAttribute("data-island"))
             candidates.add(root);
@@ -150,16 +272,17 @@ export function observeIslands(
             "[data-island]",
         ))
             candidates.add(element);
-        for (const [element] of instances) {
+        for (const element of [...instances.keys(), ...pending.keys()]) {
             if (root.contains(element) || root === element)
                 candidates.add(element);
         }
         for (const element of candidates) {
+            if (disposed) return;
             if (!element.isConnected) continue;
             const name = element.hasAttribute("data-island")
                 ? (element.dataset.island ?? "")
                 : undefined;
-            const mounted = instances.get(element);
+            const mounted = instances.get(element) ?? pending.get(element);
             if (name === undefined) {
                 if (mounted) destroyRoot(element, mounted.name);
                 continue;
@@ -172,7 +295,7 @@ export function observeIslands(
         }
     };
     const clean = () => {
-        for (const [root, mounted] of instances)
+        for (const [root, mounted] of [...instances, ...pending])
             if (!root.isConnected) destroyRoot(root, mounted.name);
     };
     const reconcile = (context: IslandReconcileContext) => {
@@ -181,10 +304,9 @@ export function observeIslands(
             try {
                 mounted.instance.reconcile?.(context);
             } catch (error) {
-                report(mounted.name, "reconcile", error);
+                report(mounted.name, "reconcile", error, root);
             }
     };
-    scan(document);
     const observer = new MutationObserver((records) => {
         for (const record of records) {
             if (
@@ -197,12 +319,6 @@ export function observeIslands(
         }
         // Cleanup after all additions preserves roots moved within the document.
         clean();
-    });
-    observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ["data-island"],
     });
     const settled = (event: Event) => {
         const detail = (event as CustomEvent<RequestSettledDetail>).detail;
@@ -237,12 +353,13 @@ export function observeIslands(
         }
         reconcile({ cause: "live-patch", detail });
     };
-    addEventListener(REQUEST_SETTLED_EVENT, settled);
-    addEventListener(LOCATION_CHANGE_EVENT, location);
-    addEventListener(PROGRESS_EVENT, progress);
-    addEventListener(LIVE_PATCH_EVENT, livePatch);
-    return () => {
+    const stop = () => {
+        if (disposed) return;
+        disposed = true;
+        pending.clear();
+        loads.clear();
         observer.disconnect();
+        signal?.removeEventListener("abort", stop);
         removeEventListener(REQUEST_SETTLED_EVENT, settled);
         removeEventListener(LOCATION_CHANGE_EVENT, location);
         removeEventListener(PROGRESS_EVENT, progress);
@@ -250,4 +367,38 @@ export function observeIslands(
         for (const [root, mounted] of [...instances])
             destroyRoot(root, mounted.name);
     };
+    const handle: IslandObserver = Object.assign(stop, {
+        retryIsland(root: HTMLElement): boolean {
+            const waiting = pending.get(root);
+            if (
+                disposed ||
+                !waiting?.failed ||
+                !root.isConnected ||
+                root.getAttribute("data-island") !== waiting.name
+            )
+                return false;
+            mountRoot(root, waiting.name);
+            return true;
+        },
+    });
+    if (signal?.aborted) {
+        stop();
+        return handle;
+    }
+    // Install teardown before eager mounting: an initialiser may end its owner.
+    signal?.addEventListener("abort", stop, { once: true });
+    scan(document);
+    if (!disposed) {
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ["data-island"],
+        });
+        addEventListener(REQUEST_SETTLED_EVENT, settled);
+        addEventListener(LOCATION_CHANGE_EVENT, location);
+        addEventListener(PROGRESS_EVENT, progress);
+        addEventListener(LIVE_PATCH_EVENT, livePatch);
+    }
+    return handle;
 }

@@ -585,6 +585,12 @@ Other initialisers can return an `IslandInstance`, a cleanup callback or `void`.
 
 The observer also detects `data-island` attribute changes on connected roots. Additions mount an instance. Name changes end the previous lifetime, and attribute removal destroys the instance.
 
+Supply `startHypergraft({ islands, onIslandError })` to handle island failures in the host. Standalone observers accept the same callback as `observeIslands(islands, reporter)`. Both use the exported `IslandErrorReporter(name, phase, error, root)` type, where `phase` is `"mount"`, `"reconcile"` or `"destroy"`. The fourth argument identifies the exact affected element, even when several roots share a name or a replacement reuses an ID. Existing three-argument callbacks can ignore it. Without a callback, the default console reporter is unchanged; a supplied callback replaces it.
+
+The callback receives the original exception, not a secret-safe transport diagnostic. Reporters must not throw or expose sensitive exception details. They can run synchronously during eager mounting, before `startHypergraft` returns its handle, and during cleanup. A destruction report can refer to a detached or renamed root; the name still describes the failed instance. Receiving a report does not establish readiness or retry eligibility.
+
+Both `observeIslands` and `startHypergraft` return a callable cleanup handle. Calling it still stops the observer or runtime as before; its `retryIsland(root)` method can retry a failed lazy root without replacing DOM. `observeIslands` returns the exported `IslandObserver` type and also accepts an optional third argument, an owner `AbortSignal`: `observeIslands(registry, reporter, signal)`. An already-aborted owner prevents startup. Aborting during initial mounting or a later scan stops further mounts and cleans up any initialiser already running. The main runtime supplies this ownership signal internally, including during synchronous runtime replacement.
+
 An instance that needs lifecycle facts implements `reconcile(context)`. `IslandReconcileContext` is a discriminated union exported from `hypergraft/browser/islands`. The [island recipe](#island-recipe) consumes it after form settlement.
 
 `{ cause: "patch", detail: RequestSettledDetail }` describes a settled form request. That includes safe failure and unsafe uncertainty without invented targets. `{ cause: "live-patch", detail: AppliedLivePatchDetail }` describes an applied live patch. `{ cause: "location", detail: LocationChangeDetail }` describes a completed enhanced location change.
@@ -708,13 +714,137 @@ import * as editor from "./features/editor/browser";
 startHypergraft({ islands: collectIslands({ editor }) });
 ```
 
-`IslandModule<Services>` describes the module export. `IslandRegistry` is a read-only name-to-initialiser map. Factories run once per `collectIslands` call, not per root. They must only construct definitions, without listeners, requests or mounted state. Initialisers still own each root's state and lifetime. Imports must also remain free of mounting side effects.
+`IslandModule<Services>` describes an eager module export. `IslandRegistry` remains a read-only name-to-initialiser map, so existing consumers can still call its entries directly. For mixed eager/lazy definitions, use `IslandRegistry<IslandDefinition>` and `IslandModule<Services, IslandDefinition>`. An `IslandDefinition` is an eager `IslandInitialiser` or a `LazyIsland` made by `lazyIsland`. `collectIslands` accepts both kinds of module and retains an eager-only return type for eager-only inputs. Factories run once per `collectIslands` call, not per root. They must only construct definitions, without listeners, requests or mounted state. Initialisers still own each root's state and lifetime. Imports must also remain free of mounting side effects.
 
-`collectIslands` takes only own enumerable module entries and island declarations. It snapshots definitions into a frozen, null-prototype registry. Duplicate names throw `TypeError` with both source keys, even when the initialisers are equal. Missing exports, non-plain maps, empty names and non-function initialisers also throw `TypeError`. Factory errors propagate. Collect before starting the runtime or binding its feedback so a configuration failure does not leave a partial Hypergraft setup.
+`collectIslands` takes only own enumerable module entries and island declarations. It snapshots definitions into a frozen, null-prototype registry. Duplicate names throw `TypeError` with both source keys, even when the initialisers are equal. Missing exports, non-plain maps, empty names and definitions other than initialiser functions or `lazyIsland` definitions also throw `TypeError`. Factory errors propagate. Collect before starting the runtime or binding its feedback so a configuration failure does not leave a partial Hypergraft setup.
 
-Discovery is eager and synchronous. It adds neither lazy loading nor a second runtime. Markup still names an island with `data-island`; patches still reject scripts. No CSP exception or protocol change is needed.
+Discovery and registration remain eager and synchronous, including lazy names and loaders. Only an explicitly lazy definition defers its implementation. There is no second runtime or inspection of unloaded exports. Markup still names an island with `data-island`; patches still reject scripts. No CSP exception or protocol change is needed.
 
 Co-location does not change ownership. Use root-local selectors and delegated listeners. Tie work to the mount signal. Keep cooperating behaviour and its reconciliation order in a shared owner. A retained root can represent a different record: the host must reset record-bound state when its identity changes. Draft persistence and business rules remain host concerns.
+
+## Optional lazy islands
+
+**Keep islands eager by default.** Eager initialisers mount synchronously during scans. Lazy loading is justified only when a substantial optional implementation has a measured loading or startup cost and can safely arrive later. Being safe to defer is necessary, but is not itself a performance benefit.
+
+Compare the benefit with extra requests, delayed interaction, possible layout changes, failure handling and tests. Small clipboard helpers or simple form controls rarely justify those costs. A substantial optional preview or syntax-highlighting engine may be a better candidate. Keep cooperating behaviour under its existing owner rather than splitting every helper into an island.
+
+Inspect the generated chunks and their static import graph to confirm that eager imports do not pull the implementation into the initial bundle. Measure the user-facing benefit on relevant devices and connections; a smaller entry chunk alone does not establish an improvement.
+
+`lazyIsland` is exported from both `hypergraft/browser` and `hypergraft/browser/islands`; it needs no bundler plugin.
+
+Keep a small registration file eager and use a standard dynamic import for its implementation:
+
+```ts
+// features/preview/browser.ts
+import {
+    lazyIsland,
+    type IslandDefinition,
+    type IslandRegistry,
+} from "hypergraft/browser";
+import { initDisclosure } from "./disclosure";
+
+export const islands = {
+    disclosure: initDisclosure,
+    preview: lazyIsland(() =>
+        import("./preview").then((module) => module.initPreview),
+    ),
+} satisfies IslandRegistry<IslandDefinition>;
+```
+
+The loader must resolve to an `IslandInitialiser`, not a module namespace or registry. The initialiser itself stays synchronous and returns the same instance, cleanup callback or `void` as an eager initialiser. Keep the implementation in a different file from the eager registration if it should form a separate chunk. Chunking and module resolution belong to the host's build tools.
+
+Services remain explicit. A registration factory can close over them without loading or mounting anything:
+
+```ts
+import {
+    lazyIsland,
+    type IslandDefinition,
+    type IslandRegistry,
+} from "hypergraft/browser";
+import type { BrowserServices } from "../../browser-services";
+
+export function islands(
+    services: BrowserServices,
+): IslandRegistry<IslandDefinition> {
+    return {
+        preview: lazyIsland(async () => {
+            const { initPreview } = await import("./preview");
+            return (root, context) => initPreview(root, context, services);
+        }),
+    };
+}
+```
+
+Use the same eager glob or explicit module imports shown above. For a typed glob containing lazy definitions, use `import.meta.glob<IslandModule<BrowserServices, IslandDefinition>>(..., { eager: true })`. With no host services, use `void` for `BrowserServices`. `collectIslands` validates names and definitions immediately without calling loaders. `watchIslandModules` only maintains registration discovery; it is unrelated to lazy loading.
+
+### Loading and lifecycle
+
+- The first matching connected root requests the loader. Roots using the same lazy definition object share one in-flight load and its successful result within an observer/runtime. Each root gets a separate initialiser call, instance and mount signal. Reusing a definition for several names also shares its load.
+- Lazy mounts always happen asynchronously, even after successful code caching. Eager siblings do not wait. There is no lazy mount ordering guarantee across definitions, and navigation, transport settlement, entry effects and scroll restoration do not wait for lazy readiness.
+- A root mounts only if its pending lifetime is still current, connected and named for that definition. Observed removal, attribute removal or a name change ends that lifetime. Moves within the document preserve it. Removing and reinserting the same node before observation is a move, not a retry.
+- Mount reads the **current DOM**, not a snapshot taken when loading began. Reconciliation facts that arrived before mount are not queued or replayed. Once mounted, the instance receives the normal reconciliation contexts. If an earlier fact is essential and cannot be recovered from current DOM or an eager shared owner, keep that behaviour eager.
+- Record identity is still host-owned. A retained root updated during loading mounts against its latest record; later identity changes must be handled by its instance.
+- Stop or runtime replacement ends the current scan, invalidates pending mounts and clears the runtime's load cache. Queued loaders that have not started are skipped. Loads already running cannot be cancelled, but late success or failure does not mount or report for an ended lifetime. A new runtime calls its loaders again. JavaScript's module cache is separate and may reuse imports.
+- A loader has no root or mount signal. Dynamic imports cannot be cancelled. Keep loaders and imported module evaluation free of root state, listeners and other application side effects: they may finish after every waiting root has gone. The mount signal begins only when initialisation starts and is aborted before cleanup as usual.
+
+### Failures and retries
+
+Synchronous loader throws, rejected loads and non-function results are handled as mount failures. The reporter receives `(name, "mount", error, root)` once for each still-current waiting root. Configure it through `startHypergraft({ islands, onIslandError })` or `observeIslands(registry, reporter)`. Shared load failures identify each affected root separately. Removed, renamed and unmarked roots, and disposed or replaced runtimes, receive no late load-failure reports. No new transport diagnostic, wire field or DOM attribute is added. Reporters must not throw; hosts are responsible for safe handling of exception details.
+
+A failed load is evicted from the runtime's cache. Already failed roots remain unmounted and are **not retried** by mutations, reconciliation or another root's success. The next new root lifetime starts another attempt; concurrent new roots share that attempt. A cached browser import failure may still fail again; Hypergraft does not rewrite import URLs or promise network recovery.
+
+For an explicit retry without replacing a root, call `handle.retryIsland(root)` on the handle returned by `startHypergraft` or `observeIslands`. It returns `true` only when a retry was accepted for that observer's still-connected, still-named failed lazy root. This means **scheduled**, not ready or successful. Loading, mounting, mounted, eager, unknown, removed and renamed roots return `false`; stopped or replaced handles always return `false`. Duplicate calls while loading do nothing. Each requested root joins the shared load or reuses successful code, but failed roots not explicitly retried stay failed. Mounting remains asynchronous and reads current DOM, with the same stale-result checks as the first attempt.
+
+Bind a retry control eagerly, under its feature owner's lifetime. For example, with an existing `retryButton`, `previewRoot`, generic `failureMessage` and owner `signal`:
+
+```ts
+const runtime = startHypergraft({
+    islands,
+    onIslandError(name, phase, _error, root) {
+        if (
+            name === "preview" &&
+            phase === "mount" &&
+            root === previewRoot &&
+            !signal.aborted
+        ) {
+            failureMessage.hidden = false;
+        }
+    },
+});
+retryButton.addEventListener(
+    "click",
+    () => {
+        runtime.retryIsland(previewRoot);
+    },
+    { signal },
+);
+
+// On teardown, the owner aborts signal and calls runtime().
+```
+
+Keep the failure message generic; do not insert exception text. The feature's initialiser clears that presentation after successful initialisation, not when a retry is accepted. The button must remain usable independently of the failed lazy implementation. A retry does not replace DOM, discard drafts, replay gestures, imply consent or enable controls. New root lifetimes and reloads remain alternative retry paths. If another retry fails, the root becomes eligible for a later explicit retry; there is no automatic loop.
+
+If loading succeeds but one root's initialiser throws, its signal is aborted and its mount failure is reported. An explicit retry gives it a new mount signal while reusing the cached implementation. Initialisers must clean up any partial work not tied to their signal when they throw. No timers, automatic backoff, gesture replay or hidden retry loops are installed. Eager failure behaviour is unchanged.
+
+### Readiness and controls
+
+Keep these three milestones separate:
+
+1. **Import completed:** module evaluation finished and code is available. No particular root is necessarily mounted.
+2. **Initialiser completed:** the synchronous initialiser returned successfully for one root. This does not keep its lifetime alive. Other roots have independent lifetimes and may still be waiting or have failed.
+3. **Feature ready:** any additional host-owned work required by that feature has completed for the current identity. Hypergraft does not infer or announce this state.
+
+Tests and host code must wait for the specific behaviour they need, not merely for an import promise to resolve. Initialisers remain synchronous; they must not return a readiness promise. Any asynchronous work they start must honour the mount lifetime and reject stale results.
+
+Lazy loading is **not a readiness barrier**. Hypergraft does not add `disabled`, `inert` or loading attributes, intercept gestures on behalf of an unloaded island, or buffer and replay clicks or submissions. Ordinary links, forms and Hypergraft transport continue to work before mount and after failure. Do not assume a lazy submit listener can guard a command.
+
+Choose the policy explicitly in the host:
+
+- Leave optional presentation lazy when the real controls are already safe without it.
+- Keep consent, validation gates, draft/settings restoration and required cross-feature coordination eager. An eager owner may coordinate optional lazy presentation through explicit services, but import completion must never imply consent.
+- If controls must wait, render them disabled from the initial document and every patch, with an accessible explanation and a recovery path that does not depend on the unloaded code. Include external form-associated controls and every alternate submit path. The host must bind the required behaviour before enabling controls and own their state across patches, failures and cleanup. CSS hiding or `aria-disabled` alone is not a submission guard. Server validation and authorisation remain mandatory.
+
+A disabled fieldset alone does not guard external controls or programmatic submission. For a form requiring consent-related coordination, prefer an eager owner instead of trying to make a lazy island the security boundary. Do not weaken CSP or execute scripts in patch markup to signal readiness.
 
 ## Island recipe
 

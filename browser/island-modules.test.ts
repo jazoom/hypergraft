@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { collectIslands, type IslandModule } from "./islands";
+import { collectIslands, lazyIsland, type IslandModule } from "./islands";
 
 test("duplicate names fail with both sources instead of depending on discovery order", () => {
     const initialise = vi.fn();
@@ -14,6 +14,19 @@ test("duplicate names fail with both sources instead of depending on discovery o
         );
         expect(initialise).not.toHaveBeenCalled();
     }
+});
+
+test("lazy names are checked before loading and definitions are immutable", () => {
+    const load = vi.fn(async () => () => {});
+    const heavy = lazyIsland(load);
+    expect(Object.isFrozen(heavy)).toBe(true);
+    expect(() =>
+        collectIslands({
+            first: { islands: { heavy } },
+            second: { islands: { heavy: () => {} } },
+        }),
+    ).toThrow(/heavy.*first.*second/);
+    expect(load).not.toHaveBeenCalled();
 });
 
 test("each registry binds its own services without mounting during collection", () => {
@@ -63,6 +76,7 @@ test("malformed discovered modules fail instead of silently registering nothing"
         { islands: [] },
         { islands: () => Promise.resolve({}) },
         { islands: { editor: "not an initialiser" } },
+        { islands: { editor: { load: async () => () => {} } } },
         { islands: { "": () => {} } },
     ]) {
         expect(() =>

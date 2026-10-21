@@ -236,8 +236,92 @@ test("unknown names report once per identity and mount when later known", () => 
     removeEventListener(DIAGNOSTIC_EVENT, listener);
 });
 
+test.each(["mutation", "location"])(
+    "disposal inside a %s scan stops later mounts",
+    async (cause) => {
+        const later = vi.fn();
+        const destroyed = vi.fn();
+        const stop = observeIslands({
+            first: (_root, { signal }) => {
+                stop();
+                expect(signal.aborted).toBe(true);
+                return destroyed;
+            },
+            later,
+        });
+        try {
+            const group = document.createElement("section");
+            group.innerHTML =
+                '<div data-island="first"></div><div data-island="later"></div>';
+            document.body.append(group);
+            if (cause === "location")
+                dispatchEvent(
+                    new CustomEvent(LOCATION_CHANGE_EVENT, { detail: {} }),
+                );
+            await mutations();
+            expect(destroyed).toHaveBeenCalledOnce();
+            expect(later).not.toHaveBeenCalled();
+            document.body.appendChild(
+                document.createElement("div"),
+            ).dataset.island = "later";
+            await mutations();
+            expect(later).not.toHaveBeenCalled();
+        } finally {
+            stop();
+        }
+    },
+);
+
+test("disposal during destruction prevents mounting the renamed root", async () => {
+    document.body.innerHTML = '<div data-island="first"></div>';
+    const later = vi.fn();
+    const stop = observeIslands({ first: () => () => stop(), later });
+    try {
+        document.querySelector<HTMLElement>("[data-island]")!.dataset.island =
+            "later";
+        await mutations();
+        expect(later).not.toHaveBeenCalled();
+    } finally {
+        stop();
+    }
+});
+
+test.each(["before", "during"])(
+    "an owner aborted %s initial scanning prevents further mounts",
+    async (when) => {
+        document.body.innerHTML =
+            '<div data-island="first"></div><div data-island="later"></div>';
+        const owner = new AbortController();
+        const later = vi.fn();
+        const destroyed = vi.fn();
+        const first = vi.fn(
+            (_root: HTMLElement, { signal }: IslandMountContext) => {
+                owner.abort();
+                expect(signal.aborted).toBe(true);
+                return destroyed;
+            },
+        );
+        if (when === "before") owner.abort();
+        const stop = observeIslands({ first, later }, undefined, owner.signal);
+        try {
+            expect(first).toHaveBeenCalledTimes(when === "before" ? 0 : 1);
+            expect(destroyed).toHaveBeenCalledTimes(when === "before" ? 0 : 1);
+            expect(later).not.toHaveBeenCalled();
+            document.body.appendChild(
+                document.createElement("div"),
+            ).dataset.island = "later";
+            await mutations();
+            expect(later).not.toHaveBeenCalled();
+        } finally {
+            stop();
+        }
+    },
+);
+
 test("isolates mount, reconcile, and destroy failures", () => {
     document.body.innerHTML = `<div data-island="bad-mount"></div><div data-island="bad"></div><div data-island="good"></div>`;
+    const [failed, bad] =
+        document.querySelectorAll<HTMLElement>("[data-island]");
     const goodReconcile = vi.fn();
     const goodDestroy = vi.fn();
     const report = vi.fn();
@@ -265,9 +349,9 @@ test("isolates mount, reconcile, and destroy failures", () => {
     expect(failedLifetime?.aborted).toBe(true);
     expect(goodReconcile).toHaveBeenCalledOnce();
     expect(goodDestroy).toHaveBeenCalledOnce();
-    expect(report.mock.calls.map((call) => call[1])).toEqual([
-        "mount",
-        "reconcile",
-        "destroy",
+    expect(report.mock.calls).toEqual([
+        ["bad-mount", "mount", expect.any(Error), failed],
+        ["bad", "reconcile", expect.any(Error), bad],
+        ["bad", "destroy", expect.any(Error), bad],
     ]);
 });

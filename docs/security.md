@@ -19,6 +19,14 @@ Image and style sources belong to the host. A host can add a script nonce when a
 Do not add `allow-duplicates` to `trusted-types`.
 Do not install a global passthrough policy.
 
+## Lazy island readiness
+
+Optional lazy islands load host-selected code through standard dynamic imports under the existing script policy. They require no inline script, `unsafe-inline`, `unsafe-eval` or new Trusted Types policy. Do not derive import paths from untrusted markup. Keep imported module evaluation free of application side effects: a load can complete after its root or runtime has gone.
+
+Lazy loading does not block links, forms or Hypergraft commands. Controls remain usable while loading and after failure unless the host explicitly guards them. A lazy listener cannot enforce consent, restore required settings before submission, or guard a command that arrives before mount. Keep those owners eager. If controls must wait, render their disabled state on the server, cover external controls and alternate submit paths, and provide an independent recovery path. Bind any explicit retry control eagerly. A successful `retryIsland(root)` return only means that a retry was scheduled; it is not readiness or consent. Never enable a command merely because an import completed. Server validation and authorisation remain authoritative.
+
+Read [Optional lazy islands](browser-runtime.md#optional-lazy-islands) for lifecycle, failure and readiness contracts. Island exceptions use `startHypergraft({ onIslandError })` or the reporter passed to `observeIslands`, with arguments `(name, phase, error, root)`. These callbacks receive the original exception and affected DOM element, not secret-safe transport diagnostics. Hosts must not expose sensitive exception details or DOM contents to users or logs. Use the root reference to identify the failed feature and show a generic message; a report is not evidence of readiness or permission to submit. Callbacks must not throw. Without a custom callback, the existing console reporter remains in use.
+
 ## Trusted Types
 
 `TRUSTED_TYPES_POLICY_NAME` is `hypergraft`. The policy lets `DOMParser` read server HTML when the document requires Trusted Types for scripts. The policy is not an HTML sanitiser.

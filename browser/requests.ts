@@ -15,7 +15,13 @@ import {
     emitRequestSettled,
     type RequestSettledDetail,
 } from "./events";
-import { observeIslands, type IslandRegistry } from "./islands";
+import {
+    observeIslands,
+    type IslandDefinition,
+    type IslandErrorReporter,
+    type IslandObserver,
+    type IslandRegistry,
+} from "./islands";
 import {
     apply,
     MEDIA_TYPE,
@@ -87,7 +93,8 @@ type Runtime = {
     documentUrl: string;
     queuedHistoryUrl: URL | undefined;
     detachListeners: () => void;
-    stopIslands: () => void;
+    islandLifetime: AbortController;
+    islands?: IslandObserver;
     live: LiveController;
     enterEffects?: EnterEffects;
     prefetch?: Prefetch;
@@ -118,7 +125,8 @@ export interface TransportFeedback {
 export interface HypergraftOptions {
     validateContent?: ValidateContent;
     feedback?: TransportFeedback;
-    islands?: IslandRegistry;
+    islands?: IslandRegistry<IslandDefinition>;
+    onIslandError?: IslandErrorReporter;
     liveEndpoint?: string;
     enterEffects?: Record<string, EnterEffect>;
     prefetch?: boolean | PrefetchOptions;
@@ -1346,14 +1354,15 @@ function handleLiveEvent(runtime: Runtime, event: Event) {
 }
 
 function disposeRuntime(runtime: Runtime, replacement: boolean) {
-    if (runtime.disposed) return;
+    if (runtime.disposed || runtime.islandLifetime.signal.aborted) return;
     const partialNavigation = !!runtime.navigation && runtime.navigationMutated;
     const handoffPending = runtime.navigationPending && !runtime.navigation;
     const historyPending = runtime.navigation?.cause === "history-traversal";
+    // Abort first so island cleanup cannot enter teardown a second time.
+    runtime.islandLifetime.abort();
+    runtime.islands = undefined;
     runtime.scroll?.destroy();
     runtime.enterEffects?.destroy();
-    runtime.stopIslands();
-    runtime.stopIslands = () => undefined;
     // Intentional teardown clears feedback synchronously; later responses
     // must not call options owned by the disposed runtime.
     clearAllSafeErrors(runtime);
@@ -1408,7 +1417,7 @@ function createRuntime(
         documentUrl,
         queuedHistoryUrl: undefined,
         detachListeners: () => undefined,
-        stopIslands: () => undefined,
+        islandLifetime: new AbortController(),
         enterEffects: options.enterEffects
             ? createEnterEffects(options.enterEffects)
             : undefined,
@@ -1607,11 +1616,26 @@ export function startHypergraft(options: HypergraftOptions = {}) {
         prefetch,
     );
     activeRuntime = runtime;
-    if (options.islands) runtime.stopIslands = observeIslands(options.islands);
-    return () => {
-        if (activeRuntime === runtime) activeRuntime = undefined;
-        disposeRuntime(runtime, false);
-    };
+    if (options.islands)
+        runtime.islands = observeIslands(
+            options.islands,
+            options.onIslandError,
+            runtime.islandLifetime.signal,
+        );
+    return Object.assign(
+        () => {
+            if (activeRuntime === runtime) activeRuntime = undefined;
+            disposeRuntime(runtime, false);
+        },
+        {
+            retryIsland(root: HTMLElement): boolean {
+                return (
+                    !runtime.disposed &&
+                    (runtime.islands?.retryIsland(root) ?? false)
+                );
+            },
+        },
+    );
 }
 
 /** Test helper: drop the document-level guard after an isolated case. */
