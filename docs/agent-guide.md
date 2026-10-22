@@ -315,7 +315,8 @@ Live hosts also need the explicit WebSocket source from `LiveEndpoint::csp_conne
 - Deploy the Rust crate and browser bundle from the same fixture revision. Older bundles retain the smaller content budgets.
 - Patches cannot contain script elements.
 - A title updates `document.title`, not the document head.
-- Optional `scrollRestoration: true` restores window and registered container positions after fresh history responses. Logical anchors take precedence over old offsets.
+- `navigationScroll` selects ordinary link scrolling independently of history: `{ mode: "reset" }` (default) resets the window and registered containers; `{ mode: "preserve" }` leaves them alone; `{ mode: "targeted", pageRoot: "main" }` resets containers at or inside `children` targets and resets the window only when the configured page root is replaced. Ancestors of smaller targets and append-only targets do not reset. Preservation does not replay positions across removed nodes or defeat native scroll bounds. Use `preventScroll: true` in host focus handlers. See [navigation scroll](browser-runtime.md#navigation-scroll).
+- Optional `scrollRestoration: true` restores window and registered container positions after fresh history responses, regardless of `navigationScroll`. Logical anchors take precedence over old offsets.
 - Safe GET work is cancellable. An uncertain command keeps the document's unsafe lock and suspends live work until a reload.
 - Server-authored form state wins after a patch. A retained DOM node does not prove request completion.
 - A blocked command emits `command-blocked`, not settlement. The runtime never queues or replays that command.

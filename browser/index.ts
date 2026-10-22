@@ -9,6 +9,7 @@ export {
     readBoundedResponse,
 } from "./requests";
 export * from "./events";
+export type { NavigationScrollOptions } from "./scroll-restoration";
 export {
     defineIslandModules,
     type RequiredIslandRegistry,

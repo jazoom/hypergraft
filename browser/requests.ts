@@ -36,7 +36,11 @@ import {
     type ValidateContent,
 } from "./patches";
 import { readStreamFrames } from "./stream";
-import { createScrollRestoration } from "./scroll-restoration";
+import {
+    createScrollRestoration,
+    scrollAfterNavigation,
+    type NavigationScrollOptions,
+} from "./scroll-restoration";
 import { readBoundedResponse } from "./read-response";
 export { readBoundedResponse } from "./read-response";
 import {
@@ -165,6 +169,7 @@ export interface HypergraftOptions {
     enterEffects?: Record<string, EnterEffect>;
     prefetch?: boolean | PrefetchOptions;
     scrollRestoration?: boolean;
+    navigationScroll?: NavigationScrollOptions;
 }
 
 function pruneFailedSafeForms(runtime: Runtime): boolean {
@@ -332,7 +337,7 @@ async function consumeEnhanced(
     allowLocationReplacement: boolean,
     onProgress?: (batch: PreparedBatch, frame: number) => void,
     pending?: PendingSession,
-    beforeApply?: () => boolean,
+    beforeApply?: (batch: PreparedBatch) => boolean,
     prefetchedText?: string,
     signal: AbortSignal = runtime.islandLifetime.signal,
     navigationApplied?: () => void,
@@ -385,7 +390,7 @@ async function consumeEnhanced(
                 if (isStale()) return { kind: "stale" };
                 revalidateBatch(prepared.batch);
             }
-            if (isStale() || (beforeApply && !beforeApply()))
+            if (isStale() || (beforeApply && !beforeApply(prepared.batch)))
                 return { kind: "stale" };
             if (runtime.required && beforeApply)
                 revalidateBatch(prepared.batch);
@@ -469,7 +474,7 @@ async function consumeEnhanced(
                 if (isStale()) return { kind: "stale" };
                 revalidateBatch(prepared.batch);
             }
-            if (isStale() || (beforeApply && !beforeApply()))
+            if (isStale() || (beforeApply && !beforeApply(prepared.batch)))
                 return { kind: "stale" };
             if (runtime.required && beforeApply)
                 revalidateBatch(prepared.batch);
@@ -600,7 +605,7 @@ async function safeRequest(
     responseUrl?: { current?: string },
     failedForm?: HTMLFormElement,
     pending?: PendingSession,
-    beforeApply?: () => boolean,
+    beforeApply?: (batch: PreparedBatch) => boolean,
     speculative?: Promise<NavigationResponse | undefined>,
     navigationApplied?: (url: string) => void,
 ): Promise<SafeOutcome> {
@@ -849,6 +854,7 @@ async function navigate(
     cancelActiveSafeForms(runtime);
     if (isStale()) return;
     const responseUrl: { current?: string } = {};
+    const replacementTargets = new Set<HTMLElement>();
     const commitLocation = (destination: string, complete = true) => {
         if (mode === "push")
             history.pushState({ hypergraft: true }, "", destination);
@@ -866,7 +872,7 @@ async function navigate(
             responseUrl,
             undefined,
             undefined,
-            () => {
+            (batch) => {
                 if (isStale()) return false;
                 if (
                     !runtime.navigationMutated &&
@@ -877,6 +883,12 @@ async function navigate(
                 }
                 if (isStale()) return false;
                 if (!runtime.navigationMutated) runtime.scroll?.capture();
+                if (runtime.options.navigationScroll?.mode === "targeted") {
+                    for (const patch of batch.patches) {
+                        if (patch.operation === "children")
+                            replacementTargets.add(patch.target);
+                    }
+                }
                 runtime.navigationMutated = true;
                 return true;
             },
@@ -930,8 +942,15 @@ async function navigate(
                 // A target that cannot take programmatic focus stays native.
             }
         }
-        if (runtime.scroll) runtime.scroll.restore(mode === "pop");
-        else window.scrollTo(0, 0);
+        if (mode === "pop") {
+            if (runtime.scroll) runtime.scroll.restore();
+            else window.scrollTo(0, 0);
+        } else {
+            scrollAfterNavigation(
+                runtime.options.navigationScroll ?? { mode: "reset" },
+                replacementTargets,
+            );
+        }
         if (isStale()) return;
         endNavigation(runtime, { ...navigation, state: "succeeded" });
         resumeAfterNavigation(runtime);

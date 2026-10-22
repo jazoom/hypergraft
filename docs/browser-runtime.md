@@ -315,7 +315,30 @@ Patch application restores focus through the original active node reference when
 
 Restoration avoids redundant focus calls and prevents scroll changes. Supported text inputs and textareas retain selection direction, with offsets clamped to the final authoritative value.
 
-Applied navigation focuses the first patched target when that target is programmatically focusable. Ordinary link navigation resets the window to `(0, 0)`.
+Applied navigation focuses the first patched target when that target is programmatically focusable, without scrolling it into view. Host focus handlers should also use `preventScroll: true` so they do not override the selected scroll policy.
+
+### Navigation scroll
+
+`navigationScroll` controls scrolling after successful ordinary link navigation. It works independently of `scrollRestoration` and does not change GET form patches, commands or live updates.
+
+- Omitted or `{ mode: "reset" }`: reset the window and registered scroll containers to `(0, 0)`.
+- `{ mode: "targeted", pageRoot: "main" }`: reset a registered container only when it is a `children` patch target or sits inside one. Preserve containers outside those regions, including ancestors of smaller targets. Reset the window only when the configured page root is itself a `children` target or sits inside one. `pageRoot` is a document ID, not a selector; an absent root leaves the window alone.
+- `{ mode: "preserve" }`: do not deliberately reset the window or any registered container.
+
+```ts
+startHypergraft({
+    scrollRestoration: true,
+    navigationScroll: { mode: "targeted", pageRoot: "main" },
+});
+```
+
+`NavigationScrollOptions` is exported from `hypergraft/browser`. Containers use stable IDs and `data-graft-scroll`; at most the first 32 registered containers are managed. Navigation resets no longer require enabling history restoration.
+
+The targeted policy uses the union of replacement targets across a successful response, including stream progress frames. Append-only targets do not trigger a reset. Scroll handling waits for required island reconciliation and happens before navigation success. Failed, cancelled and superseded requests do not run a completion reset.
+
+Preservation means leaving scroll alone, not capturing and replaying positions across replacement. Removed containers lose their positions. Content changes, native scroll anchoring and browser bounds can still move or clamp a retained position. Use stable DOM identities for regions that should retain their position.
+
+Back/Forward is independent of this policy: with `scrollRestoration: true`, it restores saved positions after fresh content arrives. Without that option, traversal retains the existing window reset behaviour and does not restore container positions. Native document and fragment navigation keep browser behaviour.
 
 ### Fresh history positions
 
@@ -335,7 +358,7 @@ The runtime captures the first visible anchor and its relative position before n
 
 The runtime records the window and at most 32 containers per entry. It retains at most 50 entry records in document-local memory. Records contain positions and anchor identifiers, never HTML or field values. History state contains only an opaque key alongside existing state.
 
-Ordinary link navigation resets registered containers and the window. Failed or cancelled traversal retains document recovery, without restoration onto obsolete content. Teardown discards records and restores the previous browser scroll policy. Reload and runtime replacement do not retain position records.
+Ordinary link navigation follows `navigationScroll`. Failed or cancelled traversal retains document recovery, without restoration onto obsolete content. Teardown discards records and restores the previous browser scroll policy. Reload and runtime replacement do not retain position records.
 
 This behaviour changes no wire envelopes or cache rules. Hosts must not use appointment coordinates as stable time anchors when appointments can move.
 

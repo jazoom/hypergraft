@@ -81,7 +81,11 @@ test("forward navigation updates title, URL, focus and location observers", asyn
     await vi.waitFor(() => expect(location.pathname).toBe("/patients"));
     expect(document.title).toBe("Patients");
     expect(document.activeElement).toBe(document.getElementById("main"));
-    expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+    expect(window.scrollTo).toHaveBeenCalledWith({
+        left: 0,
+        top: 0,
+        behavior: "instant",
+    });
     expect(notifications).toBe(1);
     removeEventListener("hypergraft:locationchange", listener);
 });
