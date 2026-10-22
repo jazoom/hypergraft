@@ -4,15 +4,12 @@ import { listenForNavigation } from "./events";
 import { MEDIA_TYPE } from "./patches";
 import type { NavigationScrollOptions } from "./scroll-restoration";
 
-const original = location.href;
 afterEach(() => {
     resetHypergraftForTests();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     document.body.replaceChildren();
-    history.pushState({}, "", original);
 });
-
-// Keep this matrix separate from history traversal tests to stay below WebKit's history update rate limit.
 const navigationPolicies: (NavigationScrollOptions | undefined)[] = [
     undefined,
     { mode: "reset" },
@@ -23,6 +20,14 @@ const navigationPolicies: (NavigationScrollOptions | undefined)[] = [
 test.for(navigationPolicies)(
     "navigation scroll policy %j respects replacement boundaries with history on or off",
     async (navigationScroll, { onTestFinished }) => {
+        // This matrix tests scroll policy, not traversal. Keep entry state in memory
+        // so rapid navigations cannot exhaust WebKit's history update rate limit.
+        let entryState: unknown = {};
+        vi.spyOn(history, "state", "get").mockImplementation(() => entryState);
+        for (const method of ["pushState", "replaceState"] as const)
+            vi.spyOn(history, method).mockImplementation((state: unknown) => {
+                entryState = state;
+            });
         const filler = '<div style="width:2000px;height:2000px"></div>';
         const container = (id: string, content = filler) =>
             `<section id="${id}" tabindex="-1" data-graft-scroll style="width:200px;height:200px;overflow:auto">${content}</section>`;
