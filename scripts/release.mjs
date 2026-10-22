@@ -247,11 +247,20 @@ function assertReleaseVersion(state) {
 
 async function adoptReleaseFixes(state, save) {
     const head = git("rev-parse", "HEAD");
-    if (!state.commit || head === state.commit) return;
-    clean();
-    if (!ancestor(state.commit, head))
-        fail("HEAD must descend from the saved release commit.");
-    assertReleaseVersion(state);
+    if (head === (state.commit ?? state.base)) return;
+    if (!state.commit) {
+        if (
+            git("show", "-s", "--format=%P", "HEAD") === state.base &&
+            git("show", "-s", "--format=%s", "HEAD") ===
+                `Release ${state.version}`
+        )
+            return;
+    } else {
+        clean();
+        if (!ancestor(state.commit, head))
+            fail("HEAD must descend from the saved release commit.");
+        assertReleaseVersion(state);
+    }
     // Once an upload starts, all packages and the tag must keep the same source.
     if (state.crate !== "pending" || state.npm !== "pending")
         fail("Cannot adopt release fixes after a publication attempt.");
@@ -263,8 +272,16 @@ async function adoptReleaseFixes(state, save) {
             fail(
                 `Cannot adopt release fixes: ${kind} ${state.version} already exists.`,
             );
-    console.log(`Adopting release fixes: ${state.commit} → ${head}`);
-    state.commit = head;
+    if (!state.commit) {
+        // Before the release commit exists, fixes may amend or replace the base.
+        // Validate version-only working changes against the new base before saving it.
+        prepareFiles({ ...state, base: head });
+        console.log(`Adopting pre-release fixes: ${state.base} → ${head}`);
+        state.base = head;
+    } else {
+        console.log(`Adopting release fixes: ${state.commit} → ${head}`);
+        state.commit = head;
+    }
     save();
 }
 
